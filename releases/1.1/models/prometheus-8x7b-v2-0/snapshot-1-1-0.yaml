@@ -10,7 +10,7 @@ spec:
   application: models
   artifacts: {}
   components:
-    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/prometheus-8x7b-v2-0:297eae7e820210dc70e1ab768b5e5864f1390f11
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/prometheus-8x7b-v2-0@sha256:564c172ac84131ad774f0197e5b138214b7ca269755857086b9e369ee0bf352a
       name: prometheus-8x7b-v2-0
       source:
         git:

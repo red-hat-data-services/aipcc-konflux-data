@@ -10,7 +10,7 @@ spec:
   application: models
   artifacts: {}
   components:
-    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/mixtral-8x7b-instruct-v0-1:2cab0a0b8489aacb3e21d0b12c37dc6046631fb0
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/mixtral-8x7b-instruct-v0-1@sha256:11197540805870251664006be034d21181993692faf3a0e3d4d4149fa58cd37c
       name: mixtral-8x7b-instruct-v0-1
       source:
         git:

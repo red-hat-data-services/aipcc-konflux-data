@@ -10,7 +10,7 @@ spec:
   application: models
   artifacts: {}
   components:
-    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/skills-adapter-v3:228de75f845a153454d8fabb959baee5a5005fb1
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/skills-adapter-v3@sha256:e50cd235dd38fe738cca5224f7be25e65bb429a1b7aa3bad35b0e3e2422e96d1
       name: skills-adapter-v3
       source:
         git:

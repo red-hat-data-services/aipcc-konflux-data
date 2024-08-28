@@ -10,7 +10,7 @@ spec:
   application: models
   artifacts: {}
   components:
-    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/knowledge-adapter-v3:5c9c3c8fc3a0ce4955afbccb1f90e125428e2937
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/knowledge-adapter-v3@sha256:5a223a22b2f02650715a3ebf50efded614bde7a6fbbc3776926f5e4564d4ad86
       name: knowledge-adapter-v3
       source:
         git:
