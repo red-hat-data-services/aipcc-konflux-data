@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: nvidia-bootc-1-1-0
+  namespace: rhel-ai-tenant
+spec:
+  application: nvidia-bootc-1-1
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/nvidia-bootc-1-1/nvidia-bootc-1-1@sha256:af7fef3d580eb22a708026ae3cc766293d18fde67f7679356c76c3212d9e742f
+      name: nvidia-bootc-1-1
+      source:
+        git:
+          revision: 8faf38497f3947bfe34573bc134c5037be99a372
+          url: https://gitlab.com/redhat/rhel-ai/containers/nvidia-bootc
