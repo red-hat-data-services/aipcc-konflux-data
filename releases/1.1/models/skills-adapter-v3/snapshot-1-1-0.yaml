@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: skills-adapter-v3-1-1-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: models
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/skills-adapter-v3:228de75f845a153454d8fabb959baee5a5005fb1
+      name: skills-adapter-v3
+      source:
+        git:
+          revision: 228de75f845a153454d8fabb959baee5a5005fb1
+          url: https://gitlab.com/redhat/rhel-ai/models/skills-adapter-v3

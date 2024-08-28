@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: granite-8b-code-instruct-1-1-0
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: registry-rhel-ai-rhel-ai-1-1-models-prod
+  snapshot: granite-8b-code-instruct-1-1-0
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.1.0"

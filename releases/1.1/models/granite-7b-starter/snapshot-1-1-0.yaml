@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: granite-7b-starter-1-1-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: models
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/granite-7b-starter:f1ec1240a90c9d5482e5921d47fdc11b089c76dd
+      name: granite-7b-starter
+      source:
+        git:
+          revision: f1ec1240a90c9d5482e5921d47fdc11b089c76dd
+          url: https://gitlab.com/redhat/rhel-ai/models/granite-7b-starter

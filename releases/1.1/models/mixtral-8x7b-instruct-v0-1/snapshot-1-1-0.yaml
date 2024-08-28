@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: mixtral-8x7b-instruct-v0-1-1-1-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: models
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/mixtral-8x7b-instruct-v0-1:2cab0a0b8489aacb3e21d0b12c37dc6046631fb0
+      name: mixtral-8x7b-instruct-v0-1
+      source:
+        git:
+          revision: 2cab0a0b8489aacb3e21d0b12c37dc6046631fb0
+          url: https://gitlab.com/redhat/rhel-ai/models/mixtral-8x7b-instruct-v0-1
