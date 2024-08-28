@@ -10,7 +10,7 @@ spec:
   application: models
   artifacts: {}
   components:
-    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/granite-7b-starter:f1ec1240a90c9d5482e5921d47fdc11b089c76dd
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/granite-7b-starter@sha256:b3b1b36fe0db19a6cb5bd9f0f9a0df77bd972db10d08e265e4a7d5e6785c33c4
       name: granite-7b-starter
       source:
         git:
