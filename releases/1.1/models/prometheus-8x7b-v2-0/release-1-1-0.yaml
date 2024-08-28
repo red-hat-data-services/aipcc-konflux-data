@@ -7,7 +7,7 @@ metadata:
   name: prometheus-8x7b-v2-0-1-1-0
   namespace: rhel-ai-tenant
 spec:
-  releasePlan: registry-rhel-ai-rhel-ai-1-1-models-prod
+  releasePlan: models-1-1-prod
   snapshot: prometheus-8x7b-v2-0-1-1-0
   data:
     mapping:
