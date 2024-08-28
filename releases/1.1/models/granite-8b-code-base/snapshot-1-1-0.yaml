@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: granite-8b-code-base-1-1-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: models
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/granite-8b-code-base:ae75916af35435450beb8a2c22e33256dffa740b
+      name: granite-8b-code-base
+      source:
+        git:
+          revision: ae75916af35435450beb8a2c22e33256dffa740b
+          url: https://gitlab.com/redhat/rhel-ai/models/granite-8b-code-base

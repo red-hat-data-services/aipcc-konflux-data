@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: knowledge-adapter-v3-1-1-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: models
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models/knowledge-adapter-v3:5c9c3c8fc3a0ce4955afbccb1f90e125428e2937
+      name: knowledge-adapter-v3
+      source:
+        git:
+          revision: 5c9c3c8fc3a0ce4955afbccb1f90e125428e2937
+          url: https://gitlab.com/redhat/rhel-ai/models/knowledge-adapter-v3
