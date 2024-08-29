@@ -4,6 +4,8 @@ kind: Snapshot
 metadata:
   name: instructlab-nvidia-1-1-0
   namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
 spec:
   application: instructlab-nvidia-1-1
   artifacts: {}

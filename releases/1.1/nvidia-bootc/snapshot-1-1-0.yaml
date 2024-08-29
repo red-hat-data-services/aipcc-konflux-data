@@ -4,6 +4,8 @@ kind: Snapshot
 metadata:
   name: nvidia-bootc-1-1-0
   namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
 spec:
   application: nvidia-bootc-1-1
   artifacts: {}
