@@ -10,9 +10,9 @@ spec:
   application: instructlab-nvidia-1-1
   artifacts: {}
   components:
-    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/instructlab-nvidia-1-1/instructlab-nvidia-1-1@sha256:dd4d4d2a2d47169d59e9491d944a92b02b8e2155607740d5b5d50a85bc3f6b6b
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/instructlab-nvidia-1-1/instructlab-nvidia-1-1@sha256:5d336f408b890396c179160b4b9e3d21ff61f30b56d97155eeeca48ec7eeefe7
       name: instructlab-nvidia-1-1
       source:
         git:
-          revision: 09bca10c4154e2686d140f1a92b4e467a9d41fc6
+          revision: 2eaad6c733becf9d60ceb1756d42f81641adddeb
           url: https://gitlab.com/redhat/rhel-ai/containers/instructlab-nvidia
