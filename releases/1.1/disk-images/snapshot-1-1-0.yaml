@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: nvidia-bootc-disk-images-1-1-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: disk-images
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/disk-images/nvidia-bootc-disk-image@sha256:a56644589bed7c7d939e5aa9475131bda64f24a9b3e52defa5751a1d6774232f
+      name: nvidia-bootc-disk-image
+      source:
+        git:
+          revision: 5b0ad5399cac20d8d7e321566a3ac3baa82ff91f
+          url: https://gitlab.com/redhat/rhel-ai/disk-images/nvidia-bootc
