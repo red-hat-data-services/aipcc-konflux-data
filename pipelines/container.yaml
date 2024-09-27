@@ -48,9 +48,11 @@ spec:
         - name: message
           value: $(params.slack-message)
         - name: files
-          value: $(params.slack-files)
+          value:
+            - $(params.slack-files[*])
         - name: submodules
-          value: $(params.slack-submodules)
+          value:
+            - $(params.slack-submodules[*])
       taskRef:
         params:
           - name: bundle
@@ -411,7 +413,8 @@ spec:
         - name: IMAGE
           value: $(tasks.build-container.results.IMAGE_URL)
         - name: ADDITIONAL_TAGS
-          value: $(params.additional-tags)
+          value:
+            - $(params.additional-tags[*])
       runAfter:
         - build-container
       taskRef:
