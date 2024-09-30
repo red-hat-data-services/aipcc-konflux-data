@@ -147,7 +147,7 @@ spec:
         - name: name
           value: git-clone-oci-ta
         - name: bundle
-          value: quay.io/redhat-appstudio-tekton-catalog/task-git-clone-oci-ta:0.1@sha256:1178a65926b449c3603f7c0ecbb2d9311c0d7f1443c5164e952e7634a1d10142
+          value: quay.io/redhat-appstudio-tekton-catalog/task-git-clone-oci-ta:0.1@sha256:9665dd683a3f634642afa0a0bfe9327ee753259325d55ba1892d3592187fa111
         - name: kind
           value: task
       when:
@@ -200,7 +200,7 @@ spec:
           - name: name
             value: build-vm-image
           - name: bundle
-            value: quay.io/redhat-appstudio-tekton-catalog/task-build-vm-image:0.1@sha256:bbddd71ac9344456c75f43c80d2d5ba70af1c1e7fbfaaa3185a4520bb4317a09
+            value: quay.io/redhat-appstudio-tekton-catalog/task-build-vm-image:0.1@sha256:9aa376a9cfeb5d0c716ee831d5390492e586d28f4b63848ed87a5e2080e27ed4
           - name: kind
             value: task
       when:
@@ -223,7 +223,7 @@ spec:
           - name: name
             value: build-image-manifest
           - name: bundle
-            value: quay.io/redhat-appstudio-tekton-catalog/task-build-image-manifest:0.1@sha256:4edeceb615c556deb30371d2820c6924a330d316bb10f79af7de289ee2da4b8e
+            value: quay.io/redhat-appstudio-tekton-catalog/task-build-image-manifest:0.1@sha256:8b24f9abe949403512a73f8b467b4a2cde395707a8fb4d31b9b1c11665a3253d
           - name: kind
             value: task
         resolver: bundles
@@ -241,7 +241,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/redhat-appstudio-tekton-catalog/task-apply-tags:0.1@sha256:036765df645f049e331d8a10a7386e7f6d0069efcd11ef2404d04cb4b8d55254
+            value: quay.io/redhat-appstudio-tekton-catalog/task-apply-tags:0.1@sha256:c77f899e166e88d9d7960d2261cbba7d218282346d71accc6c859bdf2ab883fc
           - name: kind
             value: task
         resolver: bundles
