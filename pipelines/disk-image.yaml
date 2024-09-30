@@ -1,0 +1,258 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-pipeline
+spec:
+  finally:
+    - name: slack-webhook-notification
+      params:
+        - name: message
+          value: $(params.slack-message)
+        - name: secret-name
+          value: slack-webhook
+        - name: key-name
+          value: rhel-ai-notification
+      taskRef:
+        params:
+          - name: bundle
+            value: quay.io/redhat-appstudio-tekton-catalog/task-slack-webhook-notification:0.1@sha256:b8d030cb64503eb661fdd89710edf9c2f79f7f156b48f10b79a4ff228d6d4c6a
+          - name: name
+            value: slack-webhook-notification
+          - name: kind
+            value: Task
+        resolver: bundles
+      when:
+        - input: $(tasks.status)
+          operator: in
+          values: ["Completed", "Succeeded"]
+        - input: $(params.send-slack-notification)
+          operator: in
+          values: ["true"]
+  params:
+    - description: Source Repository URL
+      name: git-url
+      type: string
+    - default: ""
+      description: Revision of the Source Repository
+      name: revision
+      type: string
+    - description: Fully Qualified Output Image
+      name: output-image
+      type: string
+    - name: image-type
+      description: Image type to build 
+      type: string
+      default: ""
+    - description: config.toml file to pass to BIB
+      default: ""
+      type: string
+      name: config-toml
+    - description: path to bib yaml file
+      default: "bib.yaml"
+      name: bib-file
+      type: string
+    - default: .
+      description:
+        Path to the source code of an application's component from where
+        to build image.
+      name: path-context
+      type: string
+    - default: Dockerfile
+      description:
+        Path to the Dockerfile inside the context specified by parameter
+        path-context
+      name: dockerfile
+      type: string
+    - default: "false"
+      description: Force rebuild image
+      name: rebuild
+      type: string
+    - default: "false"
+      description: Skip checks against built image
+      name: skip-checks
+      type: string
+    - default: "true"
+      description: Skip optional checks, set false if you want to run optional checks
+      name: skip-optional
+      type: string
+    - default: "false"
+      description: Execute the build with network isolation
+      name: hermetic
+      type: string
+    - default: ""
+      description: Build dependencies to be prefetched by Cachi2
+      name: prefetch-input
+      type: string
+    - default: "false"
+      description: Java build
+      name: java
+      type: string
+    - default: ""
+      description:
+        Image tag expiration time, time values could be something like
+        1h, 2d, 3w for hours, days, and weeks, respectively.
+      name: image-expires-after
+    - name: send-notification
+      default: "false"
+      description:
+        Send slack notification on completed build
+    - name: tag-as-latest
+      type: string
+      description: Tag the image as latest-xxx-amd64 after build
+      default: "false"
+    - name: send-slack-notification
+      default: "false"
+      description: Send slack notification on completed build
+    - name: slack-message
+      description: Message to be sent
+      type: string
+      default: ""
+    - name: additional-tags
+      description: Additional tags to apply to the built image
+      type: array
+      default: []
+  results:
+    - description: ""
+      name: CHAINS-GIT_URL
+      value: $(tasks.clone-repository.results.url)
+    - description: ""
+      name: CHAINS-GIT_COMMIT
+      value: $(tasks.clone-repository.results.commit)
+    - description: ""
+      name: IMAGE_URL
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - description: ""
+      name: IMAGE_DIGEST
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+  tasks:
+    - name: init
+      params:
+        - name: image-url
+          value: $(params.output-image)
+        - name: rebuild
+          value: $(params.rebuild)
+        - name: skip-checks
+          value: $(params.skip-checks)
+        - name: skip-optional
+          value: $(params.skip-optional)
+        - name: pipelinerun-name
+          value: $(context.pipelineRun.name)
+        - name: pipelinerun-uid
+          value: $(context.pipelineRun.uid)
+      taskRef:
+        params:
+          - name: name
+            value: init
+          - name: bundle
+            value: quay.io/redhat-appstudio-tekton-catalog/task-init:0.2@sha256:596b7c11572bb94eb67d9ffb4375068426e2a8249ff2792ce04ad2a4bc593a63
+          - name: kind
+            value: task
+        resolver: bundles
+    - name: clone-repository
+      taskRef:
+        resolver: bundles
+        params:
+        - name: name
+          value: git-clone-oci-ta
+        - name: bundle
+          value: quay.io/redhat-appstudio-tekton-catalog/task-git-clone-oci-ta:0.1@sha256:1178a65926b449c3603f7c0ecbb2d9311c0d7f1443c5164e952e7634a1d10142
+        - name: kind
+          value: task
+      when:
+      - input: "$(tasks.init.results.build)"
+        operator: in
+        values:
+        - 'true'
+      runAfter:
+      - init
+      params:
+      - name: url
+        value: "$(params.git-url)"
+      - name: revision
+        value: "$(params.revision)"
+      - name: ociStorage
+        value: "$(params.output-image).git"
+      - name: ociArtifactExpiresAfter
+        value: "$(params.image-expires-after)"
+      workspaces:
+      - name: basic-auth
+        workspace: git-auth
+    - name: build-vm-image
+      timeout: "3h0m00s"
+      params:
+        - name: PLATFORM
+          value: linux-root/amd64
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+        - name: CONTEXT
+          value: $(params.path-context)
+        - name: IMAGE_TYPE
+          value: $(params.image-type)
+        - name: PREFETCH_INPUT
+          value: $(params.prefetch-input)
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.image-expires-after)
+        - name: COMMIT_SHA
+          value: $(tasks.clone-repository.results.commit)
+        - name: OUTPUT_IMAGE
+          value: $(params.output-image)
+        - name: CONFIG_TOML_FILE
+          value: $(params.config-toml)
+        - name: BIB_CONFIG_FILE
+          value: $(params.bib-file)
+      runAfter:
+        - clone-repository
+      taskRef:
+        resolver: bundles
+        params:
+          - name: name
+            value: build-vm-image
+          - name: bundle
+            value: quay.io/redhat-appstudio-tekton-catalog/task-build-vm-image:0.1@sha256:bbddd71ac9344456c75f43c80d2d5ba70af1c1e7fbfaaa3185a4520bb4317a09
+          - name: kind
+            value: task
+      when:
+        - input: $(tasks.init.results.build)
+          operator: in
+          values:
+            - "true"
+    - name: build-image-index
+      timeout: "3h0m00s"
+      params:
+        - name: IMAGE
+          value: $(params.output-image)
+        - name: IMAGES
+          value:
+          - $(tasks.build-vm-image.results.IMAGE_URL)@$(tasks.build-vm-image.results.IMAGE_DIGEST)
+      runAfter:
+        - build-vm-image
+      taskRef:
+        params:
+          - name: name
+            value: build-image-manifest
+          - name: bundle
+            value: quay.io/redhat-appstudio-tekton-catalog/task-build-image-manifest:0.1@sha256:4edeceb615c556deb30371d2820c6924a330d316bb10f79af7de289ee2da4b8e
+          - name: kind
+            value: task
+        resolver: bundles
+    - name: apply-tags
+      params:
+        - name: IMAGE
+          value: $(params.output-image)
+        - name: ADDITIONAL_TAGS
+          value:
+            - $(params.additional-tags[*])
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: apply-tags
+          - name: bundle
+            value: quay.io/redhat-appstudio-tekton-catalog/task-apply-tags:0.1@sha256:036765df645f049e331d8a10a7386e7f6d0069efcd11ef2404d04cb4b8d55254
+          - name: kind
+            value: task
+        resolver: bundles
+  workspaces:
+    - name: git-auth
+      optional: true
