@@ -92,7 +92,6 @@ spec:
           value: $(tasks.clone-repository.results.commit)
         - name: AWS_SECRET_NAME
           value: $(params.aws-secret-name)
-          default: does-not-exist
       runAfter:
         - clone-repository
       taskRef:
