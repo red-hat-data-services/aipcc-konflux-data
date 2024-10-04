@@ -21,6 +21,10 @@ spec:
       description: Name of a secret which will be made available to the build as an Authorization header
       type: string
       default: "also-to-be-defined-in-task"
+    - name: bearer-token-secret-name
+      description: Name of a secret which will be made available to the build as an Authorization header
+      type: string
+      default: "does-not-exist"
     - default: "false"
       description: Skip checks against built image
       name: skip-checks
@@ -103,7 +107,7 @@ spec:
         - name: COMMIT_SHA
           value: $(tasks.clone-repository.results.commit)
         - name: BEARER_TOKEN_SECRET_NAME
-          value: "to-be-defined-in-task"
+          value: $(params.bearer-token-secret-name)
         - name: AWS_SECRET_NAME
           value: $(params.aws-secret-name)
       runAfter:
