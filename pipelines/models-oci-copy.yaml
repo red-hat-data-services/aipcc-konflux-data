@@ -29,6 +29,10 @@ spec:
       description: Force rebuild image
       name: rebuild
       type: string
+    - description: "OCI copy file"
+      name: oci_copy_file
+      type: string
+        
   results:
     - description: ""
       name: IMAGE_URL
