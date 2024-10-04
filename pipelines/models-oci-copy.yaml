@@ -77,7 +77,7 @@ spec:
           - name: name
             value: git-clone
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-git-clone@sha256:2cccdf8729ad4d5adf65e8b66464f8efa1e1c87ba16d343b4a6c621a2a40f7e1 
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone:0.1@sha256:2cccdf8729ad4d5adf65e8b66464f8efa1e1c87ba16d343b4a6c621a2a40f7e1 
           - name: kind
             value: task
         resolver: bundles
@@ -113,7 +113,7 @@ spec:
           - name: name
             value: oci-copy
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy@sha256:98da6b6ea0964a4daaebd7ecf38c6317a1427e06c5e3b697e324fbae89a9b0af 
+            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy:0.1@sha256:98da6b6ea0964a4daaebd7ecf38c6317a1427e06c5e3b697e324fbae89a9b0af 
           - name: kind
             value: task
         resolver: bundles
@@ -140,7 +140,7 @@ spec:
           - name: name
             value: sast-snyk-check
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check@sha256:69ae591831f0f96d31c85d360273c1ce436ae1dbbfa3d0b22a083cb228c9e82c 
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check:0.2@sha256:69ae591831f0f96d31c85d360273c1ce436ae1dbbfa3d0b22a083cb228c9e82c 
           - name: kind
             value: task
         resolver: bundles
@@ -159,7 +159,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags@sha256:f485e250fb060060892b633c495a3d7e38de1ec105ae1be48608b0401530ab2c
+            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:f485e250fb060060892b633c495a3d7e38de1ec105ae1be48608b0401530ab2c
           - name: kind
             value: task
         resolver: bundles
