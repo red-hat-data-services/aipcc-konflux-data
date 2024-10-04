@@ -21,6 +21,14 @@ spec:
       description: Name of a secret which will be made available to the build as an Authorization header
       type: string
       default: "also-to-be-defined-in-task"
+    - default: "false"
+      description: Skip checks against built image
+      name: skip-checks
+      type: string
+    - default: "false"
+      description: Force rebuild image
+      name: rebuild
+      type: string
   results:
     - description: ""
       name: IMAGE_URL
