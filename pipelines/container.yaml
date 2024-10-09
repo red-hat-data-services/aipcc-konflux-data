@@ -32,7 +32,7 @@ spec:
           - name: name
             value: summary
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-summary:0.2@sha256:d97c04ab42f277b1103eb6f3a053b247849f4f5b3237ea302a8ecada3b24e15b
+            value: quay.io/konflux-ci/tekton-catalog/task-summary:0.2@sha256:66a7a2f6d5fe5c6980c6c70dc86c45373c3f0d755816940412ad9b470d9d58c7
           - name: kind
             value: task
         resolver: bundles
@@ -56,7 +56,7 @@ spec:
       taskRef:
         params:
           - name: bundle
-            value: quay.io/redhat-appstudio-tekton-catalog/task-slack-webhook-notification:0.1@sha256:b8d030cb64503eb661fdd89710edf9c2f79f7f156b48f10b79a4ff228d6d4c6a
+            value: quay.io/konflux-ci/tekton-catalog/task-slack-webhook-notification:0.1@sha256:0dfdfd87a8716ff9c20ae3325eff9a5d52ee9c708959c1e93eaedc852621a4d5
           - name: name
             value: slack-webhook-notification
           - name: kind
@@ -225,7 +225,7 @@ spec:
           - name: name
             value: prefetch-dependencies
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies:0.1@sha256:fe7234e3824d1e65d6a7aac352e7a6bbce623d90d8d7da9aceeee108ad2c61be
+            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies:0.2@sha256:fe7234e3824d1e65d6a7aac352e7a6bbce623d90d8d7da9aceeee108ad2c61be
           - name: kind
             value: task
         resolver: bundles
@@ -276,7 +276,7 @@ spec:
           - name: name
             value: buildah
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-buildah:0.2@sha256:2c3426a2a7ff46a413c56f8f18055f9385eb323d41e6e8cf1b9dd9d10013daaf
+            value: quay.io/konflux-ci/tekton-catalog/task-buildah:0.2@sha256:e107cfdf4ee68741ad366b2768cd33e2d5f99569b639f95f50df8b9835c2d144
           - name: kind
             value: task
         resolver: bundles
@@ -350,7 +350,7 @@ spec:
           - name: name
             value: clair-scan
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.2@sha256:9f4ddafd599e06b319cece5a4b8ac36b9e7ec46bea378bc6c6af735d3f7f8060
+            value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.2@sha256:37b9187c1d5f6672bbc9c61d88fc71a3ee688076cb16edef42d1ff92a59027fb
           - name: kind
             value: task
         resolver: bundles
