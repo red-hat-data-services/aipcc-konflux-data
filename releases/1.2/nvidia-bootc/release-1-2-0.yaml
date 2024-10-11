@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: nvidia-bootc-1-2-0
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: nvidia-bootc-1-2-prod
+  snapshot: nvidia-bootc-1-2-0
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.2.0"
