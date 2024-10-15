@@ -4,7 +4,7 @@ kind: Release
 metadata:
   labels:
     release.appstudio.openshift.io/author: rhel-ai-team
-  name: instructlab-amd-1-2-0
+  name: instructlab-amd-1-2-0-1
   namespace: rhel-ai-tenant
 spec:
   releasePlan: instructlab-amd-1-2-prod
