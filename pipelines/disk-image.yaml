@@ -144,31 +144,33 @@ spec:
       taskRef:
         resolver: bundles
         params:
-        - name: name
-          value: git-clone-oci-ta
-        - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:d1e63ec00bed1c9f0f571fa76b4da570be49a7c255c610544a461495230ba1b1 
-        - name: kind
-          value: task
+          - name: name
+            value: git-clone-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:d1e63ec00bed1c9f0f571fa76b4da570be49a7c255c610544a461495230ba1b1
+          - name: kind
+            value: task
       when:
-      - input: "$(tasks.init.results.build)"
-        operator: in
-        values:
-        - 'true'
+        - input: "$(tasks.init.results.build)"
+          operator: in
+          values:
+          - 'true'
       runAfter:
-      - init
+        - init
       params:
-      - name: url
-        value: "$(params.git-url)"
-      - name: revision
-        value: "$(params.revision)"
-      - name: ociStorage
-        value: "$(params.output-image).git"
-      - name: ociArtifactExpiresAfter
-        value: "$(params.image-expires-after)"
+        - name: url
+          value: "$(params.git-url)"
+        - name: revision
+          value: "$(params.revision)"
+        - name: ociStorage
+          value: "$(params.output-image).git"
+        - name: ociArtifactExpiresAfter
+          value: "$(params.image-expires-after)"
+        - name: enableSymlinkCheck
+          value: false
       workspaces:
-      - name: basic-auth
-        workspace: git-auth
+        - name: basic-auth
+          workspace: git-auth
     - name: build-vm-image
       timeout: "3h0m00s"
       params:
