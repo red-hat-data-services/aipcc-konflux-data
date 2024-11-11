@@ -116,6 +116,8 @@ spec:
           value: $(params.bearer-token-secret-name)
         - name: AWS_SECRET_NAME
           value: $(params.aws-secret-name)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
       runAfter:
         - clone-repository
       taskRef:
@@ -139,6 +141,8 @@ spec:
           value: $(tasks.oci-copy.results.IMAGE_URL)
         - name: image-digest
           value: $(tasks.oci-copy.results.IMAGE_DIGEST)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
       runAfter:
         - oci-copy
       taskRef:
