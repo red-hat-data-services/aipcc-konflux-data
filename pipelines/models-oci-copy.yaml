@@ -171,7 +171,6 @@ spec:
             value: task
         resolver: bundles
   workspaces:
-    - name: workspace
     - name: git-auth
       optional: true
 
