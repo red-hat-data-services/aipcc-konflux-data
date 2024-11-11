@@ -136,15 +136,15 @@ spec:
       timeout: 2h
       params:
         - name: image-url
-          value: $(tasks.build-container.results.IMAGE_URL)
+          value: $(tasks.oci-copy.results.IMAGE_URL)
         - name: image-digest
-          value: $(tasks.build-container.results.IMAGE_DIGEST)
+          value: $(tasks.oci-copy.results.IMAGE_DIGEST)
         - name: SOURCE_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
         - name: CACHI2_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)            
       runAfter:
-        - build-container
+        - oci-copy
       taskRef:
         params:
           - name: name
