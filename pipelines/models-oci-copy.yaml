@@ -74,14 +74,22 @@ spec:
           value: $(params.git-url)
         - name: revision
           value: $(params.revision)
+        - name: depth
+          value: 10
+        - name: enableSymlinkCheck
+          value: false
+        - name: ociStorage
+          value: $(params.output-image).git
+        - name: ociArtifactExpiresAfter
+          value: $(params.image-expires-after)            
       runAfter:
         - init
       taskRef:
         params:
           - name: name
-            value: git-clone
+            value: git-clone-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-git-clone:0.1@sha256:2cccdf8729ad4d5adf65e8b66464f8efa1e1c87ba16d343b4a6c621a2a40f7e1 
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:d1e63ec00bed1c9f0f571fa76b4da570be49a7c255c610544a461495230ba1b1
           - name: kind
             value: task
         resolver: bundles
@@ -91,8 +99,6 @@ spec:
           values:
             - "true"
       workspaces:
-        - name: output
-          workspace: workspace
         - name: basic-auth
           workspace: git-auth
     - name: oci-copy
@@ -115,9 +121,9 @@ spec:
       taskRef:
         params:
           - name: name
-            value: oci-copy
+            value: oci-copy-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy:0.1@sha256:64cb6b27e5acb713ca93945946293f8e2239d23a08a56d49b5fa518d404c55a0
+            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta@sha256:e9fc92f8e7b31ac0e9df28afbb9954015963a0878afa45fbfa38dfa6444719bb 
           - name: kind
             value: task
         resolver: bundles
@@ -126,10 +132,6 @@ spec:
           operator: in
           values:
             - "true"
-      workspaces:
-        - name: source
-          workspace: workspace
-
     - name: sast-snyk-check
       timeout: 2h
       params:
@@ -137,21 +139,26 @@ spec:
           value: $(tasks.oci-copy.results.IMAGE_URL)
         - name: image-digest
           value: $(tasks.oci-copy.results.IMAGE_DIGEST)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+        - name: CACHI2_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)            
       runAfter:
         - oci-copy
       taskRef:
         params:
           - name: name
-            value: sast-snyk-check
+            value: sast-snyk-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check:0.2@sha256:69ae591831f0f96d31c85d360273c1ce436ae1dbbfa3d0b22a083cb228c9e82c 
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.3@sha256:0984c4bf461c610d6f074508a099f1a3b1173621c740ea42f76f59142a18eedf            
           - name: kind
             value: task
         resolver: bundles
-      workspaces:
-        - name: workspace
-          workspace: workspace
-
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
     - name: apply-tags
       params:
         - name: IMAGE
