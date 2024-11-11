@@ -64,7 +64,7 @@ spec:
           - name: name
             value: init
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:092c113b614f6551113f17605ae9cb7e822aa704d07f0e37ed209da23ce392cc 
+            value: quay.io/konflux-ci/tekton-catalog/task-init@sha256:f239f38bba3a8351c8cb0980fde8e2ee477ded7200178b0f45175e4006ff1dca 
           - name: kind
             value: task
         resolver: bundles
@@ -125,7 +125,7 @@ spec:
           - name: name
             value: oci-copy-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta@sha256:e9fc92f8e7b31ac0e9df28afbb9954015963a0878afa45fbfa38dfa6444719bb 
+            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta@sha256:b94d58badcfc17ba5b7e45dc8c336185f137c5bdfd39109b2209636f3d3d3d7c 
           - name: kind
             value: task
         resolver: bundles
@@ -171,6 +171,23 @@ spec:
             value: apply-tags
           - name: bundle
             value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:f485e250fb060060892b633c495a3d7e38de1ec105ae1be48608b0401530ab2c
+          - name: kind
+            value: task
+        resolver: bundles
+    - name: rpms-signature-scan
+      params:
+        - name: image-digest
+          value: $(tasks.oci-copy.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.oci-copy.results.IMAGE_URL)
+      runAfter:
+        - oci-copy 
+      taskRef:
+        params:
+          - name: name
+            value: rpms-signature-scan
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-rpms-signature-scan:0.2@sha256:b627a8040f900bf359b50bfb5201907f73712ae5949270d57ea30cff11df078c
           - name: kind
             value: task
         resolver: bundles
