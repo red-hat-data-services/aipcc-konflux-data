@@ -139,6 +139,8 @@ spec:
           value: $(tasks.oci-copy.results.IMAGE_URL)
         - name: image-digest
           value: $(tasks.oci-copy.results.IMAGE_DIGEST)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
       runAfter:
         - oci-copy
       taskRef:
