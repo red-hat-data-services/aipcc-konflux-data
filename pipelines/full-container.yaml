@@ -190,7 +190,7 @@ spec:
         - name: ociStorage
           value: $(params.output-image).git
         - name: ociArtifactExpiresAfter
-          value: $(params.image-expires-after)            
+          value: $(params.image-expires-after)
       runAfter:
         - init
       taskRef:
@@ -221,7 +221,7 @@ spec:
         - name: ociArtifactExpiresAfter
           value: $(params.image-expires-after)
         - name: dev-package-managers
-          value: "true"            
+          value: "true"
       runAfter:
         - clone-repository
       taskRef:
@@ -271,7 +271,7 @@ spec:
         - name: SOURCE_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
         - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)            
+          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
       runAfter:
         - prefetch-dependencies
       taskRef:
@@ -295,7 +295,7 @@ spec:
         - name: SOURCE_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
         - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)            
+          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
       runAfter:
         - build-container
       taskRef:
@@ -351,7 +351,7 @@ spec:
           - name: name
             value: clair-scan
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.2@sha256:eff773ad252c2b9ad53480ca5a62d1d4546dffba84b16c5d39560e9b33926ab6 
+            value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.2@sha256:eff773ad252c2b9ad53480ca5a62d1d4546dffba84b16c5d39560e9b33926ab6
           - name: kind
             value: task
         resolver: bundles
@@ -359,7 +359,7 @@ spec:
         - input: $(params.skip-checks)
           operator: in
           values:
-            - "false"              
+            - "false"
     - name: sast-snyk-check
       timeout: 2h
       params:
@@ -370,7 +370,7 @@ spec:
         - name: SOURCE_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
         - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)            
+          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
       runAfter:
         - build-container
       taskRef:
@@ -378,7 +378,7 @@ spec:
           - name: name
             value: sast-snyk-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.3@sha256:0984c4bf461c610d6f074508a099f1a3b1173621c740ea42f76f59142a18eedf            
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.3@sha256:0984c4bf461c610d6f074508a099f1a3b1173621c740ea42f76f59142a18eedf
           - name: kind
             value: task
         resolver: bundles
@@ -401,7 +401,7 @@ spec:
           - name: name
             value: clamav-scan
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.1@sha256:1465898dfedd0111577fb15a6d37bfd2873d83581d52280938de5909b41ebef3 
+            value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.1@sha256:1465898dfedd0111577fb15a6d37bfd2873d83581d52280938de5909b41ebef3
           - name: kind
             value: task
         resolver: bundles
@@ -449,4 +449,4 @@ spec:
     - name: git-auth
       optional: true
     - name: netrc
-      optional: true        
+      optional: true
