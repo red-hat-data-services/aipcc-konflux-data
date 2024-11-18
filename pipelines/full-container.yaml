@@ -237,7 +237,7 @@ spec:
         - name: git-basic-auth
           workspace: git-auth
         - name: netrc
-          workspace: netrc            
+          workspace: netrc
     - name: build-container
       timeout: 6h
       params:
