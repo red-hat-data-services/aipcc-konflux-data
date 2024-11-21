@@ -125,7 +125,7 @@ spec:
           - name: name
             value: oci-copy-oci-ta
           - name: bundle
-            value: quay.io/rbean/task-oci-copy-oci-ta@sha256:feedbf481d1f9fcd77b7bcb250b5ac19f9b0a7fc3c36e9e3e95739575a5d5f65
+            value: quay.io/rbean/task-oci-copy-oci-ta:0.1@sha256:334aade63100351fe0a594bce45c7e0c666e1328223be695cd3843df1e9b3152
           - name: kind
             value: task
         resolver: bundles
