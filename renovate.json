@@ -12,7 +12,7 @@
       "matchStrings": [
 	"value: quay.io\/konflux-ci\/tekton-catalog\/(?<depName>(.*)):(?<version>(.*))@sha256:(?<currentValue>(.*))"
       ],
-      "depNameTemplate": "quay.io/konflux-ci/tekton-catalog/{{depName}}",
+      "depNameTemplate": "quay.io/konflux-ci/tekton-catalog/{{depName}}:{{version}}",
       "datasourceTemplate": "docker",
       "versioningTemplate": "digest"
     }
