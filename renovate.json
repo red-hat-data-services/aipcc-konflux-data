@@ -1,5 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>redhat/rhel-ai/renovate-config"
+  ],
   "customManagers": [
     {
       "customType": "regex",
