@@ -7,7 +7,7 @@
 	"pipelines/full-container.yaml"
       ],
       "matchStrings": [
-        "value: quay.io/konflux-ci/tekton-catalog/(?<depName>:[a-zA-Z0-9._-]+):(?<version>[^@]+)@sha256:(?<currentValue>[a-fA-F0-9]{64})"
+	"value: quay.io\/konflux-ci\/tekton-catalog\/(?<depName>(.*)):(?<version>(.*))@sha256:(?<currentValue>(.*))"
       ],
       "depNameTemplate": "quay.io/konflux-ci/tekton-catalog/{{depName}}",
       "datasourceTemplate": "docker",
