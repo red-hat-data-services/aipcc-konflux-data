@@ -1,10 +1,9 @@
-{
+"BundleConfig": {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "regexManagers": [
+  "customManagers": [
     {
-      "fileMatch": [
-        "pipelines/full-container.yaml"
-      ],
+      "customType": "regex",
+      "fileMatch": ["pipelines/full-container.yaml"],
       "matchStrings": [
         "quay.io/konflux-ci/tekton-catalog/(?<depName>[a-zA-Z0-9._-]+):(?<version>[^@]+)@sha256:(?<currentValue>[a-fA-F0-9]{64})"
       ],
@@ -12,5 +11,3 @@
       "datasourceTemplate": "docker",
       "versioningTemplate": "digest"
     }
-  ]
-}
