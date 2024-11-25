@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>redhat/rhel-ai/renovate-config"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": [
+        "pipelines/full-container.yaml"
+      ],
+      "matchStrings": [
+        "value: quay.io/konflux-ci/tekton-catalog/(?<depName>.*):\\S+@sha256:(?<currentValue>.*)"
+      ],
+      "depNameTemplate": "quay.io/konflux-ci/tekton-catalog/{{(depName)}}",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "digest"
+    }
+  ]
+}
