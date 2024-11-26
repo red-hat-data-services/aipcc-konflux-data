@@ -10,9 +10,9 @@
 	"pipelines/full-container.yaml"
       ],
       "matchStrings": [
-        "value: (?<depName>[^:]+):(?<currentValue>[^@]+)(@(?<currentDigest>sha256:[a-f0-9]+))?"
+        "value: quay.io\/konflux-ci\/tekton-catalog\/(?<depName>[^:]+):(?<currentValue>[^@]+)(@(?<currentDigest>sha256:[a-f0-9]+))?"
       ],
-      "autoReplaceStringTemplate": "value: {{{depName}}}:{{{currentValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "autoReplaceStringTemplate": "value: quay.io/konflux-ci/tekton-catalog/{{{depName}}}:{{{currentValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
       "datasourceTemplate": "docker"      
     }
   ]
