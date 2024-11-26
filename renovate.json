@@ -9,11 +9,11 @@
       "fileMatch": [
 	"pipelines/full-container.yaml"
       ],
-       "matchStrings": [
-           "value:\s(?<depName>[^:]+):(?<currentValue>[^@]+)(@(?<currentDigest>sha256:[a-f0-9]+))?"
-       ],
-       "autoReplaceStringTemplate": "value: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",      
-      "datasourceTemplate": "docker"
+      "matchStrings": [
+        "value:\s(?<depName>[^:]+):(?<currentValue>[^@]+)(@(?<currentDigest>sha256:[a-f0-9]+))?"
+      ],
+      "autoReplaceStringTemplate": "value: {{{depName}}}:{{{currentValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "datasourceTemplate": "docker"      
     }
   ]
 }
