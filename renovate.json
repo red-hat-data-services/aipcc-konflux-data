@@ -9,12 +9,11 @@
       "fileMatch": [
 	"pipelines/full-container.yaml"
       ],
-      "matchStrings": [
-	"value: quay.io\/konflux-ci\/tekton-catalog\/(?<depName>(.*)):(?<version>(.*))@sha256:(?<currentValue>(.*))"	      
-      ],
-      "depNameTemplate": "quay.io/konflux-ci/tekton-catalog/{{depName}}",
-      "datasourceTemplate": "docker",
-      "versioningTemplate": "digest"
+       "matchStrings": [
+           "\"value\":\\s\"(?<depName>[^:\"]+):(?<currentValue>[^@\"]+)(@(?<currentDigest>sha256:[a-f0-9]+))?\""
+       ],
+       "autoReplaceStringTemplate": "\"image\": \"{{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}\"",      
+      "datasourceTemplate": "docker"
     }
   ]
 }
