@@ -8,7 +8,7 @@ metadata:
   namespace: rhel-ai-tenant
 spec:
   releasePlan: instructlab-nvidia-1-3-prod
-  snapshot: instructlab-nvidia-1-3-0
+  snapshot: instructlab-nvidia-1-3-0-1
   data:
     mapping:
       defaults:
