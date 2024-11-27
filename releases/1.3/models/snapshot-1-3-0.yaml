@@ -1,0 +1,36 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: models-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: models-1-3
+  artifacts: {}
+  components:
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models-1-3/granite-8b-lab-v1-1-3@sha256:38d9b93127665e2f12b6dbf30519320a47ca7843fa7b6316d1d86d7f4d82f96d
+      name: granite-8b-lab-v1-1-3
+      source:
+        git:
+          context: ./
+          dockerfileUrl: Containerfile
+          revision: 10011d803aeae543f0b2776f17044c0aa47227a1
+          url: https://gitlab.com/redhat/rhel-ai/models/granite-8b-lab-v1
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models-1-3/granite-8b-starter-v1-1-3@sha256:f9deaa56a93bb8480f48073c1e11b5feb30d1d9854861912e75db6e383b17613
+      name: granite-8b-starter-v1-1-3
+      source:
+        git:
+          context: ./
+          dockerfileUrl: Containerfile
+          revision: 90ca2350e4772d69875dcf7af1222d0e5aa1b40a
+          url: https://gitlab.com/redhat/rhel-ai/models/granite-8b-starter-v1
+    - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/models-1-3/granite-8b-lab-v2-preview-1-3@sha256:c3fc2b7efacc5aa1f3a6e49afacd950d6f8e4eb0db4b11045929522b90daff1a
+      name: granite-8b-lab-v2-preview-1-3
+      source:
+        git:
+          context: ./
+          dockerfileUrl: Containerfile
+          revision: 2af18bb22e169f596ff15cee77e8df477958879b
+          url: https://gitlab.com/redhat/rhel-ai/models/granite-8b-lab-v2-preview
