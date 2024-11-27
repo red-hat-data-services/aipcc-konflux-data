@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: instructlab-nvidia-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: instructlab-nvidia-1-3
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/instructlab-nvidia-1-3/instructlab-nvidia-1-3@sha256:87c62ec1471224a002a76f76486d64838ef6fb9fc6271eec02ad7c32ba33408f
+    name: instructlab-nvidia-1-3
+    source:
+      git:
+        revision: 5aaea8ea8446b8f163f7fdb21362e1180b2d74da
+        url: https://gitlab.com/redhat/rhel-ai/containers/instructlab-nvidia
