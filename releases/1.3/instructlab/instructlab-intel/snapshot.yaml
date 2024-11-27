@@ -2,7 +2,7 @@
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: Snapshot
 metadata:
-  name: instructlab-intel-1-3-0
+  name: instructlab-intel-1-3-0-1
   namespace: rhel-ai-tenant
   labels:
     release.appstudio.openshift.io/auto-release: "false"
@@ -11,7 +11,7 @@ spec:
   artifacts: {}
   components:
   - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/instructlab-intel-1-3/instructlab-intel-1-3@sha256:a7cad6107092027ad5b3d68e2369052485fc5159063e261cc3baac39152b7156
-    name: instructlab-amd-1-2
+    name: instructlab-intel-1-3
     source:
       git:
         revision: 5842597731012a81cf06957a12458061e74e3ea8
