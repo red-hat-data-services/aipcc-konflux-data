@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: instructlab-amd-1-3-0
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: instructlab-amd-1-3-prod
+  snapshot: instructlab-amd-1-3-0
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.3.0"
