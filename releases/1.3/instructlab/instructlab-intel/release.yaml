@@ -8,7 +8,7 @@ metadata:
   namespace: rhel-ai-tenant
 spec:
   releasePlan: instructlab-intel-1-3-prod
-  snapshot: instructlab-intel-1-3-0
+  snapshot: instructlab-intel-1-3-0-1
   data:
     mapping:
       defaults:
