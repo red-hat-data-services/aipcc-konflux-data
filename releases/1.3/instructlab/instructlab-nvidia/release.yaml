@@ -4,11 +4,11 @@ kind: Release
 metadata:
   labels:
     release.appstudio.openshift.io/author: rhel-ai-team
-  name: instructlab-nvidia-1-3-0-1
+  name: instructlab-nvidia-1-3-0-3
   namespace: rhel-ai-tenant
 spec:
   releasePlan: instructlab-nvidia-1-3-prod
-  snapshot: instructlab-nvidia-1-3-0-1
+  snapshot: instructlab-nvidia-1-3-0-3
   data:
     mapping:
       defaults:
