@@ -2,7 +2,7 @@
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: Snapshot
 metadata:
-  name: models-1-3-0
+  name: models-1-3-0-4
   namespace: rhel-ai-tenant
   labels:
     release.appstudio.openshift.io/auto-release: "false"

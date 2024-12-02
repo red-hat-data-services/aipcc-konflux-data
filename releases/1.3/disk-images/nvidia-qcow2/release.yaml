@@ -4,11 +4,11 @@ kind: Release
 metadata:
   labels:
     release.appstudio.openshift.io/author: rhel-ai-team
-  name: models-1-3-0
+  name: nvidia-bootc-qcow2-disk-image-1-3-0
   namespace: rhel-ai-tenant
 spec:
-  releasePlan: models-1-3-prod
-  snapshot: models-1-3-88lgn
+  releasePlan: nvidia-bootc-1-3-qcow2-disk-image-prod
+  snapshot: nvidia-bootc-qcow2-disk-image-1-3-0
   data:
     mapping:
       defaults:
