@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: nvidia-aws-disk-image-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: nvidia-aws-disk-image-1-3
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/nvidia-aws-disk-image-1-3/nvidia-aws-disk-image-1-3@sha256:396ddf008f6440e4fb3a2f66567f23406067537930a795d83ee2765676faebd8
+    name: nvidia-aws-disk-image-1-3
+    source:
+      git:
+        revision: 865a2b01d1cfb7c179b9fa98f3565bd1bb124287
+        url: https://gitlab.com/redhat/rhel-ai/disk-images/nvidia-aws

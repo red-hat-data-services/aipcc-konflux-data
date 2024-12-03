@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: nvidia-gcp-disk-image-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: nvidia-gcp-disk-image-1-3
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/nvidia-gcp-disk-image-1-3/nvidia-gcp-disk-image-1-3@sha256:0ab21f3fcefe53ee8b6592e119abdd4df32fed66bbf3b773ca38ed4a0902fc2a
+    name: nvidia-gcp-disk-image-1-3
+    source:
+      git:
+        revision: 6aed2287bdb4a22dad841044a6bbdfb78751cae8
+        url: https://gitlab.com/redhat/rhel-ai/disk-images/nvidia-gcp
