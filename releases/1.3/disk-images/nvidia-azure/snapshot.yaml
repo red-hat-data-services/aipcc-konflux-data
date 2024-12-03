@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: nvidia-azure-disk-image-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: nvidia-azure-disk-image-1-3
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/nvidia-azure-disk-image-1-3/nvidia-azure-disk-image-1-3@sha256:2c17598ba3bab045deb8ff78cdd0269514ab4f8fcf8df13cc6356c4129882b5c
+    name: nvidia-azure-disk-image-1-3
+    source:
+      git:
+        revision: cf2f5986ed1532b4b6a0bac8fbae2ad32c442aba
+        url: https://gitlab.com/redhat/rhel-ai/disk-images/nvidia-azure
