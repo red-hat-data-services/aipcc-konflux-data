@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: amd-azure-disk-image-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: amd-azure-disk-image-1-3
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/amd-azure-disk-image-1-3/amd-azure-disk-image-1-3@sha256:d89b9cce32a1a336cee1becaaed300cbf166b44f5ad08b3e6983e02008518e8a
+    name: amd-azure-disk-image-1-3
+    source:
+      git:
+        revision: 5660b193093e4bdc6223959ad3bc6c86bd93eeb5
+        url: https://gitlab.com/redhat/rhel-ai/disk-images/amd-azure
