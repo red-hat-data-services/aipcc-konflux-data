@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: amd-bootc-iso-disk-image-1-3-0
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: amd-bootc-1-3-iso-disk-image-prod
+  snapshot: amd-bootc-iso-disk-image-1-3-0
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.3.0"

@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: amd-bootc-raw-disk-image-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: amd-bootc-1-3-raw-disk-image
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/amd-bootc-1-3-raw-disk-image/amd-bootc-1-3-raw-disk-image@sha256:6090fa8adeab673141f839ab65f81c4552c7bef0e0a4604fd8da9b2111fc6e42
+    name: amd-bootc-1-3-raw-disk-image
+    source:
+      git:
+        revision: d0f1f18cef7743ffe650744a8319e86a26b7d76c
+        url: https://gitlab.com/redhat/rhel-ai/disk-images/amd-bootc
