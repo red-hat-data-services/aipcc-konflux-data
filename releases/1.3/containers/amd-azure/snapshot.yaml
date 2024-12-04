@@ -1,0 +1,18 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: amd-azure-bootc-1-3-0
+  namespace: rhel-ai-tenant
+  labels:
+    release.appstudio.openshift.io/auto-release: "false"
+spec:
+  application: amd-azure-bootc-1-3
+  artifacts: {}
+  components:
+  - containerImage: quay.io/redhat-user-workloads/rhel-ai-tenant/amd-azure-bootc-1-3/amd-azure-bootc-1-3@sha256:214ac97027072b46e1f534756a549553efa33023d6275f5dca3c25d4c536543c
+    name: amd-azure-bootc-1-3
+    source:
+      git:
+        revision: 2005c6378a198489cda51762174a124e49e1ab1f
+        url: https://gitlab.com/redhat/rhel-ai/containers/amd-azure-bootc
