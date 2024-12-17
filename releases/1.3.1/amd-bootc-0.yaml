@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: amd-bootc-1-3-1-0
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: amd-bootc-1-3-prod
+  snapshot: amd-bootc-1-3-r67nf
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.3.1"
