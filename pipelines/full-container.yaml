@@ -143,6 +143,10 @@ spec:
       description: Additional tags to apply to the built image
       type: array
       default: []
+    - default: "false"
+      description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
+      name: privileged-nested
+      type: string
   results:
     - description: ""
       name: IMAGE_URL
@@ -263,6 +267,8 @@ spec:
           value: $(params.build-args-file)
         - name: ADDITIONAL_SECRET
           value: $(params.additional-build-secret)
+        - name: PRIVILEGED_NESTED
+          value: $(params.privileged-nested)
         - name: SQUASH
           value: $(params.squash-build)
         - name: SOURCE_ARTIFACT
