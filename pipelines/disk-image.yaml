@@ -202,7 +202,7 @@ spec:
           - name: name
             value: build-vm-image
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.1@sha256:2602ea9b0ffb88d67abc8456ed6cd5b9db3588faa5fa8d9baf7b7154dfc26126
+            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.1@sha256:bd631e5b5b55847cf5502e82765e569f23af072ec9e40dc965e146bde1baca10
           - name: kind
             value: task
       when:
