@@ -174,7 +174,7 @@ spec:
           - name: name
             value: init
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:90dda596d44b3f861889da2fba161dff34c6116fe76c3989e3f84262ea0f29cd
+            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:b76b563510ad9db0049e9b4512a152aef2bb51fb714363b6aa592744a580bcbd
           - name: kind
             value: task
         resolver: bundles
@@ -230,7 +230,7 @@ spec:
           - name: name
             value: prefetch-dependencies-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.1@sha256:e6b92dfd7442b261ef539d780c635163b2b2d099b8ce9455e0baf51a0fedabec
+            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.1@sha256:8fb092dae7109ac211d8b98413d9bc0c71c14f64644ce239676383576f861a86
           - name: kind
             value: task
         resolver: bundles
@@ -282,7 +282,7 @@ spec:
           - name: name
             value: buildah-remote-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.3@sha256:4958b906fbef56d3a26aa78498d16b3a63fe5744cdef0945406a41e66a26f02c
+            value: quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.3@sha256:6e17d2199e839b633cf841a640ddf9ec0fbc8b0a8a4e8c7596ec60ed47eb52e9
           - name: kind
             value: task
         resolver: bundles
@@ -427,7 +427,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:2c2d88c07623b2d25163994ded6e9f29205ea5bbab090f4c86379739940028b9
+            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:46f4471a86130c146a6e14124f175d6ef1ddb4b80ac51e7957d78a3facb6261b
           - name: kind
             value: task
         resolver: bundles
