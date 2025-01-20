@@ -14,7 +14,7 @@
         "matchUpdateTypes": [
           "digest"
         ],
-        "matchBaseBranches": ["main"],
+        "matchBaseBranches": [],
         "platformAutomerge": true,
         "automerge": true
       }
