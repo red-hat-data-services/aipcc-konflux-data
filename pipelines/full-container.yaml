@@ -147,6 +147,12 @@ spec:
       description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
       name: privileged-nested
       type: string
+    - name: build-platforms
+      description: List of platforms to build the container images on. The available
+        set of values is determined by the configuration of the multi-platform-controller.
+      type: array
+      default:
+        - linux/x86_64
   results:
     - description: ""
       name: IMAGE_URL
@@ -241,6 +247,11 @@ spec:
           workspace: netrc
     - name: build-container
       timeout: 6h
+      matrix:
+        params:
+          - name: PLATFORM
+            value:
+              - $(params.build-platforms)
       params:
         - name: IMAGE
           value: $(params.output-image)
