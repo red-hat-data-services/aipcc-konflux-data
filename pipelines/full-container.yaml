@@ -5,11 +5,6 @@ metadata:
 spec:
   finally:
     - name: show-sbom
-      matrix:
-        params:
-          - name: PLATFORM
-            value:
-              - $(params.build-platforms)
       params:
         - name: IMAGE_URL
           value: $(tasks.build-container.results.IMAGE_URL)
@@ -152,12 +147,6 @@ spec:
       description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
       name: privileged-nested
       type: string
-    - name: build-platforms
-      description: List of platforms to build the container images on. The available
-        set of values is determined by the configuration of the multi-platform-controller.
-      type: array
-      default:
-        - linux/x86_64
   results:
     - description: ""
       name: IMAGE_URL
@@ -252,11 +241,6 @@ spec:
           workspace: netrc
     - name: build-container
       timeout: 6h
-      matrix:
-        params:
-          - name: PLATFORM
-            value:
-              - $(params.build-platforms)
       params:
         - name: IMAGE
           value: $(params.output-image)
@@ -275,6 +259,8 @@ spec:
         - name: BUILD_ARGS
           value:
             - $(params.build-args[*])
+        - name: PLATFORM
+          value: linux-root/amd64
         - name: ADD_CAPABILITIES
           value: "SYS_ADMIN"
         - name: BUILD_ARGS_FILE
