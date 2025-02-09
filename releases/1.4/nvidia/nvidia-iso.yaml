@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: nvidia-bootc-iso-disk-image-1-4-0
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: nvidia-bootc-iso-disk-image-prod-1-4
+  snapshot: nvidia-bootc-iso-disk-image-1-4-lzzhp
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.4.0"
