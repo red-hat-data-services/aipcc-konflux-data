@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: nvidia-aws-disk-image-1-4-0-1
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: nvidia-aws-disk-image-prod-1-4
+  snapshot: nvidia-aws-disk-image-1-4-xn6wf
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.4.0"
