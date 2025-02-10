@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  labels:
+    release.appstudio.openshift.io/author: rhel-ai-team
+  name: models-1-4
+  namespace: rhel-ai-tenant
+spec:
+  releasePlan: models-prod-1-4
+  snapshot: models-1-4-6rrk4
+  data:
+    mapping:
+      defaults:
+        tags:
+          - "1.4.0"
