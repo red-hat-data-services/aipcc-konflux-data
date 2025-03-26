@@ -136,7 +136,7 @@ spec:
           - name: name
             value: init
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:2f59e9a3c20ce4509356389d327087213cc82c079b30811935837791da140f9f
+            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:db1285c571d7037684876df0a5b619305b3c8f2be88233ebead4d37caf5cb04b
           - name: kind
             value: task
         resolver: bundles
@@ -225,7 +225,7 @@ spec:
           - name: name
             value: build-image-manifest
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-image-manifest:0.1@sha256:f982b1844ac1f4841a88bebe5efce6deff16c5334705efc23a2ed057fb1ee5c6
+            value: quay.io/konflux-ci/tekton-catalog/task-build-image-manifest:0.1@sha256:901d40eb02a354398f213357cc65551d7cdb6789773c8cf80443c49ebe9cdaf7
           - name: kind
             value: task
         resolver: bundles
@@ -243,7 +243,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:e1d365ce85d6448f6ebd0d0a000d0f45b694950b7545a2c34bfbcf992c80df61
+            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:1ef12328e89d7cd517e447e6ca331233df0807794cabf6be1046bc8a976b3f35
           - name: kind
             value: task
         resolver: bundles
