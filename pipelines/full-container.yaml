@@ -152,7 +152,7 @@ spec:
         set of values is determined by the configuration of the multi-platform-controller.
       type: array
       default:
-        - linux-d160-m4xlarge/amd64
+        - linux-mlarge/amd64
     - name: build-image-index
       description: Add built image into an OCI image index
       type: string
