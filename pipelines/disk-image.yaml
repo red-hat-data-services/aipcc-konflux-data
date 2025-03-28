@@ -103,6 +103,12 @@ spec:
       description: Additional tags to apply to the built image
       type: array
       default: []
+    - name: build-platforms
+      description: List of platforms to build the disk images on. The available
+        set of values is determined by the configuration of the multi-platform-controller.
+      type: array
+      default:
+        - linux-d160-m4xlarge/amd64
   results:
     - description: ""
       name: CHAINS-GIT_URL
@@ -173,9 +179,12 @@ spec:
           workspace: git-auth
     - name: build-vm-image
       timeout: "3h0m00s"
+      matrix:
+        params:
+          - name: PLATFORM
+            value:
+              - $(params.build-platforms)
       params:
-        - name: PLATFORM
-          value: linux-root/amd64
         - name: SOURCE_ARTIFACT
           value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
         - name: CONTEXT
@@ -194,6 +203,8 @@ spec:
           value: $(params.config-toml)
         - name: BIB_CONFIG_FILE
           value: $(params.bib-file)
+        - name: IMAGE_APPEND_PLATFORM
+          value: "true"
       runAfter:
         - clone-repository
       taskRef:
