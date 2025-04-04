@@ -177,6 +177,34 @@ spec:
       workspaces:
         - name: basic-auth
           workspace: git-auth
+    - name: prefetch-dependencies
+      params:
+        - name: input
+          value: $(params.prefetch-input)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+        - name: ociStorage
+          value: $(params.output-image).prefetch
+        - name: ociArtifactExpiresAfter
+          value: $(params.image-expires-after)
+        - name: dev-package-managers
+          value: "true"
+      runAfter:
+        - clone-repository
+      taskRef:
+        params:
+          - name: name
+            value: prefetch-dependencies-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:153ef0382deef840d155f5146f134f39b480523a7d5c38ba9fea2b58792dd4b5
+          - name: kind
+            value: task
+        resolver: bundles
+      workspaces:
+        - name: git-basic-auth
+          workspace: git-auth
+        - name: netrc
+          workspace: netrc
     - name: build-vm-image
       timeout: "3h0m00s"
       matrix:
@@ -206,7 +234,7 @@ spec:
         - name: IMAGE_APPEND_PLATFORM
           value: "true"
       runAfter:
-        - clone-repository
+        - prefetch-dependencies
       taskRef:
         resolver: bundles
         params:
@@ -310,4 +338,6 @@ spec:
             - "false"
   workspaces:
     - name: git-auth
+      optional: true
+    - name: netrc
       optional: true
