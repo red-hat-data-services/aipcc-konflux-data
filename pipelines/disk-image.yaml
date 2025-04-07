@@ -256,7 +256,7 @@ spec:
           value: $(params.output-image)
         - name: IMAGES
           value:
-          - $(tasks.build-vm-image.results[*].IMAGE_URL)@$(tasks.build-vm-image.results[*].IMAGE_DIGEST)
+          - $(tasks.build-vm-image.results.IMAGE_URL[*])@$(tasks.build-vm-image.results.IMAGE_DIGEST[*])
       runAfter:
         - build-vm-image
       taskRef:
