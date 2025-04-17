@@ -74,7 +74,7 @@ spec:
           - name: name
             value: init
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:737682d073a65a486d59b2b30e3104b93edd8490e0cd5e9b4a39703e47363f0f
+            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:aac8127bc10c95fae3ca1248c1dd96576315f3313bca90c5c9378dbf37954a08
           - name: kind
             value: task
         resolver: bundles
@@ -99,7 +99,7 @@ spec:
           - name: name
             value: git-clone-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:9709088bf3c581d4763e9804d9ee3a1f06ad6a61c23237277057c4f0cdc4f9c3
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:0761f97595d42c87c076797e0d0f66ff572146cad958106b7f5446b182d03394
           - name: kind
             value: task
         resolver: bundles
@@ -137,7 +137,7 @@ spec:
           - name: name
             value: modelcar-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:1fe72e81da7a63a5392f688b67f3c8d9220892d47c3f8303078d904be4b59246
+            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:f27790e7cd385221ce926fb47f3b803bc0c26fcc2094f35ad2e196eca3532985
           - name: kind
             value: task
         resolver: bundles
@@ -162,7 +162,7 @@ spec:
           - name: name
             value: sast-snyk-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.3@sha256:a1cb59ed66a7be1949c9720660efb0a006e95ef05b3f67929dd8e310e1d7baef
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.4@sha256:89aead32dc21404e4e0913be9668bdd2eea795db3e4caa762fb619044e479cb8
           - name: kind
             value: task
         resolver: bundles
@@ -182,7 +182,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:61c90b1c94a2a11cb11211a0d65884089b758c34254fcec164d185a402beae22
+            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.1@sha256:4973fa42a8f06238613447fbdb3d0c55eb2d718fd16f2f2591a577c29c1edb17
           - name: kind
             value: task
         resolver: bundles
