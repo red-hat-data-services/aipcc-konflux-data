@@ -44,6 +44,10 @@ spec:
       description:
       type: string
       default: source/README.md
+    - name: remove-originals
+      description:
+      type: string
+      default: "true"
     - name: model-image-auth
       description: Secret to pull model image
       type: string
@@ -112,7 +116,7 @@ spec:
         - name: basic-auth
           workspace: git-auth
     - name: build-image
-      timeout: "4h0m00s"
+      timeout: "10h0m00s"
       params:
         - name: IMAGE
           value: $(params.output-image)
@@ -130,6 +134,8 @@ spec:
           value: $(params.model-image-auth)
         - name: MODELCARD_PATH
           value: $(params.modelcard-path)
+        - name: REMOVE_ORIGINALS
+          value: $(params.remove-originals)
       runAfter:
         - clone-repository
       taskRef:
