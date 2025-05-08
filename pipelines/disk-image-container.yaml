@@ -157,6 +157,14 @@ spec:
       description: Add built image into an OCI image index
       type: string
       default: "true"
+    - name: snyk-project-name
+      description: Snyk project name
+      type: string
+      default: ""
+    - name: snyk-org
+      description: Snyk Org
+      type: string
+      default: ""
   results:
     - description: ""
       name: IMAGE_URL
@@ -392,6 +400,8 @@ spec:
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
         - name: CACHI2_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
+        - name: ARGS
+          value: "--report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
       runAfter:
         - build-image-index
       taskRef:
