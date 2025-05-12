@@ -112,6 +112,10 @@ spec:
       description: Array of --build-arg values ("arg=value" strings) for buildah
       name: build-args
       type: array
+    - default: "SYS_ADMIN"
+      description: Parameter for ADD_CAPABILITIES for the container build
+      name: add-capabilities
+      type: string
     - default: ""
       description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
       name: build-args-file
@@ -275,7 +279,7 @@ spec:
           value:
             - $(params.build-args[*])
         - name: ADD_CAPABILITIES
-          value: "SYS_ADMIN"
+          value: $(params.add-capabilities)
         - name: BUILD_ARGS_FILE
           value: $(params.build-args-file)
         - name: ADDITIONAL_SECRET
