@@ -143,7 +143,7 @@ spec:
           - name: name
             value: modelcar-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:bdcf49540ab34a1a7d287e8994b4c494bec7aa21dc4b6aa914592d527280ee98
+            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:d2dd19dffc49ba9634c6194ef3ad5304c62a218d008f7fd007b9737179825638
           - name: kind
             value: task
         resolver: bundles
@@ -168,7 +168,7 @@ spec:
           - name: name
             value: sast-snyk-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.4@sha256:6078ec8ec7caacbb8203138fcaa63db24e88dbf838544340bb0752d5b69f20ae
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.4@sha256:9a6ec5575f80668552d861e64414e736c85af772c272ca653a6fd1ec841d2627
           - name: kind
             value: task
         resolver: bundles
