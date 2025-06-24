@@ -431,7 +431,7 @@ spec:
         - name: CACHI2_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
         - name: ARGS
-          value: "--report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
+          value: "-d --report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
       runAfter:
         - build-image-index
       taskRef:
