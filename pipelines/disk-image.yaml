@@ -270,7 +270,7 @@ spec:
     - name: apply-tags
       params:
         - name: IMAGE_URL
-          value: $(params.output-image)
+          value: $(tasks.build-image-index.results.IMAGE_URL)
         - name: IMAGE_DIGEST
           value: $(tasks.build-image-index.results.IMAGE_DIGEST)
         - name: ADDITIONAL_TAGS
