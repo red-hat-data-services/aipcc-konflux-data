@@ -302,6 +302,13 @@ spec:
           value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
         - name: IMAGE_APPEND_PLATFORM
           value: "true"
+        - name: LABELS
+          value:
+          - $(params.additional-labels[*])
+          - url=$(params.git-url)
+          - release=$(tasks.clone-repository.results.commit-timestamp)
+          - git.url=$(params.git-url)
+          - git.commit=$(params.revision)
       runAfter:
         - prefetch-dependencies
       taskRef:
