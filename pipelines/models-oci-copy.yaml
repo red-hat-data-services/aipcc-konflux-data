@@ -75,7 +75,7 @@ spec:
           - name: name
             value: init
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:1d8221c84f91b923d89de50bf16481ea729e3b68ea04a9a7cbe8485ddbb27ee6
+            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:08e18a4dc5f947c1d20e8353a19d013144bea87b72f67236b165dd4778523951
           - name: kind
             value: task
         resolver: bundles
@@ -100,7 +100,7 @@ spec:
           - name: name
             value: git-clone-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:d35e5d501cb5f5f88369511f76249857cb5ac30250e1dcf086939321964ff6b9
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:be82c55346e8810bd1edc5547f864064da6945979baccca7dfc99990b392a02b
           - name: kind
             value: task
         resolver: bundles
@@ -131,7 +131,7 @@ spec:
           - name: name
             value: prefetch-dependencies-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:092491ac0f6e1009d10c58a1319d1029371bf637cc1293cceba53c6da5314ed1
+            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:125aea525bcdb31ff86cb37d56e3d8369587ead48da3bc454d4344682724ca54
           - name: kind
             value: task
         resolver: bundles
@@ -164,7 +164,7 @@ spec:
           - name: name
             value: oci-copy-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta:0.2@sha256:5f689b7b01daf970bf83cf7309d09f6f009c72b3dd485a04193676e9a828e395
+            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta:0.2@sha256:d01c221640fc79c646b9d859d0cbbc5149987343e967d08470642183bcd128f5
           - name: kind
             value: task
         resolver: bundles
@@ -265,7 +265,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.2@sha256:517a51e260c0b59654a9d7b842e1ab07d76bce15ca7ce9c8fd2489a19be6463d
+            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.2@sha256:264fa9591929fb60e3aca033ff168e5d98b1aafb458d6988e327a99ff494b00b
           - name: kind
             value: task
         resolver: bundles
