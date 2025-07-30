@@ -1,0 +1,46 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: copy-clair-scan-results
+spec:
+  params:
+    - name: release
+      type: string
+    - name: releasePlan
+      type: string
+    - name: snapshot
+      type: string
+    - name: target-repo
+      type: string
+  tasks:
+    - name: copy-clair-scan-results-task
+      taskSpec:
+        steps:
+         - name: copy-results
+           env:
+            - name: SNAPSHOT
+              value: $(params.snapshot)
+            - name: TARGET_REPO
+              value: $(params.target-repo)
+           # Update this image somehow
+           image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f
+           script: |
+              #!/bin/bash
+              echo -e "\nFetching Snapshot Spec"
+              SNAPSHOT=$(get-resource "snapshot" "${SNAPSHOT}" "{.spec}")
+              echo "$SNAPSHOT"
+              IMAGE=$(echo "$SNAPSHOT" | jq -r ".components[0].containerImage")
+              SOURCE_REPO="${IMAGE%%@*}"
+              CLAIR_REPORT_SHAS=$(
+                cosign download attestation ${IMAGE} | jq -r '
+                  .payload | @base64d | fromjson |
+                  .predicate.buildConfig.tasks[] |
+                  select(.name=="clair-scan").results[] |
+                  select(.name=="REPORTS").value |
+                  fromjson |
+                  .[]
+                '
+              )
+              for SHA in ${CLAIR_REPORT_SHAS}; do
+                skopeo copy docker://"$SOURCE_REPO"@${SHA} docker://"$TARGET_REPO"@${SHA}
+              done
