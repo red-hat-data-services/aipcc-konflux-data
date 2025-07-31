@@ -141,7 +141,7 @@ spec:
         - name: netrc
           workspace: netrc
     - name: oci-copy
-      timeout: "10h0m00s"
+      timeout: "30h0m00s"
       params:
         - name: IMAGE
           value: $(params.output-image)
