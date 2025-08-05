@@ -36,7 +36,7 @@ spec:
     - name: base-image-reference
       type: string
       description: base image to use for the ModelCar
-      default: registry.access.redhat.com/ubi9/ubi-micro:9.5-1741626669@sha256:91828a5ca154132e18072cf885f6bb41bb881e6158f30b793f4b424ec144b87d
+      default: registry.access.redhat.com/ubi9/ubi-micro:9.6-1754345610@sha256:70a57c23d0db45b8537f060e4868709a9aadcc10cd70fe06337bc908c5dfb10e
     - name: model-artifact-reference
       description: model OCI artifact reference, resolved to digest
       type: string
