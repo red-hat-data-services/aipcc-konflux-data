@@ -36,7 +36,7 @@ spec:
     - name: base-image-reference
       type: string
       description: base image to use for the ModelCar
-      default: registry.access.redhat.com/ubi9/ubi-micro:9.6-1754345610@sha256:70a57c23d0db45b8537f060e4868709a9aadcc10cd70fe06337bc908c5dfb10e
+      default: registry.access.redhat.com/ubi9/ubi-micro:9.6-1754345610@sha256:647c02b5b6d4760b019a468ff620ec53009d8453679bee3b7e5a676499edb1c3
     - name: model-artifact-reference
       description: model OCI artifact reference, resolved to digest
       type: string
@@ -59,13 +59,19 @@ spec:
       description: Snyk Org
       type: string
       default: ""
+    - default:
+      - linux/amd64
+      - linux/arm64
+      description: List of platforms to build the olot image on. The values are not related to the multi-platform-controller, but instead must match the os/architecture values in the platform field of the OCI image manifest.
+      name: olot-platforms
+      type: array
   results:
     - description: ""
       name: IMAGE_URL
-      value: $(tasks.build-image.results.IMAGE_URL)
+      value: $(tasks.build-image-index.results.IMAGE_URL)
     - description: ""
       name: IMAGE_DIGEST
-      value: $(tasks.build-image.results.IMAGE_DIGEST)
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
     - description: ""
       name: CHAINS-GIT_URL
       value: $(tasks.clone-repository.results.url)
@@ -123,7 +129,12 @@ spec:
       workspaces:
         - name: basic-auth
           workspace: git-auth
-    - name: build-image
+    - matrix:
+        params:
+        - name: PLATFORM
+          value:
+          - $(params.olot-platforms)
+      name: build-images
       timeout: "30h0m00s"
       params:
         - name: IMAGE
@@ -151,7 +162,7 @@ spec:
           - name: name
             value: modelcar-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:1974c88f0af011367bd71fd327af9b19204a6b018c3fd3ec73672e6e295d9d81
+            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:99881fa01624664725248803b8df7e2b56c36e5eeed7cadae9c9778dc3f17547
           - name: kind
             value: task
         resolver: bundles
@@ -160,19 +171,48 @@ spec:
           operator: in
           values:
             - "true"
+    - name: build-image-index
+      params:
+      - name: IMAGE
+        value: $(params.output-image)
+      - name: COMMIT_SHA
+        value: $(tasks.clone-repository.results.commit)
+      - name: IMAGE_EXPIRES_AFTER
+        value: $(params.image-expires-after)
+      - name: ALWAYS_BUILD_INDEX
+        value: "true"
+      - name: IMAGES
+        value:
+        - $(tasks.build-images.results.IMAGE_REF[*])
+      runAfter:
+      - build-images
+      taskRef:
+        params:
+        - name: name
+          value: build-image-index
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.1@sha256:3499772af90aad0d3935629be6d37dd9292195fb629e6f43ec839c7f545a0faa
+        - name: kind
+          value: task
+        resolver: bundles
+      when:
+      - input: $(tasks.init.results.build)
+        operator: in
+        values:
+        - 'true'
     - name: sast-snyk-check
       timeout: 2h
       params:
         - name: image-url
-          value: $(tasks.build-image.results.IMAGE_URL)
+          value: $(tasks.build-image-index.results.IMAGE_URL)
         - name: image-digest
-          value: $(tasks.build-image.results.IMAGE_DIGEST)
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
         - name: SOURCE_ARTIFACT
           value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
         - name: ARGS
           value: "--report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
       runAfter:
-        - build-image
+        - build-image-index
       taskRef:
         params:
           - name: name
@@ -190,11 +230,11 @@ spec:
     - name: apply-tags
       params:
         - name: IMAGE_URL
-          value: $(tasks.build-image.results.IMAGE_URL)
+          value: $(tasks.build-image-index.results.IMAGE_URL)
         - name: IMAGE_DIGEST
-          value:  $(tasks.build-image.results.IMAGE_DIGEST)
+          value:  $(tasks.build-image-index.results.IMAGE_DIGEST)
       runAfter:
-        - build-image
+        - build-image-index
       taskRef:
         params:
           - name: name
