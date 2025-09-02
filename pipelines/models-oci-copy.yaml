@@ -131,7 +131,7 @@ spec:
           - name: name
             value: prefetch-dependencies-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:22290579c9fe0b5c1689bb9023b3eddec73c285b680226d9f460346ae849a2cb
+            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:05551e144d090844903d61893a383fa4dc69ab563797f03ffaab0f8624bf530d
           - name: kind
             value: task
         resolver: bundles
@@ -164,7 +164,7 @@ spec:
           - name: name
             value: oci-copy-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta:0.2@sha256:b9acd1c690c61069b2e53fae446405f41f092dd5a6bcebea90131a1a1913a225
+            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta:0.2@sha256:9c4c7a22fcbf6cc2c6860cb2f7f51152f8353b2f2ce57d6fc87d42595700481e
           - name: kind
             value: task
         resolver: bundles
