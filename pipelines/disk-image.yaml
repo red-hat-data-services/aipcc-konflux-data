@@ -109,6 +109,14 @@ spec:
       type: array
       default:
         - linux-root/amd64
+    - name: snyk-project-name
+      description: Snyk project name
+      type: string
+      default: ""
+    - name: snyk-org
+      description: Snyk Org
+      type: string
+      default: ""
   results:
     - description: ""
       name: CHAINS-GIT_URL
@@ -331,6 +339,35 @@ spec:
             value: sast-unicode-check-oci-ta
           - name: bundle
             value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.3@sha256:a2bde66f6b4164620298c7d709b8f08515409404000fa1dc2260d2508b135651
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
+    - name: sast-snyk-check
+      timeout: 2h
+      params:
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+        - name: CACHI2_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
+        - name: ARGS
+          value: "-d --report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: sast-snyk-check-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.4@sha256:783f5de1b4def2fb3fad20b914f4b3afee46ffb8f652114946e321ef3fa86449
           - name: kind
             value: task
         resolver: bundles
