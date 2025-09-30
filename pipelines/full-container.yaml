@@ -461,7 +461,12 @@ spec:
           operator: in
           values:
             - "false"
-    - name: clamav-scan
+    - matrix:
+        params:
+          - name: image-arch
+            value:
+              - $(params.build-platforms)
+      name: clamav-scan
       timeout: 6h
       params:
         - name: image-digest
