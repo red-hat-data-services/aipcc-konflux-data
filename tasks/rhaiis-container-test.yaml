@@ -1,0 +1,210 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: rhaiis-container-test
+spec:
+  params:
+    - name: container-image
+    - name: debug
+      default: "false"
+    - name: host-access-secret-name
+    - name: model-names
+      type: array
+      default: []
+    - name: pull-secret-name
+      default: "global-pull-secret"
+  steps:
+    - image: quay.io/fedora/fedora:42
+      args: ["$(params.model-names[*])"]
+      env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: hf-token
+              name: "hugging-face-token"
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+        - name: auth-file
+          mountPath: /mnt/auth-file
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Function to test a single model
+        test_model() {
+          local model_name=$1
+
+          echo -e "\n===================================================="
+          echo "=== Testing model: ${model_name}"
+          echo "===================================================="
+
+          echo -e "\n=== Downloading model ==="
+          ${ssh_cmd} mkdir -p models/${model_name}
+          ${ssh_cmd} chmod g+rwX models/${model_name}
+          ${ssh_cmd} hf download ${model_name} --local-dir models/${model_name} --token $HF_TOKEN
+          echo "==="
+          ${ssh_cmd} du -h models
+
+          echo -e "\n=== Running RHAIIS container ==="
+          ${ssh_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
+            --device nvidia.com/gpu=all \
+            --security-opt=label=disable \
+            --shm-size=8g \
+            --network=host \
+            --userns=keep-id:uid=1001 \
+            --env "HUGGING_FACE_HUB_TOKEN=$HF_TOKEN" \
+            --env "HF_HUB_OFFLINE=1" \
+            --env "HF_HOME=/home/vllm/model" \
+            --env "VLLM_NO_USAGE_STATS=1" \
+            -v ./models/${model_name}:/home/vllm/model:Z \
+            $(params.container-image) \
+            --tensor-parallel-size ${NUMBER_OF_GPUS} \
+            --max-model-len 4096 \
+            --model /home/vllm/model
+
+          max_attempts=20
+          attempt=1
+          while [ $attempt -lt $max_attempts ]; do
+            echo -e "\n=== Waiting for RHAIIS container to be ready $attempt/$max_attempts ==="
+            container_state=$( ${ssh_cmd} "podman inspect -f '{{.State.Running}}' rhaiis")
+            if [[ "${container_state}" == "false" ]]; then
+              echo "Container is not running!"
+              echo "==="
+              ${ssh_cmd} nvidia-smi
+              echo "==="
+              ${ssh_cmd} podman inspect rhaiis | jq '.[0].State'
+              echo "==="
+              ${ssh_cmd} podman logs --tail 1000 rhaiis || true
+              echo "==="
+              ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+              echo -e "\n=== Sleeping for 60 minutes ==="
+              sleep 3600
+              exit 1
+            fi
+
+            if ${ssh_cmd} "curl --no-progress-meter -f http://localhost:8000/health > /dev/null 2>&1"; then
+              echo "Container is ready!"
+              break
+            fi
+
+            attempt=$((attempt + 1))
+            echo "Container not ready yet, waiting 30 seconds..."
+            echo "GPU memory free:"
+            ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+            echo "==="
+            echo "Free memory:"
+            ${ssh_cmd} "free -m" || true
+            echo "==="
+            echo "Last 5 lines of logs:"
+            ${ssh_cmd} podman logs --tail 5 rhaiis || true
+            sleep 30
+          done
+
+          if [ $attempt -eq $max_attempts ]; then
+            echo "Container failed to become ready within $(($max_attempts * 30)) seconds"
+            echo -e "\n=== Podman logs ==="
+            ${ssh_cmd} podman logs rhaiis
+            exit 1
+          fi
+
+          echo -e "\n=== Prompting RHAIIS container ==="
+          DATA='{"prompt": "What is the capital of France?","max_tokens": 50}'
+          RESPONSE=$(${ssh_cmd} "curl --no-progress-meter -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/completions")
+          echo -e "\n=== Response JSON ==="
+          echo "${RESPONSE}" | jq
+
+          echo -e "\n=== Verifying response ==="
+          TEXT=$(echo "${RESPONSE}" | jq -r '.choices[0].text')
+          VERIFICATION_FAILED=0
+          if echo "${TEXT}" | grep -i "paris" > /dev/null; then
+            echo "✓ Verification passed: Response contains 'Paris'"
+          else
+            echo "✗ Verification failed: Response does not contain 'Paris'"
+            echo "Actual response text: ${TEXT}"
+            VERIFICATION_FAILED=1
+          fi
+
+          echo -e "\n=== Stopping RHAIIS container ==="
+          ${ssh_cmd} podman stop rhaiis
+          ${ssh_cmd} podman rm rhaiis
+
+          if [ $VERIFICATION_FAILED -eq 1 ]; then
+            echo "✗ Model ${model_name} failed verification"
+            return 1
+          fi
+
+          echo "✓ Model ${model_name} passed all tests"
+          return 0
+        }
+
+        echo -e "\n=== Installing ssh and jq ==="
+        dnf install -y ssh jq
+
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Copying auth file ==="
+        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+        ${ssh_cmd} ls -al auth.json
+
+        echo -e "\n=== Pulling image ==="
+        # TODO try skopeo copy instead of podman pull
+        ${ssh_cmd} podman pull --authfile auth.json $(params.container-image)
+
+        echo -e "\n=== Removing existing RHAIIS container ==="
+        ${ssh_cmd} podman stop -i rhaiis
+        ${ssh_cmd} podman rm -i rhaiis
+
+        # TODO we always run on a single GPU, not matter how many GPUs are available
+        # if we want to run on all available GPUs, we need to know the topology
+        # used on p5.48xlarge, maybe on p4d.24xlarge
+        echo -e "\n=== nvidia-smi nvlink --status ==="
+        ${ssh_cmd} nvidia-smi nvlink --status || true
+
+        NUMBER_OF_GPUS=$( ${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+        echo -e "\n=== Number of GPUs ==="
+        echo "${NUMBER_OF_GPUS}"
+
+        if [ "$(params.debug)" == "true" ]; then
+          DEBUG_FLAGS="--log-level=debug --env HF_DEBUG=1 --env=VLLM_LOGGING_LEVEL=DEBUG"
+        fi
+
+        # Iterate over model names and test each one
+        echo -e "\n=== Testing models ==="
+
+        for model in "$@"; do
+          if ! test_model "${model}"; then
+            echo -e "\n✗ Testing stopped at first failure: ${model}"
+            exit 1
+          fi
+        done
+
+        echo -e "\n✓ All models passed testing"
+
+  volumes:
+    - name: auth-file
+      secret:
+        secretName: "$(params.pull-secret-name)"
+        items:
+          - key: ".dockerconfigjson"
+            path: auth.json
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        items:
+          - key: id_rsa
+            path: id_rsa
