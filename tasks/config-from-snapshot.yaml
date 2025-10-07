@@ -1,0 +1,107 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: config-from-snapshot
+spec:
+  params:
+    - name: component
+    - name: SNAPSHOT
+  results:
+    - name: cloud-provider
+      description: Cloud provider, e.g. aws, ibm, gcp, azure
+    - name: container-image
+      description: Full reference to the container image to test, including the registry and the sha digest
+    - name: product-image
+      description: Short product image name, e.g. rhaiis or rhaiis-model-opt
+    - name: variant
+      description: Variant, e.g. cuda-ubi9, gaudi-ubi9, rocm-ubi9, spyre-ubi9, tpu-ubi9
+    - name: vm-types
+      description: Comma-separated list of VM types based on variant
+  steps:
+    - name: parse-snapshot-components
+      image: quay.io/fedora/fedora-minimal:42
+      workingDir: /workspace
+      env:
+        - name: COMPONENT
+          value: $(params.component)
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      script: |
+        #!/bin/bash
+        set -e
+        dnf -y install jq
+        snapshotComponents=$(jq -c '.components[]' <<< "${SNAPSHOT}")
+        productImage=${COMPONENT%-*-*}
+        variant=${COMPONENT#"$productImage"-}
+
+        while read componentEntry
+        do
+          # TODO should we compare revisions across components in snapshot? Is it available in pipeline run labels/annotations?
+          componentName=$(echo "${componentEntry}" | jq -r '.name')
+          echo -e "\n === Processing component ${componentName} ==="
+          if [[ "${componentName}" != "${COMPONENT}" ]]; then
+            continue
+          fi
+          
+          containerImage=$(echo "${componentEntry}" | jq -r '.containerImage')
+
+          echo -e "\n === Found image for ${componentName} in the snapshot ==="
+          echo ${containerImage}
+          break
+        done < <(echo "$snapshotComponents")
+
+        if [ -z "${componentName}" ]; then
+          echo "Component ${COMPONENT} not found in the snapshot!"
+          exit 1
+        fi
+
+        # TODO update lists based on architecture
+        case "${variant}" in
+          "cuda-ubi9")
+            # g4dn has 14 GB of GPU memory which is not enough, 12xlarge has 4 GPU, metal has 8 GPU
+            # p5.48xlarge, p5e.48xlarge,p5en.48xlarge, p4d.24xlarge, p4de.24xlarge has 8 GPU, failed on system not initalized (NVSwitch not configured???)
+            # p6-b200.48xlarge, p6e-gb200.36xlarge - not tested, extremely expensive $20+ per hour spot, $100+ on-demand
+
+            vm_types="g4dn.12xlarge,g4dn.metal,g5.xlarge,g5.2xlarge,g5.4xlarge,g5.8xlarge,g5.12xlarge,g5.16xlarge,g5.24xlarge,g5.48xlarge,g6.xlarge,g6.2xlarge,g6.4xlarge,g6.8xlarge,g6.12xlarge,g6.16xlarge,g6.24xlarge,g6.48xlarge,g6e.xlarge,g6e.2xlarge,g6e.4xlarge,g6e.8xlarge,g6e.12xlarge,g6e.16xlarge,g6e.24xlarge,g6e.48xlarge,gr6.4xlarge,gr6.8xlarge,p5.4xlarge"
+            cloud_provider="aws"
+            ret_value=0
+            ;;
+          "gaudi-ubi9")
+            echo "Gaudi not implemented yet"
+            vm_types="dl1.24xlarge"
+            cloud_provider="aws"
+            ret_value=1
+            ;;
+          "rocm-ubi9")
+            echo "ROCM not implemented yet"
+            vm_types="g4ad.xlarge,g4ad.2xlarge,g4ad.4xlarge,g4ad.8xlarge,g4ad.16xlarge"
+            cloud_provider="aws"
+            ret_value=1
+            ;;
+          "spyre-ubi9")
+            echo "Spyre not implemented yet"
+            vm_types="todo"
+            cloud_provider="ibm"
+            ret_value=1
+            ;;
+          "tpu-ubi9")
+            echo "TPU not implemented yet"
+            vm_types="todo"
+            cloud_provider="gcp"
+            ret_value=1
+            ;;
+          *)
+            echo "Variant ${variant} not supported"
+            exit 1
+            ;;
+        esac
+
+        echo -e "\n === Storing results ==="
+        echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
+        echo -n "${containerImage}" | tee $(results.container-image.path)
+        echo -n "${productImage}" | tee $(results.product-image.path)
+        echo -n "${variant}" | tee $(results.variant.path)
+        echo -n "${vm_types}" | tee $(results.vm-types.path)
+
+        exit ${ret_value}
+        

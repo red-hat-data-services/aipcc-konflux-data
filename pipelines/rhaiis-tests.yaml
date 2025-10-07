@@ -1,0 +1,208 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: rhaiis-tests
+spec:
+  params:
+    - name: architecture
+      default: "x86_64"
+      description: One of x86_64, aarch64
+    - name: component
+      description: Konflux component to test
+    - name: debug
+      default: "false"
+    - name: model-names
+      type: array
+      default:
+        - "ibm-granite/granite-3.3-8b-instruct"
+        - "meta-llama/Meta-Llama-3-8B-Instruct"
+      description: List of models to test
+    - name: SNAPSHOT
+      description: |
+        Snapshot of the application
+        Example:
+        {
+          "components": [
+            {
+                "containerImage": "quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-cuda-ubi9@sha256:573d03d9ca37aaede63ac4df61485a879f58824d24135755d9919bb6c6483235",
+                "name": "rhaiis-cuda-ubi9",
+                "source": {
+                    "git": {
+                        "revision": "18afa9b93a49ff80537f315943fd16e6d3369679",
+                        "url": "https://gitlab.com/redhat/rhel-ai/rhaiis/containers"
+                    }
+                }
+            },
+            {
+                "containerImage": "quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-tpu-ubi9@sha256:14c1a3ab651a6d97d608a17c33167d9800e5809996efcedc44e061d124e8cdbf",
+                "name": "rhaiis-tpu-ubi9",
+                "source": {
+                    "git": {
+                        "context": ".",
+                        "dockerfileUrl": "Containerfile.tpu-ubi9",
+                        "revision": "18afa9b93a49ff80537f315943fd16e6d3369679",
+                        "url": "https://gitlab.com/redhat/rhel-ai/rhaiis/containers"
+                    }
+                }
+            }
+          ]
+        }
+  results:
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
+  tasks:
+    - name: create-configuration
+      description: Placeholder task that prints the Snapshot and outputs standard TEST_OUTPUT
+      params:
+        - name: component
+          value: $(params.component)
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/config-from-snapshot.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: create-vm-aws
+      params:
+        - name: arch
+          value: "$(params.architecture)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: debug
+          value: "$(params.debug)"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-aws-credentials
+          value: "aws-aipcc-cicd"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,app-code=GITL-005,service-phase=dev,cost-center=687"
+        - name: version
+          value: "9.6" # RHEL version
+      runAfter:
+        - create-configuration
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          # todo configure renovate to update this
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]
+    - name: configure-vm-cuda
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+      runAfter:
+        - create-vm-aws
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-vm-cuda.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      when:
+        - input: $(tasks.create-configuration.results.variant)
+          operator: in
+          values: ["cuda-ubi9"]
+    - name: test-models
+      params:
+        - name: container-image
+          value: "$(tasks.create-configuration.results.container-image)"
+        - name: debug
+          value: "$(params.debug)"
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: model-names
+          value: ["$(params.model-names[*])"]
+        - name: pull-secret-name
+          value: "rhaiis-pull"
+      runAfter:
+        - configure-vm-cuda
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/rhaiis-container-test.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+  finally:
+    - name: delete-vm
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "aws-aipcc-cicd"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          # TODO configure renovate to update this
+          - name: revision
+            value: "v0.9.8"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel.yaml"
