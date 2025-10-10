@@ -22,13 +22,15 @@ spec:
               key: username
               name: "$(params.host-access-secret-name)"
       volumeMounts:
-        - name: ssh-key
-          mountPath: /mnt/ssh-key
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+        - name: shared-ssh-key
+          mountPath: /mnt/shared-ssh-key
       script: |
         #!/bin/bash
         set -e
         echo -e "\n=== Preparing SSH private key ==="
-        cp /mnt/ssh-key/id_rsa id_rsa
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
         chmod 400 id_rsa
 
         echo -e "\n=== Installing ssh ==="
@@ -37,6 +39,9 @@ spec:
         echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Adding shared SSH key ==="
+        cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
 
         echo -e "\n=== lspci ==="
         ${ssh_cmd} lspci | grep -i nvidia
@@ -93,11 +98,19 @@ spec:
         ${ssh_cmd} 'loginctl show-user ec2-user | grep Linger'
 
   volumes:
-    - name: ssh-key
+    - name: mapt-ssh-key
       secret:
         secretName: "$(params.host-access-secret-name)"
         defaultMode: 0400
         items:
           - key: id_rsa
             path: id_rsa
+            mode: 0400
+    - name: shared-ssh-key
+      secret:
+        secretName: "shared-ssh-key"
+        defaultMode: 0400
+        items:
+          - key: id_rsa.pub
+            path: aipcc.pub
             mode: 0400

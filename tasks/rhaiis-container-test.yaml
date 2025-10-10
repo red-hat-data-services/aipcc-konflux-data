@@ -20,8 +20,8 @@ spec:
         - name: HF_TOKEN
           valueFrom:
             secretKeyRef:
-              key: hf-token
-              name: "hugging-face-token"
+              key: token_konflux_ro
+              name: "hugging-face"
         - name: HOST
           valueFrom:
             secretKeyRef:
