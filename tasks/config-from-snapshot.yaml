@@ -19,7 +19,7 @@ spec:
       description: Comma-separated list of VM types based on variant
   steps:
     - name: parse-snapshot-components
-      image: quay.io/fedora/fedora-minimal:42
+      image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
       workingDir: /workspace
       env:
         - name: COMPONENT
@@ -29,7 +29,7 @@ spec:
       script: |
         #!/bin/bash
         set -e
-        dnf -y install jq
+
         snapshotComponents=$(jq -c '.components[]' <<< "${SNAPSHOT}")
         productImage=${COMPONENT%-*-*}
         variant=${COMPONENT#"$productImage"-}

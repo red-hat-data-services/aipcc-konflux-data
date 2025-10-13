@@ -14,7 +14,7 @@ spec:
     - name: pull-secret-name
       default: "global-pull-secret"
   steps:
-    - image: quay.io/fedora/fedora:42
+    - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
       args: ["$(params.model-names[*])"]
       env:
         - name: HF_TOKEN
@@ -147,9 +147,6 @@ spec:
           echo "✓ Model ${model_name} passed all tests"
           return 0
         }
-
-        echo -e "\n=== Installing ssh and jq ==="
-        dnf install -y ssh jq
 
         echo -e "\n=== Preparing SSH private key ==="
         cp /mnt/ssh-key/id_rsa id_rsa
