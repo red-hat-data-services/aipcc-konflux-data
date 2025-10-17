@@ -169,6 +169,10 @@ spec:
       description: Snyk Org
       type: string
       default: ""
+    - name: activation-key
+      description: name of the secret of the activation-key for entitlement builds
+      type: string
+      default: activation-key
   results:
     - description: ""
       name: IMAGE_URL
@@ -308,6 +312,8 @@ spec:
           - release=$(tasks.clone-repository.results.commit-timestamp)
           - git.url=$(params.git-url)
           - git.commit=$(params.revision)
+        - name: ACTIVATION_KEY
+          value: $(params.activation-key)
       runAfter:
         - prefetch-dependencies
       taskRef:
