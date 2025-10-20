@@ -11,17 +11,10 @@ spec:
     - name: model-names
       type: array
       default: []
-    - name: pull-secret-name
-      default: "global-pull-secret"
   steps:
     - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
       args: ["$(params.model-names[*])"]
       env:
-        - name: HF_TOKEN
-          valueFrom:
-            secretKeyRef:
-              key: token_konflux_ro
-              name: "hugging-face"
         - name: HOST
           valueFrom:
             secretKeyRef:
@@ -35,8 +28,6 @@ spec:
       volumeMounts:
         - name: ssh-key
           mountPath: /mnt/ssh-key
-        - name: auth-file
-          mountPath: /mnt/auth-file
       script: |
         #!/bin/bash
         set -e
@@ -48,13 +39,6 @@ spec:
           echo -e "\n===================================================="
           echo "=== Testing model: ${model_name}"
           echo "===================================================="
-
-          echo -e "\n=== Downloading model ==="
-          ${ssh_cmd} mkdir -p models/${model_name}
-          ${ssh_cmd} chmod g+rwX models/${model_name}
-          ${ssh_cmd} hf download ${model_name} --local-dir models/${model_name} --token $HF_TOKEN
-          echo "==="
-          ${ssh_cmd} du -h models
 
           echo -e "\n=== Running RHAIIS container ==="
           ${ssh_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
@@ -154,18 +138,6 @@ spec:
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
-        echo -e "\n=== Copying auth file ==="
-        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
-        ${ssh_cmd} ls -al auth.json
-
-        echo -e "\n=== Pulling image ==="
-        # TODO try skopeo copy instead of podman pull
-        ${ssh_cmd} podman pull --authfile auth.json $(params.container-image)
-
-        echo -e "\n=== Removing existing RHAIIS container ==="
-        ${ssh_cmd} podman stop -i rhaiis
-        ${ssh_cmd} podman rm -i rhaiis
-
         # TODO we always run on a single GPU, not matter how many GPUs are available
         # if we want to run on all available GPUs, we need to know the topology
         # used on p5.48xlarge, maybe on p4d.24xlarge
@@ -193,12 +165,6 @@ spec:
         echo -e "\n✓ All models passed testing"
 
   volumes:
-    - name: auth-file
-      secret:
-        secretName: "$(params.pull-secret-name)"
-        items:
-          - key: ".dockerconfigjson"
-            path: auth.json
     - name: ssh-key
       secret:
         secretName: "$(params.host-access-secret-name)"

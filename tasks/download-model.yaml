@@ -1,0 +1,63 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: download-model
+spec:
+  params:
+    - name: model-names
+      type: array
+      description: List of Hugging Face model names to download
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
+      args: ["$(params.model-names[*])"]
+      env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token_konflux_ro
+              name: "hugging-face"
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Downloading models ==="
+        for model_name in "$@"; do
+          echo -e "\n--- Downloading model: ${model_name} ---"
+          ${ssh_cmd} mkdir -p models/${model_name}
+          ${ssh_cmd} chmod g+rwX models/${model_name}
+          ${ssh_cmd} hf download ${model_name} --local-dir models/${model_name} --token $HF_TOKEN
+        done
+
+        echo -e "\n=== Disk usage summary ==="
+        ${ssh_cmd} du -h models
+
+        echo -e "\n✓ All models downloaded successfully"
+
+  volumes:
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        items:
+          - key: id_rsa
+            path: id_rsa

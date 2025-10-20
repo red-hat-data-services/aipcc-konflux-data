@@ -8,7 +8,7 @@ spec:
       default: "x86_64"
       description: One of x86_64, aarch64
     - name: component
-      description: Konflux component to test
+      description: Konflux component to test, e.g. rhaiis-cuda-ubi9
     - name: debug
       default: "false"
     - name: model-names
@@ -20,32 +20,7 @@ spec:
       description: |
         Snapshot of the application
         Example:
-        {
-          "components": [
-            {
-                "containerImage": "quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-cuda-ubi9@sha256:573d03d9ca37aaede63ac4df61485a879f58824d24135755d9919bb6c6483235",
-                "name": "rhaiis-cuda-ubi9",
-                "source": {
-                    "git": {
-                        "revision": "18afa9b93a49ff80537f315943fd16e6d3369679",
-                        "url": "https://gitlab.com/redhat/rhel-ai/rhaiis/containers"
-                    }
-                }
-            },
-            {
-                "containerImage": "quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-tpu-ubi9@sha256:14c1a3ab651a6d97d608a17c33167d9800e5809996efcedc44e061d124e8cdbf",
-                "name": "rhaiis-tpu-ubi9",
-                "source": {
-                    "git": {
-                        "context": ".",
-                        "dockerfileUrl": "Containerfile.tpu-ubi9",
-                        "revision": "18afa9b93a49ff80537f315943fd16e6d3369679",
-                        "url": "https://gitlab.com/redhat/rhel-ai/rhaiis/containers"
-                    }
-                }
-            }
-          ]
-        }
+        {"components": [{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-spyre-ubi9@sha256:f36864ec0d7a18a3143296ba2e624eca1fa6ba0af87a7196b325384785bbcf4b","name":"rhaiis-spyre-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.spyre-ubi9","revision":"488e59cf0fdce2ab17f0358fd71cc8136d14aa94","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-tpu-ubi9@sha256:779f10fcd1b24702c5b621ff46b0c34e7f9dda0523619d9b30d9fdecde3b6bd3","name":"rhaiis-tpu-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.tpu-ubi9","revision":"488e59cf0fdce2ab17f0358fd71cc8136d14aa94","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-cuda-ubi9@sha256:df300e32078427d779738bd919cc53aee772118246388f3ea8d529af0e8a85e9","name":"rhaiis-cuda-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.cuda-ubi9","revision":"488e59cf0fdce2ab17f0358fd71cc8136d14aa94","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-model-opt-cuda-ubi9@sha256:14296dd0d10e172a50e1d4c91951a3c0548e4036ad90e444da48976615130973","name":"rhaiis-model-opt-cuda-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.model-opt.cuda-ubi9","revision":"488e59cf0fdce2ab17f0358fd71cc8136d14aa94","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-rocm-ubi9@sha256:75d66ba07466ec7a38a6de03108de6d4cf08c5c73eafcd97a7cae28d772fd23d","name":"rhaiis-rocm-ubi9","source":{"git":{"revision":"488e59cf0fdce2ab17f0358fd71cc8136d14aa94","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}}]}
   results:
     - name: container-image
       value: $(tasks.create-configuration.results.container-image)
@@ -117,7 +92,7 @@ spec:
             value: "https://github.com/redhat-developer/mapt"
           # todo configure renovate to update this
           - name: revision
-            value: "main"
+            value: "v0.9.9"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -153,6 +128,62 @@ spec:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
           values: ["cuda-ubi9"]
+    - name: pull-images
+      params:
+        - name: container-images
+          value: ["$(tasks.create-configuration.results.container-image)"]
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: pull-secret-name
+          value: "rhaiis-pull"
+      runAfter:
+        - configure-vm-cuda
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/pull-image.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: download-models
+      params:
+        - name: model-names
+          value: ["$(params.model-names[*])"]
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+      runAfter:
+        - configure-vm-cuda
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/download-model.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
     - name: test-models
       params:
         - name: container-image
@@ -163,10 +194,9 @@ spec:
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
         - name: model-names
           value: ["$(params.model-names[*])"]
-        - name: pull-secret-name
-          value: "rhaiis-pull"
       runAfter:
-        - configure-vm-cuda
+        - pull-images
+        - download-models
       taskRef:
         resolver: git
         params:
