@@ -40,6 +40,10 @@ spec:
           echo "=== Testing model: ${model_name}"
           echo "===================================================="
 
+          echo -e "\n=== Removing existing RHAIIS container ==="
+          ${ssh_cmd} podman stop -i rhaiis
+          ${ssh_cmd} podman rm -i rhaiis
+
           echo -e "\n=== Running RHAIIS container ==="
           ${ssh_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
             --device nvidia.com/gpu=all \
@@ -47,7 +51,6 @@ spec:
             --shm-size=8g \
             --network=host \
             --userns=keep-id:uid=1001 \
-            --env "HUGGING_FACE_HUB_TOKEN=$HF_TOKEN" \
             --env "HF_HUB_OFFLINE=1" \
             --env "HF_HOME=/home/vllm/model" \
             --env "VLLM_NO_USAGE_STATS=1" \
@@ -138,9 +141,8 @@ spec:
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
-        # TODO we always run on a single GPU, not matter how many GPUs are available
-        # if we want to run on all available GPUs, we need to know the topology
         # used on p5.48xlarge, maybe on p4d.24xlarge
+        # https://issues.redhat.com/browse/AIPCC-5636
         echo -e "\n=== nvidia-smi nvlink --status ==="
         ${ssh_cmd} nvidia-smi nvlink --status || true
 

@@ -45,10 +45,6 @@ spec:
         scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
         ${ssh_cmd} ls -al auth.json
 
-        echo -e "\n=== Removing existing RHAIIS container ==="
-        ${ssh_cmd} podman stop -i rhaiis
-        ${ssh_cmd} podman rm -i rhaiis
-
         echo -e "\n=== Pulling images ==="
         for image in "$@"; do
           echo -e "\n--- Pulling image: ${image} ---"
