@@ -1,0 +1,68 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: pull-image
+spec:
+  params:
+    - name: container-images
+      type: array
+      description: List of container images to pull
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials
+    - name: pull-secret-name
+      default: "global-pull-secret"
+      description: Name of the secret containing docker config for image authentication
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
+      args: ["$(params.container-images[*])"]
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+        - name: auth-file
+          mountPath: /mnt/auth-file
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Copying auth file ==="
+        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+        ${ssh_cmd} ls -al auth.json
+
+        echo -e "\n=== Pulling images ==="
+        for image in "$@"; do
+          echo -e "\n--- Pulling image: ${image} ---"
+          ${ssh_cmd} podman pull --authfile auth.json "${image}"
+        done
+
+        echo -e "\n✓ All images pulled successfully"
+
+  volumes:
+    - name: auth-file
+      secret:
+        secretName: "$(params.pull-secret-name)"
+        items:
+          - key: ".dockerconfigjson"
+            path: auth.json
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        items:
+          - key: id_rsa
+            path: id_rsa
