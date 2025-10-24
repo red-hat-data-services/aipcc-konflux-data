@@ -169,6 +169,10 @@ spec:
       description: name of the secret of the activation-key for entitlement builds
       type: string
       default: activation-key
+    - name: contextualize-sbom
+      description: Determines if SBOM will be contextualized on the build-container task.
+      type: string
+      default: "true"
   results:
     - description: ""
       name: IMAGE_URL
@@ -300,6 +304,8 @@ spec:
           value: "true"
         - name: ACTIVATION_KEY
           value: $(params.activation-key)
+        - name: CONTEXTUALIZE_SBOM
+          value: $(params.contextualize-sbom)
       runAfter:
         - prefetch-dependencies
       taskRef:
