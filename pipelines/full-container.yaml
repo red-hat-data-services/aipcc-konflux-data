@@ -160,7 +160,7 @@ spec:
     - name: build-image-index
       description: Add built image into an OCI image index
       type: string
-      default: "true"
+      default: "false"
     - name: snyk-project-name
       description: Snyk project name
       type: string
