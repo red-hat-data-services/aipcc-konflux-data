@@ -160,7 +160,7 @@ spec:
     - name: build-image-index
       description: Add built image into an OCI image index
       type: string
-      default: "false"
+      default: "true"
     - name: snyk-project-name
       description: Snyk project name
       type: string
@@ -176,7 +176,7 @@ spec:
     - name: contextualize-sbom
       description: Determines if SBOM will be contextualized on the build-container task.
       type: string
-      default: "true"
+      default: "false"
   results:
     - description: ""
       name: IMAGE_URL
