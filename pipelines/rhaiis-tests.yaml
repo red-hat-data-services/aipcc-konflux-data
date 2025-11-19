@@ -9,6 +9,12 @@ spec:
       description: One of x86_64, aarch64
     - name: component
       description: Konflux component to test, e.g. rhaiis-cuda-ubi9
+    - name: cuda-compat-version
+      default: "12-9"
+      description: |
+        Version of the cuda-compat package to install.
+        E.g. drivers 570 come with CUDA 12.8, cuda-compat-12-9 brings CUDA 12.9 compatibility for drivers 570.
+        https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html
     - name: debug
       default: "false"
     - name: model-names
@@ -16,6 +22,9 @@ spec:
       default:
         - "ibm-granite/granite-3.3-8b-instruct"
       description: List of models to test
+    - name: nvidia-driver-version
+      default: "570"
+      description: NVIDIA driver version to install, 570 for CUDA 12.8
     - name: SNAPSHOT
       description: |
         Snapshot of the application
@@ -62,7 +71,7 @@ spec:
         - name: id
           value: "$(context.pipelineRun.name)"
         - name: host-access-secret-name
-          value: "mapt-$(context.pipelineRun.name)"
+          value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: operation
           value: "create"
         - name: ownerKind
@@ -80,7 +89,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,app-code=GITL-005,service-phase=dev,cost-center=687"
+          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=687"
         - name: version
           value: "9.6" # RHEL version
       runAfter:
@@ -92,7 +101,7 @@ spec:
             value: "https://github.com/redhat-developer/mapt"
           # todo configure renovate to update this
           - name: revision
-            value: "v0.9.9"
+            value: "main"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -101,8 +110,12 @@ spec:
           values: ["aws"]
     - name: configure-vm-cuda
       params:
+        - name: cuda-compat-version
+          value: "$(params.cuda-compat-version)"
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: nvidia-driver-version
+          value: "$(params.nvidia-driver-version)"
       runAfter:
         - create-vm-aws
       taskRef:
@@ -217,7 +230,7 @@ spec:
           - name: tokenKey
             value: password
   finally:
-    - name: delete-vm
+    - name: delete-vm-aws
       params:
         - name: id
           value: "$(context.pipelineRun.name)"
@@ -232,6 +245,10 @@ spec:
             value: "https://github.com/redhat-developer/mapt"
           # TODO configure renovate to update this
           - name: revision
-            value: "v0.9.8"
+            value: "main"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]
