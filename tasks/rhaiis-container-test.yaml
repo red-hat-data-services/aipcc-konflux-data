@@ -52,13 +52,14 @@ spec:
             --network=host \
             --userns=keep-id:uid=1001 \
             --env "HF_HUB_OFFLINE=1" \
-            --env "HF_HOME=/home/vllm/model" \
             --env "VLLM_NO_USAGE_STATS=1" \
-            -v ./models/${model_name}:/home/vllm/model:Z \
+            -v ./models:/opt/app-root/models:Z \
             $(params.container-image) \
             --tensor-parallel-size ${NUMBER_OF_GPUS} \
             --max-model-len 4096 \
-            --model /home/vllm/model
+            --model /opt/app-root/models/${model_name} \
+            --served-model-name ${model_name} \
+            --enforce-eager
 
           max_attempts=20
           attempt=1

@@ -4,6 +4,10 @@ metadata:
   name: configure-vm-cuda
 spec:
   params:
+    - name: arch
+      default: "x86_64"
+    - name: cuda-compat-version
+      default: "12-9"
     - name: host-access-secret-name
     - name: nvidia-driver-version
       default: "570"
@@ -48,14 +52,22 @@ spec:
         ${ssh_cmd} pip install -U "huggingface_hub[cli]"
 
         echo -e "\n=== Enabling rpm repositories"
-        ${ssh_cmd} sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
+        if [ "$(params.arch)" = "x86_64" ]; then
+          ${ssh_cmd} sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
+        else
+          ${ssh_cmd} sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/sbsa/cuda-rhel9.repo
+        fi
+        
         ${ssh_cmd} sudo dnf config-manager --enable codeready-builder-for-rhel-9-rhui-rpms
         ${ssh_cmd} sudo dnf config-manager --add-repo https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo
         ${ssh_cmd} sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-        ${ssh_cmd} sudo dnf module enable -y nvidia-driver:$(params.nvidia-driver-version)-open # CUDA 12.8
+        ${ssh_cmd} sudo dnf module enable -y nvidia-driver:$(params.nvidia-driver-version)-open # 570 for CUDA 12.8
 
         echo -e "\n=== Installing nvidia driver ==="
         ${ssh_cmd} sudo dnf install -y nvidia-driver-cuda kmod-nvidia-open-dkms
+
+        echo -e "\n=== Installing cuda-compat package ==="
+        ${ssh_cmd} sudo dnf install -y cuda-compat-$(params.cuda-compat-version)
 
         echo -e "\n=== Installing nvidia container toolkit ==="
         ${ssh_cmd} sudo dnf install -y nvidia-container-toolkit-base
@@ -91,8 +103,8 @@ spec:
         # "podman run" process is killed when ssh session is closed which
         # happens randomly, probably because it runs on OpenShift
         echo -e "\n=== Enabling linger for podman ==="
-        ${ssh_cmd} 'sudo loginctl enable-linger ec2-user'
-        ${ssh_cmd} 'loginctl show-user ec2-user | grep Linger'
+        ${ssh_cmd} "sudo loginctl enable-linger $USERNAME"
+        ${ssh_cmd} "loginctl show-user $USERNAME | grep Linger"
 
   volumes:
     - name: mapt-ssh-key
