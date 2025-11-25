@@ -164,7 +164,7 @@ spec:
           - name: name
             value: modelcar-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:993b41565d5b359be6fd9d818079e97e4a649859845426e8500b93c39f66d56d
+            value: quay.io/konflux-ci/tekton-catalog/task-modelcar-oci-ta:0.1@sha256:1cd1c21586295ff40f451eabe5ecb62a2474534f05298ebfe7babc42069cac8f
           - name: kind
             value: task
         resolver: bundles
