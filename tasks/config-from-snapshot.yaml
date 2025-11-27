@@ -54,17 +54,46 @@ spec:
           exit 1
         fi
 
+        # cloud-specific artefacts (e.g. disk images) need to run on specific cloud providers
+        case "${COMPONENT}" in
+          *-aws*)
+            cloud_provider="aws"
+            ;;
+          *-azure*)
+            cloud_provider="azure"
+            ;;
+          *-gcp*)
+            cloud_provider="gcp"
+            ;;
+          *)
+            # all other types of artefacts can run on any cloud provider, will be decided below based on variant
+            cloud_provider=""
+            ;;
+        esac
+
+        ret_value=0
+
         # TODO update lists based on architecture
         case "${COMPONENT}" in
           *-cuda*)
-            # g4dn has 14 GB of GPU memory which is not enough, 12xlarge has 4 GPU, metal has 8 GPU
-            # p5.48xlarge, p5e.48xlarge,p5en.48xlarge, p4d.24xlarge, p4de.24xlarge has 8 GPU, failed on system not initalized (NVSwitch not configured???)
-            # p6-b200.48xlarge, p6e-gb200.36xlarge - not tested, extremely expensive $20+ per hour spot, $100+ on-demand
-
-            vm_types="g4dn.12xlarge,g4dn.metal,g5.xlarge,g5.2xlarge,g5.4xlarge,g5.8xlarge,g5.12xlarge,g5.16xlarge,g5.24xlarge,g5.48xlarge,g6.xlarge,g6.2xlarge,g6.4xlarge,g6.8xlarge,g6.12xlarge,g6.16xlarge,g6.24xlarge,g6.48xlarge,g6e.xlarge,g6e.2xlarge,g6e.4xlarge,g6e.8xlarge,g6e.12xlarge,g6e.16xlarge,g6e.24xlarge,g6e.48xlarge,gr6.4xlarge,gr6.8xlarge,p5.4xlarge"
-            cloud_provider="aws"
             variant="cuda-ubi9"
-            ret_value=0
+
+            if [[ "${cloud_provider}" == "aws" ]] || [[ -z "${cloud_provider}" ]]; then
+              # g4dn has 14 GB of GPU memory which is not enough, 12xlarge has 4 GPU, metal has 8 GPU
+              # p5.48xlarge, p5e.48xlarge,p5en.48xlarge, p4d.24xlarge, p4de.24xlarge has 8 GPU, failed on system not initalized (NVSwitch not configured???)
+              # p6-b200.48xlarge, p6e-gb200.36xlarge - not tested, extremely expensive $20+ per hour spot, $100+ on-demand
+
+              # also usable but not listed because mapt only checks 8 instance types at a time
+              # g4dn.12xlarge,g4dn.metal,g5.8xlarge,g5.12xlarge,g5.16xlarge,g5.24xlarge,g5.48xlarge
+              # g6.8xlarge,g6.12xlarge,g6.16xlarge,g6.24xlarge,g6.48xlarge
+              # g6e.4xlarge,g6e.8xlarge,g6e.12xlarge,g6e.16xlarge,g6e.24xlarge,g6e.48xlarge,gr6.8xlarge,p5.4xlarge
+
+              cloud_provider="aws" # might have been empty
+              vm_types="g5.xlarge,g5.2xlarge,g5.4xlarge,g6.xlarge,g6.2xlarge,g6.4xlarge,g6e.xlarge,gr6.4xlarge"
+            else
+              echo "Cloud provider ${cloud_provider} not supported for CUDA"
+              ret_value=1
+            fi
             ;;
           *-gaudi*)
             echo "Gaudi not implemented yet"
@@ -82,14 +111,12 @@ spec:
             ;;
           *-spyre*)
             echo "Spyre not implemented yet"
-            vm_types="todo"
             cloud_provider="ibm"
             variant="spyre-ubi9"
             ret_value=1
             ;;
           *-tpu*)
             echo "TPU not implemented yet"
-            vm_types="todo"
             cloud_provider="gcp"
             variant="tpu-ubi9"
             ret_value=1
@@ -101,6 +128,7 @@ spec:
         esac
 
         echo -e "\n === Storing results ==="
+        # we need to store task results even if the task fails
         echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
         echo -n "${containerImage}" | tee $(results.container-image.path)
         echo -n "${productImage}" | tee $(results.product-image.path)

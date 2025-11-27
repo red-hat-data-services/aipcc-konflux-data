@@ -224,7 +224,7 @@ spec:
           - name: revision
             value: main
           - name: pathInRepo
-            value: tasks/rhaiis-container-test.yaml
+            value: tasks/test-inference.yaml
           - name: token
             value: pipelines-as-code-secret
           - name: tokenKey
