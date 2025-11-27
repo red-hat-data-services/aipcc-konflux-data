@@ -1,7 +1,7 @@
 kind: Task
 apiVersion: tekton.dev/v1
 metadata:
-  name: rhaiis-container-test
+  name: test-inference
 spec:
   params:
     - name: container-image
@@ -11,6 +11,12 @@ spec:
     - name: model-names
       type: array
       default: []
+    - name: start-rhaiis
+      default: "true"
+      description: Start the RHAIIS container before testing the models (set to false when testing RHEL AI)
+    - name: use-sudo
+      default: "false"
+      description: Use sudo to execute podman commands (set to true when testing RHEL AI)
   steps:
     - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
       args: ["$(params.model-names[*])"]
@@ -32,20 +38,19 @@ spec:
         #!/bin/bash
         set -e
 
-        # Function to test a single model
-        test_model() {
+        start_rhaiis() {
           local model_name=$1
 
-          echo -e "\n===================================================="
-          echo "=== Testing model: ${model_name}"
-          echo "===================================================="
-
           echo -e "\n=== Removing existing RHAIIS container ==="
-          ${ssh_cmd} podman stop -i rhaiis
-          ${ssh_cmd} podman rm -i rhaiis
+          ${ssh_cmd} ${sudo_cmd} podman stop -i rhaiis
+          ${ssh_cmd} ${sudo_cmd} podman rm -i rhaiis
 
-          echo -e "\n=== Running RHAIIS container ==="
-          ${ssh_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
+          if [ "$(params.debug)" == "true" ]; then
+            DEBUG_FLAGS="--log-level=debug --env HF_DEBUG=1 --env=VLLM_LOGGING_LEVEL=DEBUG"
+          fi
+
+          echo -e "\n=== Starting RHAIIS container ==="
+          ${ssh_cmd} ${sudo_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
             --device nvidia.com/gpu=all \
             --security-opt=label=disable \
             --shm-size=8g \
@@ -60,20 +65,22 @@ spec:
             --model /opt/app-root/models/${model_name} \
             --served-model-name ${model_name} \
             --enforce-eager
+        }
 
+        wait_for_rhaiis() {
           max_attempts=20
           attempt=1
           while [ $attempt -lt $max_attempts ]; do
             echo -e "\n=== Waiting for RHAIIS container to be ready $attempt/$max_attempts ==="
-            container_state=$( ${ssh_cmd} "podman inspect -f '{{.State.Running}}' rhaiis")
+            container_state=$( ${ssh_cmd} "${sudo_cmd} podman inspect -f '{{.State.Running}}' rhaiis")
             if [[ "${container_state}" == "false" ]]; then
               echo "Container is not running!"
               echo "==="
               ${ssh_cmd} nvidia-smi
               echo "==="
-              ${ssh_cmd} podman inspect rhaiis | jq '.[0].State'
+              ${ssh_cmd} ${sudo_cmd} podman inspect rhaiis | jq '.[0].State'
               echo "==="
-              ${ssh_cmd} podman logs --tail 1000 rhaiis || true
+              ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 rhaiis || true
               echo "==="
               ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
               echo -e "\n=== Sleeping for 60 minutes ==="
@@ -95,17 +102,19 @@ spec:
             ${ssh_cmd} "free -m" || true
             echo "==="
             echo "Last 5 lines of logs:"
-            ${ssh_cmd} podman logs --tail 5 rhaiis || true
+            ${ssh_cmd} ${sudo_cmd} podman logs --tail 5 rhaiis || true
             sleep 30
           done
 
           if [ $attempt -eq $max_attempts ]; then
             echo "Container failed to become ready within $(($max_attempts * 30)) seconds"
             echo -e "\n=== Podman logs ==="
-            ${ssh_cmd} podman logs rhaiis
+            ${ssh_cmd} ${sudo_cmd} podman logs rhaiis
             exit 1
           fi
+        }
 
+        test_inference() {
           echo -e "\n=== Prompting RHAIIS container ==="
           DATA='{"prompt": "What is the capital of France?","max_tokens": 50}'
           RESPONSE=$(${ssh_cmd} "curl --no-progress-meter -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/completions")
@@ -123,10 +132,6 @@ spec:
             VERIFICATION_FAILED=1
           fi
 
-          echo -e "\n=== Stopping RHAIIS container ==="
-          ${ssh_cmd} podman stop rhaiis
-          ${ssh_cmd} podman rm rhaiis
-
           if [ $VERIFICATION_FAILED -eq 1 ]; then
             echo "✗ Model ${model_name} failed verification"
             return 1
@@ -142,6 +147,12 @@ spec:
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
+        if [ "$(params.use-sudo)" == "true" ]; then
+          sudo_cmd="sudo"
+        else
+          sudo_cmd=""
+        fi
+
         # used on p5.48xlarge, maybe on p4d.24xlarge
         # https://issues.redhat.com/browse/AIPCC-5636
         echo -e "\n=== nvidia-smi nvlink --status ==="
@@ -151,17 +162,25 @@ spec:
         echo -e "\n=== Number of GPUs ==="
         echo "${NUMBER_OF_GPUS}"
 
-        if [ "$(params.debug)" == "true" ]; then
-          DEBUG_FLAGS="--log-level=debug --env HF_DEBUG=1 --env=VLLM_LOGGING_LEVEL=DEBUG"
-        fi
-
-        # Iterate over model names and test each one
-        echo -e "\n=== Testing models ==="
-
         for model in "$@"; do
-          if ! test_model "${model}"; then
-            echo -e "\n✗ Testing stopped at first failure: ${model}"
-            exit 1
+          echo -e "\n===================================================="
+          echo "=== Testing model: ${model}"
+          echo "===================================================="
+          if [ "$(params.start-rhaiis)" == "true" ]; then
+            if ! start_rhaiis "${model}"; then
+              echo -e "\n✗ Failed to start RHAIIS container for model ${model}"
+              exit 1
+            fi
+          fi
+
+          if ! wait_for_rhaiis; then
+            echo -e "\n✗ RHAIIS container failed to become ready"
+            exit 2
+          fi
+
+          if ! test_inference; then
+            echo -e "\n✗ Failed to test inference for model ${model}"
+            exit 3
           fi
         done
 
