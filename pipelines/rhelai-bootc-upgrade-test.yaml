@@ -1,0 +1,274 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: rhelai-bootc-upgrade-test
+spec:
+  params:
+    - name: architecture
+      default: "x86_64"
+      description: One of x86_64, aarch64
+    - name: component
+      description: Konflux component to test, e.g. bootc-cuda or bootc-cuda-aws
+      default: bootc-cuda
+    - name: debug
+      default: "false"
+    - name: model-name
+      default: "ibm-granite/granite-3.3-8b-instruct"
+      description: Name of the model to test
+    - name: SNAPSHOT
+      description: |
+        Snapshot of the application
+        Example:
+        {"components":[{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-aws@sha256:bf35b71727adad65cc3eb7f2422a057ea776c5ab2aff222364bf09fc3c7500ad","name":"bootc-cuda-aws","source":{"git":{"context":"ai-lab-recipes/training/cloud","dockerfileUrl":"Containerfile","revision":"d2b8d79e80ecc5d32eccdab63e978ba59d90f762","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}},{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-azure@sha256:130e851bc0fd5145d179b1bdbd5fd9e5553748516b133b592476b63567e7bbd7","name":"bootc-cuda-azure","source":{"git":{"context":"ai-lab-recipes/training/cloud","dockerfileUrl":"Containerfile","revision":"388f04fed77d2875c3a0c5a65ee780f9c33cdbdc","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}},{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-gcp@sha256:65bc39dc6f9b754e330550dedf824c6df4672fa4ad29634067d55d88ecc419f0","name":"bootc-cuda-gcp","source":{"git":{"context":"ai-lab-recipes/training/cloud","dockerfileUrl":"Containerfile","revision":"388f04fed77d2875c3a0c5a65ee780f9c33cdbdc","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}},{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-azure-disk-image@sha256:af644bd645db2fd1871e2e8b11abaa6c55571a4f7174fb12d4c12e927c445765","name":"bootc-cuda-azure-disk-image","source":{"git":{"revision":"5fc9c810dba6c95142e76fd4558b423ff244d3c8","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}},{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda@sha256:66ab80816f39ce88e5d35ec7e33edd9bc6624e46944ead58c0d833728403448d","name":"bootc-cuda","source":{"git":{"context":".","dockerfileUrl":"Containerfile.cuda","revision":"bbabf513d713b9447baff20a575b7326fbdfcb72","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}}]}
+  results:
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
+  tasks:
+    - name: create-configuration
+      description: Placeholder task that prints the Snapshot and outputs standard TEST_OUTPUT
+      params:
+        - name: component
+          value: $(params.component)
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/config-from-snapshot.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: create-vm-aws
+      params:
+        # arch is not supported for RHEL AI
+        # - name: arch
+        #   value: "$(params.architecture)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: debug
+          value: "$(params.debug)"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687"
+        - name: version
+          value: "3.0.0" # RHEL AI version
+      runAfter:
+        - create-configuration
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          # todo configure renovate to update this
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]
+    - name: configure-vm
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: model-name
+          value: "$(params.model-name)"
+      runAfter:
+        - create-vm-aws
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-rhel-ai-vm.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: bootc-switch
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: script
+          value: |
+            #!/bin/bash
+            set -e
+            
+            echo -e "\n=== bootc status ==="
+            sudo bootc status
+
+            echo -e "\n=== bootc switch $(tasks.create-configuration.results.container-image) ==="
+            sudo bootc switch $(tasks.create-configuration.results.container-image)
+
+            echo -e "\n=== Rebooting the machine ==="
+            sudo reboot
+      runAfter:
+        - configure-vm
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/execute-script-on-vm.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: after-switch
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: script
+          value: |
+            #!/bin/bash
+            set -e
+            cat /etc/redhat-release
+
+            echo -e "\n=== nvidia-smi ==="
+            nvidia-smi
+
+            echo -e "\n=== Checking /etc/ostree/auth.json ==="
+            sudo ls -al /etc/ostree/auth.json || true
+
+            echo -e "\n=== Checking /proc/driver/nvidia/version ==="
+            cat /proc/driver/nvidia/version
+            
+            echo -e "\n=== bootc status ==="
+            sudo bootc status
+
+            echo -e "\n=== podman images ==="
+            podman images
+
+            echo -e "\n=== RHAIIS quadlet status ==="
+            sudo systemctl status rhaiis
+        - name: wait-for-connection
+          value: "true"
+      runAfter:
+        - bootc-switch
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/execute-script-on-vm.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: test-inference
+      params:
+        - name: container-image
+          value: "$(tasks.create-configuration.results.container-image)"
+        - name: debug
+          value: "$(params.debug)"
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: model-names
+          value: ["$(params.model-name)"]
+        - name: start-rhaiis
+          value: "false"
+        - name: use-sudo
+          value: "true"
+      runAfter:
+        - after-switch
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/test-inference.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+  finally:
+    - name: delete-vm-aws
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          # TODO configure renovate to update this
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]

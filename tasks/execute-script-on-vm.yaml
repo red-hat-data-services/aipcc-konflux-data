@@ -1,0 +1,65 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: execute-script-on-vm
+spec:
+  params:
+    - name: debug
+      default: "false"
+    - name: host-access-secret-name
+    - name: script
+      default: | 
+        #!/bin/bash
+        set -e
+    - name: wait-for-connection
+      description: Wait for the VM to be available before executing the script, useful after a reboot.
+      default: "false"
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+
+        if [[ "$(params.wait-for-connection)" == "true" ]]; then
+          echo -e "\n=== Waiting for the VM to be available ==="
+          # VM restart quickly but bare metal VMs need some time to be ready
+          for i in $(seq 1 20); do
+            if ${ssh_cmd} true >/dev/null 2>&1; then
+              ${ssh_cmd} "until systemctl is-system-running --wait >/dev/null 2>&1; do sleep 2; done"
+              break
+            fi
+
+            echo -e "\n=== System is not ready, sleeping for 30 seconds $i/10 ==="
+            sleep 30
+          done
+        fi
+
+        echo -e "\n=== Executing script on VM ==="
+        ${ssh_cmd} '$(params.script)'
+
+  volumes:
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        items:
+          - key: id_rsa
+            path: id_rsa
