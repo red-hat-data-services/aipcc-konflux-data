@@ -1,0 +1,112 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: configure-rhel-ai-vm
+spec:
+  params:
+    - name: host-access-secret-name
+    - name: model-name
+      description: Name of the model to test
+    - name: pull-secret-name
+      default: "rhelai-bootc-pull"
+      description: Name of the secret containing docker config for image authentication
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token_konflux_ro
+              name: "hugging-face"
+      volumeMounts:
+        - name: auth-file
+          mountPath: /mnt/auth-file
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+        - name: shared-ssh-key
+          mountPath: /mnt/shared-ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+
+        echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Adding shared SSH key ==="
+        cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
+
+        echo -e "\n=== /proc/driver/nvidia/version ==="
+        ${ssh_cmd} cat /proc/driver/nvidia/version
+
+        echo -e "\n=== nvidia-smi ==="
+        ${ssh_cmd} nvidia-smi
+
+        echo -e "\n=== Checking /etc/ostree/auth.json ==="
+        ${ssh_cmd} "sudo ls -al /etc/ostree/auth.json || true"
+
+        echo -e "\n=== Copying pull secret ==="
+        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+        ${ssh_cmd} sudo cp auth.json /etc/ostree/auth.json
+
+        # "podman run" process is killed when ssh session is closed which
+        # happens randomly, probably because it runs on OpenShift
+        echo -e "\n=== Enabling linger for podman ==="
+        ${ssh_cmd} sudo loginctl enable-linger $USERNAME
+        ${ssh_cmd} "loginctl show-user $USERNAME | grep Linger"
+
+        NUMBER_OF_GPUS=$( ${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+        echo -e "\n=== Number of GPUs ==="
+        echo "${NUMBER_OF_GPUS}"
+
+        echo -e "\n=== Creating quadlet configuration ==="
+        config_file="/etc/containers/systemd/rhaiis.container.d/install.conf"
+        ${ssh_cmd} sudo cp ${config_file}.example ${config_file}
+        ${ssh_cmd} "sudo sed -i 's|\(HUGGING_FACE_HUB_TOKEN=\)[^ ]*|\1${HUGGING_FACE_HUB_TOKEN}|' ${config_file}"
+        ${ssh_cmd} "sudo sed -i 's|\(--model \)[^ ]*|\1$(params.model-name)|' ${config_file}"
+        ${ssh_cmd} "sudo sed -i 's|\(--tensor-parallel-size \)[^ ]*|\1${NUMBER_OF_GPUS}|' ${config_file}"
+
+        echo -e "\n=== Contents of ${config_file} ==="
+        ${ssh_cmd} cat ${config_file} | sed 's|\(HUGGING_FACE_HUB_TOKEN=hf_\)[^ ]*|\1hidden|'
+
+        echo -e "\n=== Reloading systemd ==="
+        ${ssh_cmd} sudo systemctl daemon-reload
+
+        echo -e "\n=== Starting rhaiis service==="
+        ${ssh_cmd} sudo systemctl start rhaiis
+  volumes:
+    - name: auth-file
+      secret:
+        secretName: "$(params.pull-secret-name)"
+        items:
+          - key: ".dockerconfigjson"
+            path: auth.json
+    - name: mapt-ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
+    - name: shared-ssh-key
+      secret:
+        secretName: "shared-ssh-key"
+        defaultMode: 0400
+        items:
+          - key: id_rsa.pub
+            path: aipcc.pub
+            mode: 0400
