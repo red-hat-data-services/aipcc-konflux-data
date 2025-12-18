@@ -1,0 +1,330 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: rhelai-aws-disk-image-test
+spec:
+  params:
+    - name: architecture
+      default: "x86_64"
+      description: One of x86_64, aarch64
+    - name: component
+      description: Konflux component to test, e.g. bootc-cuda-aws-disk-image
+      default: bootc-cuda-aws-disk-image
+    - name: debug
+      default: "false"
+    - name: model-name
+      default: "ibm-granite/granite-3.3-8b-instruct"
+      description: Name of the model to test
+    - name: rhel-ai-version
+      description: RHEL AI version for AMI naming, e.g. 3.2.5
+    - name: SNAPSHOT
+      description: |
+        Snapshot of the application
+        Example:
+        {"components":[{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-aws-disk-image@sha256:xxx","name":"bootc-cuda-aws-disk-image","source":{"git":{"revision":"xxx","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}}]}
+  results:
+    - name: ami-name
+      value: $(tasks.check-ami-exists.results.ami-name)
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
+  tasks:
+    - name: create-configuration
+      description: Extract container image and configuration from snapshot
+      params:
+        - name: component
+          value: $(params.component)
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/config-from-snapshot.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: check-ami-exists
+      description: Check if AMI already exists for this git commit
+      params:
+        - name: git-digest
+          value: $(tasks.create-configuration.results.git-digest)
+        - name: event-type
+          value: $(tasks.create-configuration.results.event-type)
+        - name: rhel-ai-version
+          value: $(params.rhel-ai-version)
+        - name: secret-aws-credentials
+          value: aws-konflux-tests
+      runAfter:
+        - create-configuration
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/check-ami-exists.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: create-helper-vm-aws
+      description: Create AWS helper VM instance for extracting and uploading disk image
+      params:
+        - name: arch
+          value: "arm64"
+        - name: cpus
+          value: "2"
+        - name: debug
+          value: "$(params.debug)"
+        - name: id
+          value: "$(context.pipelineRun.name)-helper"
+        - name: host-access-secret-name
+          value: "mapt-helper-$(context.pipelineRun.name)"
+        - name: memory
+          value: "1"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: spot
+          value: "false"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687,purpose=helper"
+        - name: version
+          value: "43"
+      runAfter:
+        - check-ami-exists
+      when:
+        - input: $(tasks.check-ami-exists.results.ami-exists)
+          operator: in
+          values: ["false"]
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-fedora.yaml"
+    - name: extract-and-upload-ami
+      description: Extract disk image from OCI artifact and upload to AWS as AMI
+      params:
+        - name: ami-name
+          value: $(tasks.check-ami-exists.results.ami-name)
+        - name: container-image
+          value: $(tasks.create-configuration.results.container-image)
+        - name: debug
+          value: $(params.debug)
+        - name: host-access-secret-name
+          value: "$(tasks.create-helper-vm-aws.results.host-access-secret)"
+        - name: pull-secret-name
+          value: "rhelai-bootc-pull"
+        - name: secret-aws-credentials
+          value: aws-konflux-tests
+        - name: id
+          value: "$(context.pipelineRun.name)"
+      runAfter:
+        - create-helper-vm-aws
+      when:
+        - input: $(tasks.check-ami-exists.results.ami-exists)
+          operator: in
+          values: ["false"]
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/extract-and-upload-ami.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: create-vm-aws
+      description: Create AWS VM instance using the uploaded AMI
+      params:
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: custom-ami
+          value: $(tasks.check-ami-exists.results.ami-name)
+        - name: debug
+          value: "$(params.debug)"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687"
+      runAfter:
+        - extract-and-upload-ami
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+    - name: configure-vm
+      description: Configure the RHEL AI VM instance
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: model-name
+          value: "$(params.model-name)"
+      runAfter:
+        - create-vm-aws
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-rhel-ai-vm.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: test-inference
+      description: Run inference tests on the configured VM
+      params:
+        - name: container-image
+          value: "$(tasks.create-configuration.results.container-image)"
+        - name: debug
+          value: "$(params.debug)"
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: model-names
+          value: ["$(params.model-name)"]
+        - name: start-rhaiis
+          value: "false"
+        - name: use-sudo
+          value: "true"
+      runAfter:
+        - configure-vm
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/test-inference.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+  finally:
+    - name: delete-vm-aws
+      description: Clean up the AWS VM instance
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]
+    - name: delete-helper-vm-aws
+      description: Clean up the AWS helper VM instance
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)-helper"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-fedora.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]
+        - input: $(tasks.check-ami-exists.results.ami-exists)
+          operator: in
+          values: ["false"]
