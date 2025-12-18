@@ -1,0 +1,186 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: extract-and-upload-ami
+spec:
+  params:
+    - name: ami-name
+      description: The name of the AMI to be created
+    - name: container-image
+      description: Full reference to the OCI artifact containing the disk image
+    - name: debug
+      default: "false"
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials for the helper VM
+    - name: pull-secret-name
+      default: "global-pull-secret"
+      description: Name of the secret containing docker config for image authentication
+    - name: secret-aws-credentials
+      description: Name of the secret containing AWS credentials
+    - name: share-orgs-ids
+      default: "arn:aws:organizations::329260820478:organization/o-melcpnc7lj,arn:aws:organizations::253721312158:organization/o-iorgj25jqr"
+      description: Comma-separated list of AWS account IDs to share the AMI with
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils@sha256:ff4a9cd19f3e88ba376844e73adf1bea01d6663273dd11cb2636ea89a44147b6
+      env:
+        - name: CONTAINER_IMAGE
+          value: $(params.container-image)
+        - name: DEBUG
+          value: $(params.debug)
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: secret-key
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: region
+        - name: AWS_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: bucket
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+        - name: auth-file
+          mountPath: /mnt/auth-file
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Copying auth file ==="
+        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+        ${ssh_cmd} ls -al auth.json
+
+        echo -e "\n=== Installing required tools on helper VM ==="
+        ${ssh_cmd} "sudo dnf install -y jq podman skopeo"
+
+        echo -e "\n=== Creating working directory ==="
+        ${ssh_cmd} df -h /home
+        DISK_IMAGE_DIR="/home/fedora/disk-image"
+        ${ssh_cmd} "mkdir -p ${DISK_IMAGE_DIR}"
+
+        echo -e "\n=== Downloading OCI artifact ==="
+        echo "Container image: ${CONTAINER_IMAGE}"
+        ${ssh_cmd} "skopeo copy --authfile auth.json 'docker://${CONTAINER_IMAGE}' 'dir:${DISK_IMAGE_DIR}'"
+
+        echo -e "\n=== Identifying largest layer ==="
+        disk_image_layer=$(${ssh_cmd} "du -aBM ${DISK_IMAGE_DIR} 2>/dev/null | sort -nr | head -n 1 | awk '{print \$2}'")
+        echo "Disk image layer: ${disk_image_layer}"
+
+        if [ -z "${disk_image_layer}" ]; then
+          echo "ERROR: Could not identify disk image layer"
+          exit 1
+        fi
+
+        echo -e "\n=== Identifying file type ==="
+        file_type=$(${ssh_cmd} "file -b ${disk_image_layer}")
+        echo "File type: ${file_type}"
+
+        echo -e "\n=== Extracting disk image ==="
+        if [[ "${file_type}" == *"gzip"* ]]; then
+          echo "Decompressing gzip file"
+          ${ssh_cmd} "gunzip -c ${disk_image_layer} > ${DISK_IMAGE_DIR}/disk-image.raw"
+        else
+          echo "File is not compressed, copying"
+          ${ssh_cmd} "cp ${disk_image_layer} ${DISK_IMAGE_DIR}/disk-image.raw"
+        fi
+
+        echo -e "\n=== Verifying disk image ==="
+        disk_size=$(${ssh_cmd} "du -h ${DISK_IMAGE_DIR}/disk-image.raw | awk '{print \$1}'")
+        echo "Disk image path: ${DISK_IMAGE_DIR}/disk-image.raw"
+        echo "Disk image size: ${disk_size}"
+
+        if [ "${DEBUG}" == "true" ]; then
+          echo -e "\n=== Content of working directory ${DISK_IMAGE_DIR} ==="
+          ${ssh_cmd} "ls -lh ${DISK_IMAGE_DIR}"
+        fi
+
+        echo -e "\n=== Creating AWS credentials for cloud-importer ==="
+        AWS_CREDENTIALS="/tmp/aws-credentials"
+        ${ssh_cmd} "echo 'AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}' >> ${AWS_CREDENTIALS}"
+        ${ssh_cmd} "echo 'AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}' >> ${AWS_CREDENTIALS}"
+        ${ssh_cmd} "echo 'AWS_DEFAULT_REGION=${AWS_REGION}' >> ${AWS_CREDENTIALS}"
+        ${ssh_cmd} "echo 'BUCKET=${AWS_BUCKET}' >> ${AWS_CREDENTIALS}"
+
+        echo -e "\n=== Uploading disk image to AWS using cloud-importer ==="
+        echo "AMI Name: $(params.ami-name)"
+
+        # Build cloud-importer params
+        cloud_importer_params+=""
+
+        if [[ "${DEBUG}" == "true" ]]; then
+          cloud_importer_params+="--debug "
+        fi
+
+        if [[ "$(params.share-orgs-ids)" != "" ]]; then
+          cloud_importer_params+="--share-orgs-ids $(params.share-orgs-ids) "
+        fi
+
+        echo -e "\n=== Running cloud-importer ==="
+
+        ${ssh_cmd} podman run -d --name cloud-importer \
+          --env-file ${AWS_CREDENTIALS} \
+          -v ${DISK_IMAGE_DIR}:/data:Z \
+          ghcr.io/mapt-oss/cloud-importer:latest \
+          rhelai aws \
+          --backed-url s3://${AWS_BUCKET}/cloud-importer \
+          --project-name $(params.ami-name) \
+          --image-name $(params.ami-name) \
+          --image-path /data/disk-image.raw \
+          --replicate \
+          --tags konflux=true,ci=true,product=rhelai,ami-name=$(params.ami-name),app-code=GITL-005,service-phase=dev,cost-center=687 \
+          ${cloud_importer_params}
+
+        ${ssh_cmd} podman ps -a
+
+        ${ssh_cmd} podman logs -f cloud-importer
+
+        container_exit_code=$(${ssh_cmd} "podman inspect -f '{{.State.ExitCode}}' cloud-importer")
+        if [[ "${container_exit_code}" != 0 ]]; then
+          echo "Container finished with exit code ${container_exit_code}"
+          exit 1
+        fi
+
+        echo -e "\n=== Stopping and removing cloud-importer container ==="
+        ${ssh_cmd} podman rm -f cloud-importer
+
+  volumes:
+    - name: auth-file
+      secret:
+        secretName: "$(params.pull-secret-name)"
+        items:
+          - key: ".dockerconfigjson"
+            path: auth.json
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400

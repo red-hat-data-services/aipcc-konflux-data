@@ -11,6 +11,10 @@ spec:
       description: Cloud provider, e.g. aws, ibm, gcp, azure
     - name: container-image
       description: Full reference to the container image to test, including the registry and the sha digest
+    - name: event-type
+      description: Value of label pac.test.appstudio.openshift.io/event-type from the snapshot
+    - name: git-digest
+      description: Full git commit digest from the snapshot
     - name: product-image
       description: Short product image name, e.g. rhaiis or rhaiis-model-opt
     - name: variant
@@ -19,11 +23,15 @@ spec:
       description: Comma-separated list of VM types based on variant
   steps:
     - name: parse-snapshot-components
-      image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
+      image: quay.io/konflux-ci/release-service-utils@sha256:ff4a9cd19f3e88ba376844e73adf1bea01d6663273dd11cb2636ea89a44147b6
       workingDir: /workspace
       env:
         - name: COMPONENT
           value: $(params.component)
+        - name: EVENT_TYPE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['pac.test.appstudio.openshift.io/event-type']
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       script: |
@@ -41,8 +49,9 @@ spec:
           if [[ "${componentName}" != "${COMPONENT}" ]]; then
             continue
           fi
-          
+
           containerImage=$(echo "${componentEntry}" | jq -r '.containerImage')
+          gitDigest=$(echo "${componentEntry}" | jq -r '.source.git.revision')
 
           echo -e "\n === Found image for ${componentName} in the snapshot ==="
           echo ${containerImage}
@@ -131,6 +140,8 @@ spec:
         # we need to store task results even if the task fails
         echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
         echo -n "${containerImage}" | tee $(results.container-image.path)
+        echo -n "${gitDigest}" | tee $(results.git-digest.path)
+        echo -n "${EVENT_TYPE}" | tee $(results.event-type.path)
         echo -n "${productImage}" | tee $(results.product-image.path)
         echo -n "${variant}" | tee $(results.variant.path)
         echo -n "${vm_types}" | tee $(results.vm-types.path)
