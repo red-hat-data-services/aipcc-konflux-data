@@ -268,16 +268,23 @@ spec:
       params:
         - name: IMAGE
           value: $(params.output-image)
+        - name: COMMIT_SHA
+          value: $(tasks.clone-repository.results.commit)
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.image-expires-after)
+        - name: ALWAYS_BUILD_INDEX
+          value: "true"
         - name: IMAGES
-          value: $(tasks.build-vm-image.results.IMAGE_REFERENCE[*])
+          value:
+          - $(tasks.build-vm-image.results.IMAGE_REFERENCE[*])
       runAfter:
         - build-vm-image
       taskRef:
         params:
           - name: name
-            value: build-image-manifest
+            value: build-image-index
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-image-manifest:0.1@sha256:567fa85019d362876f238c5052f7965973dad449758a38e9ce99a6bfa4e962e1
+            value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.2@sha256:985d1efe861b02524a7679ecd855624b3d4e3a2e835b6f8a97ec7d135898ec0b
           - name: kind
             value: task
         resolver: bundles
