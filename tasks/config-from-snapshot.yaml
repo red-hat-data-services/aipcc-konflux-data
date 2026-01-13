@@ -23,7 +23,7 @@ spec:
       description: Comma-separated list of VM types based on variant
   steps:
     - name: parse-snapshot-components
-      image: quay.io/konflux-ci/release-service-utils@sha256:ff4a9cd19f3e88ba376844e73adf1bea01d6663273dd11cb2636ea89a44147b6
+      image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
       workingDir: /workspace
       env:
         - name: COMPONENT
