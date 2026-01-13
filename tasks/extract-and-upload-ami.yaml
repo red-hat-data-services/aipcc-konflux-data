@@ -21,7 +21,7 @@ spec:
       default: "arn:aws:organizations::329260820478:organization/o-melcpnc7lj,arn:aws:organizations::253721312158:organization/o-iorgj25jqr"
       description: Comma-separated list of AWS account IDs to share the AMI with
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:ff4a9cd19f3e88ba376844e73adf1bea01d6663273dd11cb2636ea89a44147b6
+    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
       env:
         - name: CONTAINER_IMAGE
           value: $(params.container-image)
