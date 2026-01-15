@@ -18,7 +18,7 @@ spec:
     - name: product-image
       description: Short product image name, e.g. rhaiis or rhaiis-model-opt
     - name: variant
-      description: Variant, e.g. cuda-ubi9, gaudi-ubi9, rocm-ubi9, spyre-ubi9, tpu-ubi9
+      description: Variant, e.g. cuda-ubi9, gaudi-ubi9, neuron-ubi9, rocm-ubi9, spyre-ubi9, tpu-ubi9
     - name: vm-types
       description: Comma-separated list of VM types based on variant
   steps:
@@ -110,6 +110,18 @@ spec:
             cloud_provider="aws"
             variant="gaudi-ubi9"
             ret_value=1
+            ;;
+          *-neuron*)
+            variant="neuron-ubi9"
+
+            if [[ "${cloud_provider}" == "aws" ]] || [[ -z "${cloud_provider}" ]]; then
+              # instances with at least 16 GiB of GPU memory with reasonable price
+              vm_types="inf1.2xlarge,inf1.6xlarge,inf1.24xlarge,inf2.xlarge,inf2.8xlarge,trn1.2xlarge"
+              cloud_provider="aws" # might have been empty
+            else
+              echo "Cloud provider ${cloud_provider} not supported for Neuron"
+              ret_value=1
+            fi
             ;;
           *-rocm*)
             echo "ROCM not implemented yet"
