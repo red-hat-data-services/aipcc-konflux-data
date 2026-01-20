@@ -7,7 +7,7 @@ spec:
     - name: git-digest
       description: Git commit digest to use in AMI name
     - name: event-type
-      description: Event type (e.g., pull_request, push)
+      description: Event type (e.g., pull_request, merge_request, push)
     - name: rhel-ai-version
       description: RHEL AI version for AMI naming
     - name: secret-aws-credentials
@@ -20,7 +20,7 @@ spec:
       description: Expected AMI name based on git digest and event type
   steps:
     - name: check-ami
-      image: ghcr.io/mapt-oss/cloud-importer
+      image: ghcr.io/mapt-oss/cloud-importer@sha256:30d0680110de53773f082407b227e8ffe61b526ab617c8936f0c2951ecaf4d8f
       env:
         - name: GIT_DIGEST
           value: $(params.git-digest)
@@ -54,7 +54,7 @@ spec:
         EVENT_TYPE_LOWER=$(echo "${EVENT_TYPE}" | tr '[:upper:]' '[:lower:]')
 
         # Construct AMI name based on event type
-        if [[ "${EVENT_TYPE_LOWER}" == "pull_request" ]]; then
+        if [[ "${EVENT_TYPE_LOWER}" == "pull_request" || "${EVENT_TYPE_LOWER}" == "merge_request" ]]; then
           AMI_NAME="rhel-ai-cuda-aws-${RHEL_AI_VERSION}-pr-${SHORT_DIGEST}"
         else
           AMI_NAME="rhel-ai-cuda-aws-${RHEL_AI_VERSION}-${SHORT_DIGEST}"
