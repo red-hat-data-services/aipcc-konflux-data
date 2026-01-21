@@ -169,6 +169,10 @@ spec:
       description: name of the secret of the activation-key for entitlement builds
       type: string
       default: activation-key
+    - name: labels
+      description: Additional key=value labels to apply to the built image
+      type: array
+      default: []
     - name: contextualize-sbom
       description: Determines if SBOM will be contextualized on the build-container task.
       type: string
@@ -302,6 +306,13 @@ spec:
           value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
         - name: IMAGE_APPEND_PLATFORM
           value: "true"
+        - name: LABELS
+          value:
+          - url=$(params.git-url)
+          - release=$(tasks.clone-repository.results.commit-timestamp)
+          - git.url=$(params.git-url)
+          - git.commit=$(params.revision)
+          - $(params.labels[*])
         - name: ACTIVATION_KEY
           value: $(params.activation-key)
         - name: CONTEXTUALIZE_SBOM
