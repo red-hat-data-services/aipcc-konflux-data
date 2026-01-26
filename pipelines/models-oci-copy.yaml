@@ -157,6 +157,8 @@ spec:
           value: $(params.aws-secret-name)
         - name: SOURCE_ARTIFACT
           value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+        - name: PARALLEL_JOBS
+          value: "4"
       runAfter:
         - clone-repository
       taskRef:
