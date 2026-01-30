@@ -1,0 +1,177 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: cleanup-resources
+spec:
+  description: |
+    Cleanup pipeline that finds and destroys old mapt resources and PR AMIs.
+    Uses matrix feature to parallelize cleanup of multiple resources.
+  params:
+    - name: ami-name-filters
+      description: List of substrings that must ALL be present in AMI names to be considered for cleanup (e.g., ["rhel-ai", "-pr-"] will only match AMIs containing both substrings)
+      type: array
+      default:
+        - "rhel-ai"
+        - "-pr-"
+    - name: debug
+      default: "false"
+    - name: dry-run
+      description: If "true", only log actions without executing cleanup
+      default: "false"
+    - name: secret-aws-credentials
+      description: Name of the secret containing AWS credentials
+      default: "aws-creds"
+    - name: ttl-hours-amis
+      description: Time-to-live in hours for merge request AMIs before pruning (e.g., "72" for 3 days)
+      default: "72"
+    - name: ttl-hours-vms
+      description: Time-to-live in hours for resources before pruning (e.g., "48" for 2 days)
+      default: "48"
+  tasks:
+    - name: find-resources
+      description: Scan S3 for old resources
+      params:
+        - name: ami-name-filters
+          value:
+            - $(params.ami-name-filters[*])
+        - name: dry-run
+          value: $(params.dry-run)
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+        - name: ttl-hours-amis
+          value: $(params.ttl-hours-amis)
+        - name: ttl-hours-vms
+          value: $(params.ttl-hours-vms)
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/find-resources-to-prune.yaml
+          - name: token
+            value: gitlab-konflux-data-ro
+          - name: tokenKey
+            value: password
+    - name: cleanup-rhel-resources
+      params:
+        - name: debug
+          value: $(params.debug)
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+      matrix:
+        params:
+          - name: id
+            value: $(tasks.find-resources.results.rhel-resources[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel.yaml"
+      when:
+        - input: $(tasks.find-resources.results.rhel-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
+    - name: cleanup-rhel-ai-resources
+      params:
+        - name: debug
+          value: $(params.debug)
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+      matrix:
+        params:
+          - name: id
+            value: $(tasks.find-resources.results.rhel-ai-resources[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+      when:
+        - input: $(tasks.find-resources.results.rhel-ai-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
+    - name: cleanup-fedora-resources
+      params:
+        - name: debug
+          value: $(params.debug)
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+      matrix:
+        params:
+          - name: id
+            value: $(tasks.find-resources.results.fedora-resources[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-aws-fedora.yaml"
+      when:
+        - input: $(tasks.find-resources.results.fedora-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
+    - name: cleanup-aws-amis
+      params:
+        - name: debug
+          value: $(params.debug)
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+      matrix:
+        params:
+          - name: id
+            value: $(tasks.find-resources.results.cloud-importer-resources[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: http
+        params:
+          - name: url
+            value: "https://raw.githubusercontent.com/ppitonak/cloud-importer/refs/heads/tkn_destroy/tkn/destroy-aws.yaml"
+      when:
+        - input: $(tasks.find-resources.results.cloud-importer-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
