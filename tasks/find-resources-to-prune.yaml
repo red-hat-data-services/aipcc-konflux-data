@@ -1,0 +1,212 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: find-resources-to-prune
+spec:
+  description: |
+    Scans S3 bucket for old mapt and cloud-importer resources.
+    Outputs lists of resources that need cleanup via infra-aws tasks.
+  params:
+    - name: ami-name-filters
+      description: List of substrings to filter AMI names
+      type: array
+      default:
+        - "rhel-ai"
+        - "-pr-"
+    - name: dry-run
+      description: If "true", only log actions without executing cleanup
+      default: "false"
+      type: string
+    - name: secret-aws-credentials
+      description: Name of the secret containing AWS credentials (access-key, secret-key, region, bucket)
+      type: string
+    - name: ttl-hours-amis
+      description: Time-to-live in hours for merge request AMIs before pruning (e.g., "72" for 3 days)
+      type: string
+    - name: ttl-hours-vms
+      description: Time-to-live in hours for resources before pruning (e.g., "168" for 7 days)
+      type: string
+  results:
+    - name: rhel-resources
+      description: Array of RHEL resource IDs to cleanup
+      type: array
+    - name: rhel-ai-resources
+      description: Array of RHEL AI resource IDs to cleanup
+      type: array
+    - name: fedora-resources
+      description: Array of Fedora resource IDs to cleanup
+      type: array
+    - name: cloud-importer-resources
+      description: Array of cloud-importer resource IDs to cleanup
+      type: array
+  steps:
+    - name: check-s3-bucket
+      image: ghcr.io/mapt-oss/cloud-importer@sha256:30d0680110de53773f082407b227e8ffe61b526ab617c8936f0c2951ecaf4d8f
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: secret-key
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: region
+        - name: AWS_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: bucket
+        - name: DRY_RUN
+          value: $(params.dry-run)
+        - name: TTL_HOURS_AMIS
+          value: $(params.ttl-hours-amis)
+        - name: TTL_HOURS_VMS
+          value: $(params.ttl-hours-vms)
+      args:
+        - $(params.ami-name-filters[*])
+      script: |
+        #!/usr/bin/env python3
+        import os
+        import json
+        import subprocess
+        import sys
+        from datetime import datetime, timezone, timedelta
+
+        # Configuration
+        ami_name_filters = sys.argv[1:]  # Get filters from command line arguments
+        dry_run = os.environ['DRY_RUN'].lower() == 'true'
+        bucket = os.environ['AWS_BUCKET']
+        ttl_hours_amis = int(os.environ['TTL_HOURS_AMIS'])
+        ttl_hours_vms = int(os.environ['TTL_HOURS_VMS'])
+
+        cutoff_date_vms = datetime.now(timezone.utc) - timedelta(hours=ttl_hours_vms)
+        cutoff_date_amis = datetime.now(timezone.utc) - timedelta(hours=ttl_hours_amis)
+
+        print(f"\n=== Resource Pruner Configuration ===")
+        print(f"S3 Bucket: {bucket}")
+        print(f"AMI Name Filters: {ami_name_filters}")
+        print(f"TTL for VMs: {ttl_hours_vms} hours ({ttl_hours_vms / 24:.1f} days)")
+        print(f"Cutoff date for VMs: {cutoff_date_vms.isoformat()}")
+        print(f"TTL for AMIs: {ttl_hours_amis} hours ({ttl_hours_amis / 24:.1f} days)")
+        print(f"Cutoff date for AMIs: {cutoff_date_amis.isoformat()}")
+        print(f"Dry run mode: {dry_run}")
+        print("=" * 50)
+
+        def run_aws_command(cmd):
+            """Execute AWS CLI command and return JSON output"""
+            try:
+                result = subprocess.run(
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                return json.loads(result.stdout) if result.stdout.strip() else None
+            except subprocess.CalledProcessError as e:
+                print(f"ERROR executing command: {cmd}")
+                print(f"STDERR: {e.stderr}")
+                return None
+            except json.JSONDecodeError as e:
+                print(f"ERROR parsing JSON from command: {cmd}")
+                print(f"Output: {result.stdout}")
+                return None
+
+        def list_s3_directories(prefix):
+            """List directories (common prefixes) under S3 prefix"""
+            cmd = f'aws s3api list-objects-v2 --bucket {bucket} --prefix {prefix} --delimiter / --query "CommonPrefixes[].Prefix" --output json'
+            result = run_aws_command(cmd)
+            return result or []
+
+        def get_directory_age(prefix):
+            """Get the oldest LastModified timestamp for objects in a directory"""
+            cmd = f'aws s3api list-objects-v2 --bucket {bucket} --prefix {prefix} --query "sort_by(Contents, &LastModified)[0].LastModified" --output json'
+            result = run_aws_command(cmd)
+            if result:
+                return datetime.fromisoformat(result.replace('Z', '+00:00'))
+            return None
+
+        def filter_old_resources(prefix, resource_type, cutoff_date, name_filters=None):
+            """Find resources older than cutoff date under given prefix"""
+            print(f"\n=== Scanning {resource_type} resources in s3://{bucket}/{prefix} ===")
+            directories = list_s3_directories(prefix)
+
+            if not directories:
+                print(f"No directories found under {prefix}")
+                return []
+
+            print(f"Found {len(directories)} directories")
+            old_resources = []
+
+            for dir_path in directories:
+                # Extract resource ID (directory name without trailing slash and prefix)
+                resource_id = dir_path.rstrip('/').split('/')[-1]
+
+                # Apply name filters if specified (match only if all filters match)
+                if name_filters:
+                    if not all(filter_str in resource_id for filter_str in name_filters):
+                        print(f"  SKIP: {resource_id} (does not match all filters: {name_filters})")
+                        continue
+
+                # Get the age of the directory
+                last_modified = get_directory_age(dir_path)
+
+                if not last_modified:
+                    print(f"  SKIP: {resource_id} (no objects found)")
+                    continue
+
+                age_hours = (datetime.now(timezone.utc) - last_modified).total_seconds() / 3600
+
+                if last_modified < cutoff_date:
+                    print(f"  MARK FOR CLEANUP: {resource_id} (age: {age_hours:.1f} hours, last modified: {last_modified.isoformat()})")
+                    old_resources.append(resource_id)
+                else:
+                    print(f"  KEEP: {resource_id} (age: {age_hours:.1f} hours, last modified: {last_modified.isoformat()})")
+
+            return old_resources
+
+        # Main execution
+        try:
+            # Find old MAPT resources (VMs)
+            rhel_resources = filter_old_resources('mapt/rhel/', 'RHEL', cutoff_date_vms)
+            rhel_ai_resources = filter_old_resources('mapt/rhel-ai/', 'RHEL AI', cutoff_date_vms)
+            fedora_resources = filter_old_resources('mapt/fedora/', 'Fedora', cutoff_date_vms)
+
+            # Find old cloud-importer resources (AMIs matching name filters)
+            cloud_importer_resources = filter_old_resources('cloud-importer/', 'cloud-importer', cutoff_date_amis, name_filters=ami_name_filters)
+
+            # Write results for pipeline to use
+            print(f"\n=== Results ===")
+            print(f"RHEL resources to cleanup: {rhel_resources}")
+            print(f"RHEL AI resources to cleanup: {rhel_ai_resources}")
+            print(f"Fedora resources to cleanup: {fedora_resources}")
+            print(f"Cloud importer resources to cleanup: {cloud_importer_resources}")
+
+            # Write results to Tekton results files (JSON arrays for array type results)
+            with open('/tekton/results/rhel-resources', 'w') as f:
+                f.write(json.dumps(rhel_resources))
+
+            with open('/tekton/results/rhel-ai-resources', 'w') as f:
+                f.write(json.dumps(rhel_ai_resources))
+
+            with open('/tekton/results/fedora-resources', 'w') as f:
+                f.write(json.dumps(fedora_resources))
+
+            with open('/tekton/results/cloud-importer-resources', 'w') as f:
+                f.write(json.dumps(cloud_importer_resources))
+
+            print("\n=== Task completed successfully ===")
+
+        except Exception as e:
+            print(f"\n=== ERROR: Task failed ===")
+            print(f"Exception: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)

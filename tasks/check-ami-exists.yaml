@@ -70,10 +70,10 @@ spec:
           --output text 2>/dev/null || echo "None")
 
         if [[ "${AMI_ID}" != "None" && -n "${AMI_ID}" ]]; then
-          echo -e "\n=== AMI ${AMI_ID} found ==="
+          echo -e "\n=== AMI ${AMI_NAME} found ==="
           echo -n "true" > $(results.ami-exists.path)
         else
-          echo -e "\n=== AMI ${AMI_ID} not found ==="
+          echo -e "\n=== AMI ${AMI_NAME} not found ==="
           echo -n "false" > $(results.ami-exists.path)
         fi
 
