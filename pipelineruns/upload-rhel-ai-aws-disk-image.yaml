@@ -1,0 +1,51 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: upload-rhel-ai-aws-disk-image-
+  namespace: rhel-ai-tenant
+spec:
+  params:
+    # Container image URL - get this from the release snapshot
+    - name: container-image
+      value: "quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc-3-2/bootc-cuda-aws-disk-image-3-2@sha256:b1c8752fbe49c574f46bade651bd00a3c1c5de48bb16c44a6563bf35a31f2002"
+
+    # Pull secret name - this will be used to pull the container image, unique per Konflux application
+    - name: pull-secret-name
+      value: "rhelai-bootc-3-2-pull"
+
+    # RHEL AI version - this will be used in the AMI name
+    # AMI name format: rhel-ai-cuda-aws-{version}
+    - name: rhel-ai-version
+      value: "3.2.0"
+
+    # Debug mode (optional)
+    - name: debug
+      value: "false"
+
+  pipelineRef:
+    resolver: git
+    params:
+      - name: org
+        value: redhat
+      - name: repo
+        value: rhel-ai/konflux-data
+      - name: scmType
+        value: gitlab
+      - name: serverURL
+        value: https://gitlab.com
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: pipelines/upload-rhel-ai-aws-disk-image.yaml
+      - name: token
+        value: pipelines-as-code-secret
+      - name: tokenKey
+        value: password
+
+  taskRunTemplate:
+    serviceAccountName: konflux-integration-runner
+
+  timeouts:
+    pipeline: 3h0m0s
+    tasks: 2h0m0s
+    finally: 1h0m0s
