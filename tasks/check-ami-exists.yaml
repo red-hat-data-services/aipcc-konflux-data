@@ -5,11 +5,16 @@ metadata:
 spec:
   params:
     - name: git-digest
+      default: "not-provided"
       description: Git commit digest to use in AMI name
     - name: event-type
+      default: "not-provided"
       description: Event type (e.g., pull_request, merge_request, push)
     - name: rhel-ai-version
       description: RHEL AI version for AMI naming
+    - name: release-mode
+      description: If true, omit git digest from AMI name for release uploads
+      default: "false"
     - name: secret-aws-credentials
       description: Name of the secret containing AWS credentials
       default: aws-konflux-tests
@@ -28,6 +33,8 @@ spec:
           value: $(params.event-type)
         - name: RHEL_AI_VERSION
           value: $(params.rhel-ai-version)
+        - name: RELEASE_MODE
+          value: $(params.release-mode)
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
@@ -53,11 +60,21 @@ spec:
         # Convert event type to lowercase
         EVENT_TYPE_LOWER=$(echo "${EVENT_TYPE}" | tr '[:upper:]' '[:lower:]')
 
-        # Construct AMI name based on event type
-        if [[ "${EVENT_TYPE_LOWER}" == "pull_request" || "${EVENT_TYPE_LOWER}" == "merge_request" ]]; then
-          AMI_NAME="rhel-ai-cuda-aws-${RHEL_AI_VERSION}-pr-${SHORT_DIGEST}"
+        # Construct AMI name based on release mode or event type
+        # mapt has two parameters for choosing the AMI name
+        # 1. version - e.g. for "3.2.0" mapt will search for "rhel-ai-cuda-aws-3.2.0*" and returns the most recent AMI
+        # 2. custom-ami - e.g. "test-rhel-ai-cuda-aws-3.2.0-pr-12345678"
+        # we need "test-" prefix for custom-ami to avoid conflicts with the version search
+        
+        if [[ "${RELEASE_MODE}" == "true" ]]; then
+          # Release mode: clean version only (no git digest)
+          AMI_NAME="rhel-ai-cuda-aws-${RHEL_AI_VERSION}"
+        elif [[ "${EVENT_TYPE_LOWER}" == "pull_request" || "${EVENT_TYPE_LOWER}" == "merge_request" ]]; then
+          # Test mode (merge request): version with -pr- prefix and git digest
+          AMI_NAME="test-rhel-ai-cuda-aws-${RHEL_AI_VERSION}-pr-${SHORT_DIGEST}"
         else
-          AMI_NAME="rhel-ai-cuda-aws-${RHEL_AI_VERSION}-${SHORT_DIGEST}"
+          # Test mode (commit): version with git digest
+          AMI_NAME="test-rhel-ai-cuda-aws-${RHEL_AI_VERSION}-${SHORT_DIGEST}"
         fi
 
         echo -e "\n=== Looking for AMI with name '${AMI_NAME}' in region '${AWS_DEFAULT_REGION}' ==="
