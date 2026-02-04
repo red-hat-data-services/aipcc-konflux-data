@@ -29,6 +29,8 @@ spec:
       env:
         - name: GIT_DIGEST
           value: $(params.git-digest)
+        - name: HOME
+          value: /opt/cloud-importer/run
         - name: EVENT_TYPE
           value: $(params.event-type)
         - name: RHEL_AI_VERSION
