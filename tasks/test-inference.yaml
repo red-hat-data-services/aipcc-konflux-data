@@ -4,7 +4,8 @@ metadata:
   name: test-inference
 spec:
   params:
-    - name: container-image
+    - name: inference-server-image
+      description: Inference server container image to use for testing
     - name: debug
       default: "false"
     - name: host-access-secret-name
@@ -38,13 +39,18 @@ spec:
         #!/bin/bash
         set -e
 
+        INFERENCE_SERVER_IMAGE="$(params.inference-server-image)"
+        echo -e "\n=== Using inference server image: ${INFERENCE_SERVER_IMAGE} ==="
+
         start_rhaiis() {
           local model_name=$1
+          local model_path_in_container=$2
 
           echo -e "\n=== Removing existing RHAIIS container ==="
           ${ssh_cmd} ${sudo_cmd} podman stop -i rhaiis
           ${ssh_cmd} ${sudo_cmd} podman rm -i rhaiis
 
+          DEBUG_FLAGS=""
           if [ "$(params.debug)" == "true" ]; then
             DEBUG_FLAGS="--log-level=debug --env HF_DEBUG=1 --env=VLLM_LOGGING_LEVEL=DEBUG"
           fi
@@ -58,12 +64,12 @@ spec:
             --userns=keep-id:uid=1001 \
             --env "HF_HUB_OFFLINE=1" \
             --env "VLLM_NO_USAGE_STATS=1" \
-            -v ./models:/opt/app-root/models:Z \
-            $(params.container-image) \
+            -v "${REMOTE_HOME}:/models-host" \
+            "${INFERENCE_SERVER_IMAGE}" \
             --tensor-parallel-size ${NUMBER_OF_GPUS} \
-            --max-model-len 4096 \
-            --model /opt/app-root/models/${model_name} \
-            --served-model-name ${model_name} \
+            --model "${model_path_in_container}" \
+            --served-model-name "${model_name}" \
+            --max-model-len 1024 \
             --enforce-eager
         }
 
@@ -72,7 +78,7 @@ spec:
           attempt=1
           while [ $attempt -lt $max_attempts ]; do
             echo -e "\n=== Waiting for RHAIIS container to be ready $attempt/$max_attempts ==="
-            container_state=$( ${ssh_cmd} "${sudo_cmd} podman inspect -f '{{.State.Running}}' rhaiis")
+            container_state=$(${ssh_cmd} "${sudo_cmd} podman inspect -f '{{.State.Running}}' rhaiis")
             if [[ "${container_state}" == "false" ]]; then
               echo "Container is not running!"
               echo "==="
@@ -80,9 +86,9 @@ spec:
               echo "==="
               ${ssh_cmd} ${sudo_cmd} podman inspect rhaiis | jq '.[0].State'
               echo "==="
-              ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 rhaiis || true
+              ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 rhaiis
               echo "==="
-              ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+              ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv"
               echo -e "\n=== Sleeping for 60 minutes ==="
               sleep 3600
               exit 1
@@ -96,13 +102,13 @@ spec:
             attempt=$((attempt + 1))
             echo "Container not ready yet, waiting 30 seconds..."
             echo "GPU memory free:"
-            ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+            ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv"
             echo "==="
             echo "Free memory:"
-            ${ssh_cmd} "free -m" || true
+            ${ssh_cmd} "free -m"
             echo "==="
             echo "Last 5 lines of logs:"
-            ${ssh_cmd} ${sudo_cmd} podman logs --tail 5 rhaiis || true
+            ${ssh_cmd} ${sudo_cmd} podman logs --tail 5 rhaiis
             sleep 30
           done
 
@@ -115,8 +121,10 @@ spec:
         }
 
         test_inference() {
+          local model_name=$1
+
           echo -e "\n=== Prompting RHAIIS container ==="
-          DATA='{"prompt": "What is the capital of France?","max_tokens": 50}'
+          DATA='{"prompt": "What is the capital of France?", "max_tokens": 50, "temperature": 0.0}'
           RESPONSE=$(${ssh_cmd} "curl --no-progress-meter -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/completions")
           echo -e "\n=== Response JSON ==="
           echo "${RESPONSE}" | jq
@@ -153,12 +161,16 @@ spec:
           sudo_cmd=""
         fi
 
+        # Determine remote home directory
+        REMOTE_HOME="$(${ssh_cmd} 'echo $HOME')"
+        echo -e "\n=== Remote home directory: ${REMOTE_HOME} ==="
+
         # used on p5.48xlarge, maybe on p4d.24xlarge
         # https://issues.redhat.com/browse/AIPCC-5636
         echo -e "\n=== nvidia-smi nvlink --status ==="
         ${ssh_cmd} nvidia-smi nvlink --status || true
 
-        NUMBER_OF_GPUS=$( ${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+        NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
         echo -e "\n=== Number of GPUs ==="
         echo "${NUMBER_OF_GPUS}"
 
@@ -166,8 +178,25 @@ spec:
           echo -e "\n===================================================="
           echo "=== Testing model: ${model}"
           echo "===================================================="
+
+          # Decide which model path to use:
+          #  - If test-model-opt-quantization ran before this task, use the quantized model
+          #  - Otherwise, fall back to the regular HuggingFace model
+          # This makes test-inference compatible with both scenarios (with and without quantization)
+          REMOTE_QUANTIZED_DIR="${REMOTE_HOME}/models/${model}-quantized"
+          REMOTE_HF_DIR="${REMOTE_HOME}/models/${model}"
+
+          # Check if quantized model directory exists AND is not empty
+          if ${ssh_cmd} "[ -d '${REMOTE_QUANTIZED_DIR}' ] && [ -n \"\$(ls -A '${REMOTE_QUANTIZED_DIR}' 2>/dev/null)\" ]"; then
+            echo "Found quantized model at ${REMOTE_QUANTIZED_DIR}, using it"
+            MODEL_PATH_IN_CONTAINER="/models-host/models/${model}-quantized"
+          else
+            echo "No quantized model found, using original model at ${REMOTE_HF_DIR}"
+            MODEL_PATH_IN_CONTAINER="/models-host/models/${model}"
+          fi
+
           if [ "$(params.start-rhaiis)" == "true" ]; then
-            if ! start_rhaiis "${model}"; then
+            if ! start_rhaiis "${model}" "${MODEL_PATH_IN_CONTAINER}"; then
               echo -e "\n✗ Failed to start RHAIIS container for model ${model}"
               exit 1
             fi
@@ -178,14 +207,13 @@ spec:
             exit 2
           fi
 
-          if ! test_inference; then
+          if ! test_inference "${model}"; then
             echo -e "\n✗ Failed to test inference for model ${model}"
             exit 3
           fi
         done
 
         echo -e "\n✓ All models passed testing"
-
   volumes:
     - name: ssh-key
       secret:

@@ -144,7 +144,9 @@ spec:
     - name: pull-images
       params:
         - name: container-images
-          value: ["$(tasks.create-configuration.results.container-image)"]
+          value:
+            - "$(tasks.create-configuration.results.inference-server-image)"
+            - "$(tasks.create-configuration.results.model-opt-image)"
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
         - name: pull-secret-name
@@ -199,8 +201,8 @@ spec:
             value: password
     - name: test-inference
       params:
-        - name: container-image
-          value: "$(tasks.create-configuration.results.container-image)"
+        - name: inference-server-image
+          value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
