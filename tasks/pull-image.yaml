@@ -47,6 +47,11 @@ spec:
 
         echo -e "\n=== Pulling images ==="
         for image in "$@"; do
+          # Skip empty image names
+          if [ -z "${image}" ]; then
+            echo -e "\n--- Skipping empty image name ---"
+            continue
+          fi
           echo -e "\n--- Pulling image: ${image} ---"
           ${ssh_cmd} podman pull --authfile auth.json "${image}"
         done

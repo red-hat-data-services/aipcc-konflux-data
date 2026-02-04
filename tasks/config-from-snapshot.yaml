@@ -15,6 +15,10 @@ spec:
       description: Value of label pac.test.appstudio.openshift.io/event-type from the snapshot
     - name: git-digest
       description: Full git commit digest from the snapshot
+    - name: inference-server-image
+      description: Full reference to the inference server image, always populated for rhaiis
+    - name: model-opt-image
+      description: Full reference to the model-opt container image, empty if not testing model-opt
     - name: product-image
       description: Short product image name, e.g. rhaiis or rhaiis-model-opt
     - name: variant
@@ -148,12 +152,42 @@ spec:
             ;;
         esac
 
+        # Determine model-opt-image and inference-server-image (only for rhaiis)
+        model_opt_image=""
+        inference_server_image=""
+
+        if [[ "${COMPONENT}" == "rhaiis-model-opt-"* ]]; then
+          # Testing model-opt component
+          model_opt_image="${containerImage}"
+
+          echo -e "\n === Extracting inference server image for model-opt ==="
+          # For model-opt components, find the corresponding cuda inference image
+          inference_component="${COMPONENT/model-opt-/}"
+          echo "Looking for inference component: ${inference_component}"
+
+          inference_server_image=$(echo "${SNAPSHOT}" | jq -r --arg comp "${inference_component}" \
+            '.components[] | select(.name==$comp) | .containerImage' || echo "")
+
+          if [ -n "${inference_server_image}" ]; then
+            echo "✓ Found inference server image: ${inference_server_image}"
+          else
+            echo "⚠ No inference server image found for ${inference_component}"
+          fi
+        elif [[ "${COMPONENT}" == rhaiis-* ]]; then
+          # Testing regular rhaiis component (not model-opt)
+          inference_server_image="${containerImage}"
+          echo -e "\n === Using container image as inference server image ==="
+          echo "${inference_server_image}"
+        fi
+
         echo -e "\n === Storing results ==="
         # we need to store task results even if the task fails
         echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
         echo -n "${containerImage}" | tee $(results.container-image.path)
         echo -n "${gitDigest}" | tee $(results.git-digest.path)
         echo -n "${EVENT_TYPE}" | tee $(results.event-type.path)
+        echo -n "${inference_server_image}" | tee $(results.inference-server-image.path)
+        echo -n "${model_opt_image}" | tee $(results.model-opt-image.path)
         echo -n "${productImage}" | tee $(results.product-image.path)
         echo -n "${variant}" | tee $(results.variant.path)
         echo -n "${vm_types}" | tee $(results.vm-types.path)
