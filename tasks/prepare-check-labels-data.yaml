@@ -1,0 +1,285 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: prepare-check-labels-data
+spec:
+  description: |
+    Prepares data for the check-labels task by:
+    1. Determining which component triggered the ITS (from PipelineRun labels)
+    2. Enriching that component with container labels (via skopeo inspect)
+    3. Fetching full data from ReleasePlanAdmission spec.data
+    4. Creating data.json with all RPA data (same as production collect-data task)
+    5. Creating a reduced snapshot with only the target component
+    6. Storing everything as a Trusted Artifact for check-labels to consume
+  params:
+    - name: SNAPSHOT
+      description: JSON string of the snapshot spec from the integration test
+      type: string
+    - name: pipelineRunName
+      type: string
+      description: Name of the PipelineRun (used to determine which component triggered the ITS)
+    - name: pipelineRunNamespace
+      type: string
+      description: Namespace of the PipelineRun
+    - name: releasePlanAdmissionNamespace
+      type: string
+      description: Namespace of the ReleasePlanAdmission
+      default: "rhtap-releng-tenant"
+    - name: releasePlanAdmissionName
+      type: string
+      description: Name of the ReleasePlanAdmission to fetch data from
+    - name: dataDir
+      description: Directory where the data files will be stored
+      type: string
+      default: /var/workdir/release
+    - name: ociStorage
+      description: The OCI repository where the Trusted Artifacts are stored
+      type: string
+    - name: ociArtifactExpiresAfter
+      description: Expiration date for the trusted artifacts created in the OCI repository
+      type: string
+      default: "1d"
+    - name: orasOptions
+      description: oras options to pass to Trusted Artifacts calls
+      type: string
+      default: ""
+    - name: trustedArtifactsDebug
+      description: Flag to enable debug logging in trusted artifacts
+      type: string
+      default: ""
+    - name: taskGitUrl
+      type: string
+      description: The url to the git repo where the release-service-catalog tasks to be used are stored
+      default: "https://github.com/konflux-ci/release-service-catalog"
+    - name: taskGitRevision
+      type: string
+      description: The revision in the taskGitUrl repo to be used
+      default: "production"
+  results:
+    - name: sourceDataArtifact
+      type: string
+      description: The OCI reference to the trusted artifact containing the prepared data
+    - name: dataPath
+      type: string
+      description: Relative path to data.json in the artifact
+    - name: snapshotPath
+      type: string
+      description: Relative path to snapshot_spec.json in the artifact
+  volumes:
+    - name: workdir
+      emptyDir: {}
+    - name: oci-push-auth
+      secret:
+        secretName: quay-aipcc-cicd-konflux-access
+        optional: false
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /var/workdir
+        name: workdir
+      - mountPath: /var/run/secrets/oci-push-auth
+        name: oci-push-auth
+        readOnly: true
+    env:
+      - name: IMAGE_EXPIRES_AFTER
+        value: $(params.ociArtifactExpiresAfter)
+      - name: ORAS_OPTIONS
+        value: $(params.orasOptions)
+      - name: DEBUG
+        value: $(params.trustedArtifactsDebug)
+    securityContext:
+      runAsUser: 1001
+  steps:
+    - name: enrich-snapshot-and-create-data
+      image: quay.io/konflux-ci/release-service-utils@sha256:f10b4ad888634a7633f76ede29003ce1471aec2b76a7d9e01ad282a3011eb78f
+      computeResources:
+        limits:
+          memory: 256Mi
+        requests:
+          memory: 256Mi
+          cpu: 100m
+      env:
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: PIPELINERUN_NAME
+          value: $(params.pipelineRunName)
+        - name: PIPELINERUN_NAMESPACE
+          value: $(params.pipelineRunNamespace)
+        - name: RPA_NAMESPACE
+          value: $(params.releasePlanAdmissionNamespace)
+        - name: RPA_NAME
+          value: $(params.releasePlanAdmissionName)
+        - name: DATA_DIR
+          value: $(params.dataDir)
+      script: |
+        #!/usr/bin/env bash
+        set -ex
+
+        # Create output directory
+        mkdir -p "${DATA_DIR}"
+
+        echo "========================================="
+        echo "Determining target component..."
+        echo "========================================="
+        echo ""
+
+        # Get the target component directly from the PipelineRun labels
+        # (The PipelineRun has the same appstudio.openshift.io/component label as the Snapshot)
+        TARGET_COMPONENT=$(kubectl get pipelinerun "${PIPELINERUN_NAME}" \
+          -n "${PIPELINERUN_NAMESPACE}" \
+          -o jsonpath='{.metadata.labels.appstudio\.openshift\.io/component}')
+
+        echo "Target component (from PipelineRun): ${TARGET_COMPONENT}"
+        echo ""
+
+        echo "========================================="
+        echo "Processing snapshot..."
+        echo "========================================="
+        echo ""
+
+        num_components=$(jq '.components | length' <<< "${SNAPSHOT}")
+        echo "Snapshot contains ${num_components} component(s)"
+
+        # Find the target component in the snapshot
+        component=$(jq -c --arg name "${TARGET_COMPONENT}" \
+          '.components[] | select(.name == $name)' <<< "${SNAPSHOT}")
+
+        if [[ -z "$component" ]]; then
+            echo "Error: Could not find component '${TARGET_COMPONENT}' in snapshot"
+            echo "Available components:"
+            jq -r '.components[].name' <<< "${SNAPSHOT}"
+            exit 1
+        fi
+
+        IMAGE_REF=$(jq -r '.containerImage' <<< "$component")
+        COMPONENT_NAME=$(jq -r '.name' <<< "$component")
+
+        echo "Component from snapshot:"
+        echo "  Name: ${COMPONENT_NAME}"
+        echo "  Image: ${IMAGE_REF}"
+        echo ""
+
+        echo "========================================="
+        echo "Fetching container labels via skopeo..."
+        echo "========================================="
+        echo ""
+
+        # Fetch labels from container image (same as apply-mapping does)
+        # Uses SA's linked image pull secrets for authentication
+        image_metadata=$(skopeo inspect \
+          --retry-times 3 \
+          --no-tags \
+          docker://"${IMAGE_REF}" | jq -c)
+
+        labels=$(jq -c '.Labels // {}' <<< "${image_metadata}")
+
+        echo "Container labels:"
+        jq '.' <<< "${labels}"
+        echo ""
+
+        # Convert labels from {key: value} to [{name: key, value: value}] format
+        # This is what apply-mapping does
+        labels_array=$(jq -c 'if . then to_entries | map({name: .key, value: .value}) else [] end' <<< "$labels")
+
+        # Enrich the component with labels (add to .metadata.labels)
+        enriched_component=$(jq -c --argjson labels "$labels_array" \
+          '.metadata = (.metadata // {}) * {labels: $labels}' <<< "$component")
+
+        # Create snapshot with ONLY this single enriched component
+        # This is critical for check-labels which iterates over ALL components
+        enriched_snapshot=$(jq -c --argjson comp "$enriched_component" \
+          '{application: .application, components: [$comp], artifacts: .artifacts}' <<< "${SNAPSHOT}")
+
+        echo "========================================="
+        echo "Fetching RPA data..."
+        echo "========================================="
+        echo ""
+
+        # Fetch ReleasePlanAdmission data (same as collect-data task)
+        rpa_json=$(kubectl get releaseplanadmission "${RPA_NAME}" \
+          -n "${RPA_NAMESPACE}" -o json)
+
+        rpa_data=$(jq '.spec.data' <<< "${rpa_json}")
+
+        # Get mapping for this component to add repositories info
+        component_mapping=$(jq -c --arg name "${COMPONENT_NAME}" \
+          '.mapping.components[] | select(.name == $name)' <<< "${rpa_data}")
+
+        if [[ -n "$component_mapping" ]]; then
+            echo "Found component mapping in RPA"
+
+            # Get repositories from RPA and add rh-registry-repo field
+            # check-labels expects .repositories[].rh-registry-repo, not just .url
+            repos_with_rh_registry=$(jq -c '.repositories | map(. + {"rh-registry-repo": .url})' <<< "$component_mapping")
+
+            echo "Repositories with rh-registry-repo:"
+            echo "$repos_with_rh_registry" | jq .
+
+            # Add repositories to the enriched component (needed for name label validation)
+            enriched_component=$(jq -c --argjson repos "$repos_with_rh_registry" \
+              '.repositories = $repos' <<< "$enriched_component")
+
+            # Update snapshot with the component that now has repositories
+            # Keep only the single enriched component
+            enriched_snapshot=$(jq -c --argjson comp "$enriched_component" \
+              '{application: .application, components: [$comp], artifacts: .artifacts}' <<< "${SNAPSHOT}")
+        fi
+        echo ""
+
+        echo "========================================="
+        echo "Creating data.json..."
+        echo "========================================="
+        echo ""
+
+        # Write the full RPA spec.data as data.json (same as collect-data does)
+        # This gives us all fields including releaseNotes.cpe, mapping, and any future additions
+        echo "$rpa_data" | jq '.' > "${DATA_DIR}/data.json"
+
+        echo "Created data.json:"
+        cat "${DATA_DIR}/data.json"
+        echo ""
+
+        echo "========================================="
+        echo "Saving enriched snapshot..."
+        echo "========================================="
+        echo ""
+
+        # Save enriched snapshot
+        echo "$enriched_snapshot" | jq '.' > "${DATA_DIR}/snapshot_spec.json"
+
+        echo "Created snapshot_spec.json:"
+        jq '.' "${DATA_DIR}/snapshot_spec.json"
+        echo ""
+
+        # Write result paths
+        echo -n "data.json" > "$(results.dataPath.path)"
+        echo -n "snapshot_spec.json" > "$(results.snapshotPath.path)"
+
+        echo "========================================="
+        echo "Preparation complete!"
+        echo "========================================="
+        echo "Files created:"
+        ls -lh "${DATA_DIR}/"
+
+    - name: create-trusted-artifact
+      computeResources:
+        limits:
+          memory: 128Mi
+        requests:
+          memory: 128Mi
+          cpu: 250m
+      ref:
+        resolver: "git"
+        params:
+          - name: url
+            value: $(params.taskGitUrl)
+          - name: revision
+            value: $(params.taskGitRevision)
+          - name: pathInRepo
+            value: stepactions/create-trusted-artifact/create-trusted-artifact.yaml
+      params:
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: workDir
+          value: $(params.dataDir)
+        - name: sourceDataArtifact
+          value: $(results.sourceDataArtifact.path)

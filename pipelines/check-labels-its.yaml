@@ -1,0 +1,142 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: check-labels-its
+spec:
+  description: |
+    Integration Test Scenario pipeline to validate container image labels.
+
+    This pipeline:
+    1. Determines which component triggered the ITS (from PipelineRun labels)
+    2. Enriches that component with container labels (via skopeo inspect)
+    3. Creates data.json with all RPA data (same as production collect-data task)
+    4. Stores the reduced snapshot (single component) as a Trusted Artifact
+    5. Runs the check-labels task from release-service-catalog to validate labels
+
+    Works with SINGLE_COMPONENT mode - correctly identifies the target component
+    even when the snapshot contains multiple components.
+  params:
+    - name: SNAPSHOT
+      description: Snapshot spec JSON (automatically provided by ITS)
+      type: string
+    - name: releasePlanAdmissionNamespace
+      type: string
+      description: Namespace of the ReleasePlanAdmission
+      default: "rhtap-releng-tenant"
+    - name: releasePlanAdmissionName
+      type: string
+      description: Name of the ReleasePlanAdmission to fetch data from
+    - name: enforce
+      type: string
+      description: If true, validation failures cause the task to fail. If false, only warnings.
+      default: "false"
+    - name: ociStorage
+      type: string
+      description: The OCI repository where the Trusted Artifacts are stored
+      default: "quay.io/aipcc-cicd/aipcc-konflux-trusted-artifacts"
+    - name: ociArtifactExpiresAfter
+      type: string
+      description: Expiration date for the trusted artifacts
+      default: "1d"
+    - name: taskGitUrl
+      type: string
+      description: The url to the git repo where the release-service-catalog tasks are stored
+      default: "https://github.com/konflux-ci/release-service-catalog"
+    - name: taskGitRevision
+      type: string
+      description: The revision in the taskGitUrl repo to be used
+      default: "production"
+    - name: dataDir
+      type: string
+      description: The location where data will be stored
+      default: "/var/workdir/release"
+    - name: orasOptions
+      type: string
+      description: oras options to pass to Trusted Artifacts calls
+      default: "--registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson"
+    - name: trustedArtifactsDebug
+      type: string
+      description: Flag to enable debug logging in trusted artifacts
+      default: ""
+  tasks:
+    - name: prepare-data
+      params:
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: pipelineRunName
+          value: $(context.pipelineRun.name)
+        - name: pipelineRunNamespace
+          value: $(context.pipelineRun.namespace)
+        - name: releasePlanAdmissionNamespace
+          value: $(params.releasePlanAdmissionNamespace)
+        - name: releasePlanAdmissionName
+          value: $(params.releasePlanAdmissionName)
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: ociArtifactExpiresAfter
+          value: $(params.ociArtifactExpiresAfter)
+        - name: orasOptions
+          value: $(params.orasOptions)
+        - name: trustedArtifactsDebug
+          value: $(params.trustedArtifactsDebug)
+        - name: taskGitUrl
+          value: $(params.taskGitUrl)
+        - name: taskGitRevision
+          value: $(params.taskGitRevision)
+        - name: dataDir
+          value: $(params.dataDir)
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/prepare-check-labels-data.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+
+    - name: check-labels
+      runAfter:
+        - prepare-data
+      params:
+        - name: snapshotPath
+          value: $(tasks.prepare-data.results.snapshotPath)
+        - name: dataPath
+          value: $(tasks.prepare-data.results.dataPath)
+        - name: enforce
+          value: $(params.enforce)
+        - name: sourceDataArtifact
+          value: $(tasks.prepare-data.results.sourceDataArtifact)
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: ociArtifactExpiresAfter
+          value: $(params.ociArtifactExpiresAfter)
+        - name: orasOptions
+          value: $(params.orasOptions)
+        - name: trustedArtifactsDebug
+          value: $(params.trustedArtifactsDebug)
+        - name: taskGitUrl
+          value: $(params.taskGitUrl)
+        - name: taskGitRevision
+          value: $(params.taskGitRevision)
+        - name: dataDir
+          value: $(params.dataDir)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/konflux-ci/release-service-catalog"
+          - name: revision
+            value: "production"
+          - name: pathInRepo
+            value: tasks/managed/check-labels/check-labels.yaml
