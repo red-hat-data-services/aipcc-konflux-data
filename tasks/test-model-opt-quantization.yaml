@@ -1,0 +1,149 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: test-model-opt-quantization
+spec:
+  params:
+    - name: container-image
+      type: string
+      description: Container image to inspect
+
+    - name: host-access-secret-name
+      type: string
+      description: Secret containing SSH access details (host, username, id_rsa)
+
+    - name: model-names
+      type: array
+      default:
+        - "ibm-granite/granite-3.3-2b-instruct"
+      description: List of model names to quantize with llmcompressor
+
+    - name: git-url
+      type: string
+      default: "https://gitlab.com/redhat/rhel-ai/konflux-data.git"
+      description: Git repository URL to clone
+
+    - name: git-revision
+      type: string
+      default: "main"
+      description: Git revision (branch/tag/commit) to checkout
+
+    - name: git-token-secret-name
+      type: string
+      default: "pipelines-as-code-secret"
+      description: Name of the secret containing the Git token
+
+  volumes:
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        items:
+          - key: id_rsa
+            path: id_rsa
+    - name: git-token
+      secret:
+        secretName: "$(params.git-token-secret-name)"
+        items:
+          - key: password
+            path: token
+
+  steps:
+    - name: run-model-opt
+      image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f@sha256:13624fbf75efd88c3220aa19b1423786f4cacfd9abab9042e934ff6114addae0
+      args: ["$(params.model-names[*])"]
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              name: "$(params.host-access-secret-name)"
+              key: host
+
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: "$(params.host-access-secret-name)"
+              key: username
+
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+          readOnly: true
+        - name: git-token
+          mountPath: /mnt/git-token
+          readOnly: true
+
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Model-opt quantization test ==="
+
+        CONTAINER_IMAGE="$(params.container-image)"
+        REMOTE_SCRIPT_DIR="/home/${USERNAME}/scripts"
+
+        # Prepare SSH
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+
+        # Read git token
+        GIT_TOKEN=$(cat /mnt/git-token/token)
+
+        # Install git on VM if not already installed
+        echo -e "\n=== Ensuring git is installed on VM ==="
+        ${ssh_cmd} "command -v git >/dev/null 2>&1 || sudo dnf install -y git"
+
+        # Clone scripts directly on the remote VM
+        echo -e "\n=== Cloning scripts on remote VM ==="
+        echo "  URL: $(params.git-url)"
+        echo "  Revision: $(params.git-revision)"
+
+        URL_NO_SCHEME=$(echo "$(params.git-url)" | sed 's|https://||')
+        AUTHENTICATED_URL="https://oauth2:${GIT_TOKEN}@${URL_NO_SCHEME}"
+
+        ${ssh_cmd} "set -euo pipefail && \
+          rm -rf '${REMOTE_SCRIPT_DIR}' && \
+          mkdir -p '${REMOTE_SCRIPT_DIR}' && \
+          cd '${REMOTE_SCRIPT_DIR}' && \
+          git init && \
+          git config --global init.defaultBranch main && \
+          git config --global advice.detachedHead false && \
+          git config --global --add safe.directory '${REMOTE_SCRIPT_DIR}' && \
+          git remote add origin '${AUTHENTICATED_URL}' && \
+          git sparse-checkout init --cone && \
+          git sparse-checkout set scripts && \
+          git fetch --depth 1 origin '$(params.git-revision)' && \
+          git checkout FETCH_HEAD && \
+          mv '${REMOTE_SCRIPT_DIR}/scripts'/* '${REMOTE_SCRIPT_DIR}/' && \
+          rmdir '${REMOTE_SCRIPT_DIR}/scripts' && \
+          find '${REMOTE_SCRIPT_DIR}' -name '*.sh' -exec chmod +x {} \; && \
+          echo '✓ Scripts cloned successfully' && \
+          ls -lah '${REMOTE_SCRIPT_DIR}'"
+
+        echo "✓ Scripts available on VM at ${REMOTE_SCRIPT_DIR}"
+
+        echo -e "\n=== Checking llmcompressor version in container image ==="
+        ${ssh_cmd} "podman run --rm '${CONTAINER_IMAGE}' pip show llmcompressor"
+
+        # Process each model
+        for MODEL_ID in "$@"; do
+          echo -e "\n===================================================="
+          echo "=== Quantizing model: ${MODEL_ID}"
+          echo "===================================================="
+
+          MODEL_OUT_DIR="/home/${USERNAME}/models/${MODEL_ID}-quantized"
+
+          # Ensure output directory exists on remote host
+          ${ssh_cmd} "mkdir -p '${MODEL_OUT_DIR}' && chmod a+rwx '${MODEL_OUT_DIR}'"
+
+          echo -e "\n=== Running model-opt environment + quantization test ==="
+          ${ssh_cmd} "'${REMOTE_SCRIPT_DIR}/testing/model-opt/test_llmcompressor.sh' \
+            '${CONTAINER_IMAGE}' \
+            '${MODEL_ID}' \
+            '${MODEL_OUT_DIR}'"
+
+          echo "✓ Model ${MODEL_ID} quantized successfully"
+        done
+
+        echo -e "\n✓ All models quantized successfully"
