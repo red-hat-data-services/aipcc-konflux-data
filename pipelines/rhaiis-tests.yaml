@@ -20,7 +20,7 @@ spec:
     - name: model-names
       type: array
       default:
-        - "ibm-granite/granite-3.3-8b-instruct"
+        - "ibm-granite/granite-3.3-2b-instruct"
       description: List of models to test
     - name: nvidia-driver-version
       default: "570"
@@ -30,9 +30,13 @@ spec:
         Snapshot of the application
         Example:
         {"components":[{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-spyre-ubi9@sha256:2092e4808e9636356f408fc1f86ae2000eef659b87b0bcb01ad95512845990a2","name":"rhaiis-spyre-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.spyre-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-tpu-ubi9@sha256:6ce221fe950283193979ffbc4aea879ea009f2dd6ee0ec402ab15c6d6702ac04","name":"rhaiis-tpu-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.tpu-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-cuda-ubi9@sha256:ad756c01ec99a99cc7d93401c41b8d92ca96fb1ab7c5262919d818f2be4f3768","name":"rhaiis-cuda-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.cuda-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-model-opt-cuda-ubi9@sha256:7dfd1ba91765aa8401e498c2ff651460f4c055d177b65c6b893bd587ba21a0f7","name":"rhaiis-model-opt-cuda-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.model-opt.cuda-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-rocm-ubi9@sha256:8624e2a5086cf1303b59154a817f60a3476d6ca48899261a2e477eb9e99ae781","name":"rhaiis-rocm-ubi9","source":{"git":{"revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}}]}
+
   results:
     - name: container-image
       value: $(tasks.create-configuration.results.container-image)
+    - name: inference-server-image
+      value: $(tasks.create-configuration.results.inference-server-image)
+
   tasks:
     - name: create-configuration
       description: Placeholder task that prints the Snapshot and outputs standard TEST_OUTPUT
@@ -199,6 +203,46 @@ spec:
             value: pipelines-as-code-secret
           - name: tokenKey
             value: password
+    - name: test-model-opt-quantization
+      params:
+        - name: container-image
+          value: "$(tasks.create-configuration.results.model-opt-image)"
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: model-names
+          value: ["$(params.model-names[*])"]
+        - name: git-url
+          value: "https://gitlab.com/redhat/rhel-ai/konflux-data.git"
+        - name: git-revision
+          value: "main"
+        - name: git-token-secret-name
+          value: "pipelines-as-code-secret"
+      runAfter:
+        - pull-images
+        - download-models
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/test-model-opt-quantization.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      when: # Runs model-opt quantization only when testing model-opt (non-empty model-opt-image)
+        - input: $(tasks.create-configuration.results.model-opt-image)
+          operator: notin
+          values: [""]
     - name: test-inference
       params:
         - name: inference-server-image
@@ -212,6 +256,7 @@ spec:
       runAfter:
         - pull-images
         - download-models
+        - test-model-opt-quantization
       taskRef:
         resolver: git
         params:
