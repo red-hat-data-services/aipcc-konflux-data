@@ -25,7 +25,7 @@ spec:
       description: Expected AMI name based on git digest and event type
   steps:
     - name: check-ami
-      image: ghcr.io/mapt-oss/cloud-importer@sha256:30d0680110de53773f082407b227e8ffe61b526ab617c8936f0c2951ecaf4d8f
+      image: ghcr.io/mapt-oss/cloud-importer@sha256:c274c2d2c4837f256b2623b97f24dfa64c891359d4d8c1bac3fa0e8dde0958e7
       env:
         - name: GIT_DIGEST
           value: $(params.git-digest)
