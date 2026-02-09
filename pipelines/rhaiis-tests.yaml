@@ -25,6 +25,9 @@ spec:
     - name: nvidia-driver-version
       default: "570"
       description: NVIDIA driver version to install, 570 for CUDA 12.8
+    - name: pull-secret-name
+      default: "rhaiis-pull"
+      description: Name of the pull secret to use for pulling the container image
     - name: SNAPSHOT
       description: |
         Snapshot of the application
@@ -154,7 +157,7 @@ spec:
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
         - name: pull-secret-name
-          value: "rhaiis-pull"
+          value: "$(params.pull-secret-name)"
       runAfter:
         - configure-vm-cuda
       taskRef:
