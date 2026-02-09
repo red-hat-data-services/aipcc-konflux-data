@@ -15,6 +15,9 @@ spec:
     - name: model-name
       default: "ibm-granite/granite-3.3-8b-instruct"
       description: Name of the model to test
+    - name: pull-secret-name
+      default: "rhelai-bootc-pull"
+      description: Name of the pull secret to use for pulling the container image
     - name: SNAPSHOT
       description: |
         Snapshot of the application
@@ -103,6 +106,8 @@ spec:
       params:
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: pull-secret-name
+          value: "$(params.pull-secret-name)"
         - name: model-name
           value: "$(params.model-name)"
       runAfter:

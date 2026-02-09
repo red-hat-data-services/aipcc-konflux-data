@@ -8,7 +8,6 @@ spec:
     - name: model-name
       description: Name of the model to test
     - name: pull-secret-name
-      default: "rhelai-bootc-pull"
       description: Name of the secret containing docker config for image authentication
   steps:
     - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3

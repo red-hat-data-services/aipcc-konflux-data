@@ -15,6 +15,9 @@ spec:
     - name: model-name
       default: "ibm-granite/granite-3.3-8b-instruct"
       description: Name of the model to test
+    - name: pull-secret-name
+      default: "rhelai-bootc-pull"
+      description: Name of the pull secret to use for pulling the container image
     - name: rhel-ai-version
       description: RHEL AI version for AMI naming, e.g. 3.2.5
     - name: SNAPSHOT
@@ -144,7 +147,7 @@ spec:
         - name: host-access-secret-name
           value: "$(tasks.create-helper-vm-aws.results.host-access-secret)"
         - name: pull-secret-name
-          value: "rhelai-bootc-pull"
+          value: $(params.pull-secret-name)
         - name: secret-aws-credentials
           value: aws-konflux-tests
         - name: id
