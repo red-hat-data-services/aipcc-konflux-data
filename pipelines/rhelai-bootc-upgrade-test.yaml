@@ -233,6 +233,8 @@ spec:
           value: "false"
         - name: use-sudo
           value: "true"
+        - name: variant
+          value: "$(tasks.create-configuration.results.variant)"
       runAfter:
         - after-switch
       taskRef:

@@ -6,6 +6,8 @@ spec:
   params:
     - name: inference-server-image
       description: Inference server container image to use for testing
+    - name: variant
+      description: Variant type (e.g., cuda-ubi9, cpu-ubi9)
     - name: debug
       default: "false"
     - name: host-access-secret-name
@@ -40,7 +42,9 @@ spec:
         set -e
 
         INFERENCE_SERVER_IMAGE="$(params.inference-server-image)"
+        VARIANT="$(params.variant)"
         echo -e "\n=== Using inference server image: ${INFERENCE_SERVER_IMAGE} ==="
+        echo -e "=== Variant: ${VARIANT} ==="
 
         start_rhaiis() {
           local model_name=$1
@@ -55,9 +59,27 @@ spec:
             DEBUG_FLAGS="--log-level=debug --env HF_DEBUG=1 --env=VLLM_LOGGING_LEVEL=DEBUG"
           fi
 
+          # Configure variant-specific flags
+          GPU_DEVICE_FLAGS=""
+          GPU_PARALLEL_FLAGS=""
+
+          if [[ "${VARIANT}" =~ cuda ]]; then
+            echo -e "\n=== Configuring for CUDA variant ==="
+            GPU_DEVICE_FLAGS="--device nvidia.com/gpu=all"
+            NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+            echo "=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
+            GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_GPUS}"
+          elif [[ "${VARIANT}" =~ cpu ]]; then
+            echo -e "\n=== Configuring for CPU variant ==="
+            # No GPU flags needed
+          else
+            echo -e "\n=== Unknown variant, assuming CPU ==="
+            # No GPU flags needed
+          fi
+
           echo -e "\n=== Starting RHAIIS container ==="
           ${ssh_cmd} ${sudo_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
-            --device nvidia.com/gpu=all \
+            ${GPU_DEVICE_FLAGS} \
             --security-opt=label=disable \
             --shm-size=8g \
             --network=host \
@@ -66,7 +88,7 @@ spec:
             --env "VLLM_NO_USAGE_STATS=1" \
             -v "${REMOTE_HOME}:/models-host" \
             "${INFERENCE_SERVER_IMAGE}" \
-            --tensor-parallel-size ${NUMBER_OF_GPUS} \
+            ${GPU_PARALLEL_FLAGS} \
             --model "${model_path_in_container}" \
             --served-model-name "${model_name}" \
             --max-model-len 1024 \
@@ -82,13 +104,19 @@ spec:
             if [[ "${container_state}" == "false" ]]; then
               echo "Container is not running!"
               echo "==="
-              ${ssh_cmd} nvidia-smi
+
+              # Variant-specific GPU diagnostics
+              if [[ "${VARIANT}" =~ cuda ]]; then
+                ${ssh_cmd} nvidia-smi || true
+                echo "==="
+                ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+              fi
+
               echo "==="
               ${ssh_cmd} ${sudo_cmd} podman inspect rhaiis | jq '.[0].State'
               echo "==="
               ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 rhaiis
               echo "==="
-              ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv"
               echo -e "\n=== Sleeping for 60 minutes ==="
               sleep 3600
               exit 1
@@ -101,8 +129,13 @@ spec:
 
             attempt=$((attempt + 1))
             echo "Container not ready yet, waiting 30 seconds..."
-            echo "GPU memory free:"
-            ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv"
+
+            # Variant-specific monitoring during wait
+            if [[ "${VARIANT}" =~ cuda ]]; then
+              echo "GPU memory free:"
+              ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+            fi
+
             echo "==="
             echo "Free memory:"
             ${ssh_cmd} "free -m"
@@ -165,14 +198,17 @@ spec:
         REMOTE_HOME="$(${ssh_cmd} 'echo $HOME')"
         echo -e "\n=== Remote home directory: ${REMOTE_HOME} ==="
 
-        # used on p5.48xlarge, maybe on p4d.24xlarge
-        # https://issues.redhat.com/browse/AIPCC-5636
-        echo -e "\n=== nvidia-smi nvlink --status ==="
-        ${ssh_cmd} nvidia-smi nvlink --status || true
+        # Variant-specific initialization checks
+        if [[ "${VARIANT}" =~ cuda ]]; then
+          # Used on p5.48xlarge, maybe on p4d.24xlarge
+          # https://issues.redhat.com/browse/AIPCC-5636
+          echo -e "\n=== nvidia-smi nvlink --status ==="
+          ${ssh_cmd} nvidia-smi nvlink --status || true
 
-        NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
-        echo -e "\n=== Number of GPUs ==="
-        echo "${NUMBER_OF_GPUS}"
+          NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+          echo -e "\n=== Number of GPUs ==="
+          echo "${NUMBER_OF_GPUS}"
+        fi
 
         for model in "$@"; do
           echo -e "\n===================================================="

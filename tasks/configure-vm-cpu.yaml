@@ -1,0 +1,69 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: configure-vm-cpu
+spec:
+  params:
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials for the VM
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+        - name: shared-ssh-key
+          mountPath: /mnt/shared-ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+
+        echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Adding shared SSH key ==="
+        cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
+
+        echo -e "\n=== Installing Hugging Face CLI ==="
+        ${ssh_cmd} sudo dnf install -y python3-pip
+        ${ssh_cmd} pip install -U "huggingface_hub[cli]"
+
+        # "podman run" process is killed when ssh session is closed which
+        # happens randomly, probably because it runs on OpenShift
+        echo -e "\n=== Enabling linger for podman ==="
+        ${ssh_cmd} "sudo loginctl enable-linger $USERNAME"
+        ${ssh_cmd} "loginctl show-user $USERNAME | grep Linger"
+
+        echo -e "\n=== CPU VM configuration complete ==="
+
+  volumes:
+    - name: mapt-ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
+    - name: shared-ssh-key
+      secret:
+        secretName: "shared-ssh-key"
+        defaultMode: 0400
+        items:
+          - key: id_rsa.pub
+            path: aipcc.pub
+            mode: 0400
