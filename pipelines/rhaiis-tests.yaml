@@ -248,10 +248,10 @@ spec:
           values: [""]
     - name: test-inference
       params:
-        - name: inference-server-image
-          value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: debug
           value: "$(params.debug)"
+        - name: inference-server-image
+          value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
         - name: model-names
