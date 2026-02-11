@@ -148,6 +148,35 @@ spec:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
           values: ["cuda-ubi9"]
+    - name: configure-vm-cpu
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+      runAfter:
+        - create-vm-aws
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-vm-cpu.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      when:
+        - input: $(tasks.create-configuration.results.variant)
+          operator: in
+          values: ["cpu-ubi9"]
     - name: pull-images
       params:
         - name: container-images
@@ -160,6 +189,7 @@ spec:
           value: "$(params.pull-secret-name)"
       runAfter:
         - configure-vm-cuda
+        - configure-vm-cpu
       taskRef:
         resolver: git
         params:
@@ -187,6 +217,7 @@ spec:
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
       runAfter:
         - configure-vm-cuda
+        - configure-vm-cpu
       taskRef:
         resolver: git
         params:
@@ -252,6 +283,8 @@ spec:
           value: "$(params.debug)"
         - name: inference-server-image
           value: "$(tasks.create-configuration.results.inference-server-image)"
+        - name: variant
+          value: "$(tasks.create-configuration.results.variant)"
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
         - name: model-names

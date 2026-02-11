@@ -22,7 +22,7 @@ spec:
     - name: product-image
       description: Short product image name, e.g. rhaiis or rhaiis-model-opt
     - name: variant
-      description: Variant, e.g. cuda-ubi9, gaudi-ubi9, neuron-ubi9, rocm-ubi9, spyre-ubi9, tpu-ubi9
+      description: Variant, e.g. cuda-ubi9, gaudi-ubi9, neuron-ubi9, rocm-ubi9, spyre-ubi9, tpu-ubi9, cpu-ubi9
     - name: vm-types
       description: Comma-separated list of VM types based on variant
   steps:
@@ -145,6 +145,20 @@ spec:
             cloud_provider="gcp"
             variant="tpu-ubi9"
             ret_value=1
+            ;;
+          *-cpu*)
+            variant="cpu-ubi9"
+
+            if [[ "${cloud_provider}" == "aws" ]] || [[ -z "${cloud_provider}" ]]; then
+              # General purpose and compute-optimized instances without GPU
+              # Using instances with sufficient memory for model inference
+              # For 8B models, prefer 4xlarge+ (64GB+ RAM). For 2B models, 2xlarge+ (32GB+) is sufficient
+              vm_types="m5.4xlarge,m6i.4xlarge,m5.2xlarge,m6i.2xlarge,c5.4xlarge,c6i.4xlarge,c5.2xlarge,c6i.2xlarge"
+              cloud_provider="aws" # might have been empty
+            else
+              echo "Cloud provider ${cloud_provider} not supported for CPU"
+              ret_value=1
+            fi
             ;;
           *)
             echo "Variant ${variant} not supported"
