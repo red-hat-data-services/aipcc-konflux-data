@@ -250,12 +250,12 @@ spec:
     - name: test-inference
       description: Run inference tests on the configured VM
       params:
-        - name: container-image
-          value: "$(tasks.create-configuration.results.container-image)"
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
+        - name: inference-server-image
+          value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: model-names
           value: ["$(params.model-name)"]
         - name: start-rhaiis
