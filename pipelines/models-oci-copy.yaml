@@ -52,6 +52,9 @@ spec:
       description: Number of parallel jobs for OCI copy
       type: string
       default: "8"
+    - default: "false"
+      description: Enable cache proxy configuration
+      name: enable-cache-proxy
   results:
     - description: ""
       name: IMAGE_URL
@@ -68,18 +71,14 @@ spec:
   tasks:
     - name: init
       params:
-        - name: image-url
-          value: $(params.output-image)
-        - name: rebuild
-          value: $(params.rebuild)
-        - name: skip-checks
-          value: $(params.skip-checks)
+        - name: enable-cache-proxy
+          value: $(params.enable-cache-proxy)
       taskRef:
         params:
           - name: name
             value: init
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:ebf06778aeacbbeb081f9231eafbdfdb8e380ad04e211d7ed80ae9101e37fd82
+            value: quay.io/konflux-ci/tekton-catalog/task-init:0.3@sha256:aa6f8632cc23d605c5942505ff1d00280db16a6fda5c4c56c4ed9ae936b5fbc6
           - name: kind
             value: task
         resolver: bundles
@@ -108,11 +107,6 @@ spec:
           - name: kind
             value: task
         resolver: bundles
-      when:
-        - input: $(tasks.init.results.build)
-          operator: in
-          values:
-            - "true"
       workspaces:
         - name: basic-auth
           workspace: git-auth
@@ -170,15 +164,10 @@ spec:
           - name: name
             value: oci-copy-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta:0.2@sha256:0458f3c002e9b940211cfcb63fff39c9d59e2fe4aed272f6b9cb0fff009be7c7
+            value: quay.io/konflux-ci/tekton-catalog/task-oci-copy-oci-ta:0.2@sha256:5d1ba8bfca59975100458b114b4b09ef9daa1d0a15b628e0e728d24c573d2355
           - name: kind
             value: task
         resolver: bundles
-      when:
-        - input: $(tasks.init.results.build)
-          operator: in
-          values:
-            - "true"
     - name: sast-snyk-check
       timeout: 2h
       params:
@@ -197,7 +186,7 @@ spec:
           - name: name
             value: sast-snyk-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.4@sha256:0fc62e57ab2c75adf5eaa5c3e5aaeb4845dbf029ddd159b688bc5804579b639f
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.4@sha256:0c2ab8ce6d419400b63dd67d061052ac51de7b1ebe93f8ae86ed07ac638d756d
           - name: kind
             value: task
         resolver: bundles
@@ -223,7 +212,7 @@ spec:
           - name: name
             value: sast-shell-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-shell-check-oci-ta:0.1@sha256:1f67b661458c549ab299bcdddb5e2b799af8c89d3c594567eb654d870000b5ec
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-shell-check-oci-ta:0.1@sha256:f475b4b6b0c1687fa1aafa5ba38813e04f080b185af2975e12b457742d9dd857
           - name: kind
             value: task
         resolver: bundles
@@ -249,7 +238,7 @@ spec:
           - name: name
             value: sast-unicode-check-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.4@sha256:9d2ab1bcd65f56ce32fe366a955abc8ac76228734a3f3642ac9af8af86fbb4d1
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.4@sha256:b38140b2f0b2163def80e28a792b2702245d38a5610a504f2e56c198f3b8f70b
           - name: kind
             value: task
         resolver: bundles
@@ -273,7 +262,7 @@ spec:
           - name: name
             value: apply-tags
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.3@sha256:3b7168f157321ab3400cf813314233076b94cade5b9c4d097e46a66d8d141edf
+            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.3@sha256:510b6d2a3b188adeb716e49566b57d611ab36bd69a2794b5ddfc11dbf014c2ca
           - name: kind
             value: task
         resolver: bundles
