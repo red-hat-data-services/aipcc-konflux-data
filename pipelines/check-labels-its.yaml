@@ -60,6 +60,7 @@ spec:
       default: ""
   tasks:
     - name: prepare-data
+      timeout: "3m"
       params:
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
@@ -106,6 +107,7 @@ spec:
             value: password
 
     - name: check-labels
+      timeout: "3m"
       runAfter:
         - prepare-data
       params:
