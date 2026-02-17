@@ -215,6 +215,121 @@ spec:
           operator: in
           values:
             - "false"
+    - name: clair-scan
+      params:
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: clair-scan
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.3@sha256:b01d8e2c58eb407ac23fa07b8e44c4631f0cf7257e87507c829fa2486aff9804
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
+    - name: clamav-scan
+      timeout: 6h
+      params:
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: clamav-scan
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.3@sha256:5b5b31eae9063a00b91acc049b536e548d87c730068e439eefe33ab5238ee118
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
+    - name: sast-shell-check
+      params:
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: sast-shell-check-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-shell-check-oci-ta:0.1@sha256:f475b4b6b0c1687fa1aafa5ba38813e04f080b185af2975e12b457742d9dd857
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
+    - name: sast-unicode-check
+      params:
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: sast-unicode-check-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.4@sha256:b38140b2f0b2163def80e28a792b2702245d38a5610a504f2e56c198f3b8f70b
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
+    - name: rpms-signature-scan
+      params:
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: rpms-signature-scan
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-rpms-signature-scan:0.2@sha256:47b81d6b3d752649eddfbb8b3fd8f6522c4bb07f6d1946f9bc45dae3f92e2c9a
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.skip-checks)
+          operator: in
+          values:
+            - "false"
     - name: apply-tags
       params:
         - name: IMAGE_URL
