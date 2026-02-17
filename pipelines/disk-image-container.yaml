@@ -86,10 +86,6 @@ spec:
       name: dockerfile
       type: string
     - default: "false"
-      description: Force rebuild image
-      name: rebuild
-      type: string
-    - default: "false"
       description: Skip checks against built image
       name: skip-checks
       type: string
@@ -143,10 +139,6 @@ spec:
       description: Additional tags to apply to the built image
       type: array
       default: []
-    - default: "false"
-      description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
-      name: privileged-nested
-      type: string
     - name: build-platforms
       description: List of platforms to build the container images on. The available
         set of values is determined by the configuration of the multi-platform-controller.
