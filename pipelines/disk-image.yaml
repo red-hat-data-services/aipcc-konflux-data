@@ -71,10 +71,6 @@ spec:
       description: Message to be sent
       type: string
       default: ""
-    - name: additional-tags
-      description: Additional tags to apply to the built image
-      type: array
-      default: []
     - name: build-platforms
       description: List of platforms to build the disk images on. The available
         set of values is determined by the configuration of the multi-platform-controller.
@@ -232,26 +228,6 @@ spec:
             value: build-image-index
           - name: bundle
             value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.2@sha256:30989fa1f475bb8f6bda811b26bd4ddf7187288ed5815ce634ba399341852c75
-          - name: kind
-            value: task
-        resolver: bundles
-    - name: apply-tags
-      params:
-        - name: IMAGE_URL
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: IMAGE_DIGEST
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: ADDITIONAL_TAGS
-          value:
-            - $(params.additional-tags[*])
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: apply-tags
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.3@sha256:510b6d2a3b188adeb716e49566b57d611ab36bd69a2794b5ddfc11dbf014c2ca
           - name: kind
             value: task
         resolver: bundles
