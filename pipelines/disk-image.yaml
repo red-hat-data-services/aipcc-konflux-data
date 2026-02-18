@@ -168,7 +168,7 @@ spec:
           - name: name
             value: prefetch-dependencies-oci-ta
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:c664a6df6514b59c3ce53570b0994b45af66ecc89ba2a8e41834eae0622addf6
+            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2@sha256:c07551efbd7fc414ae1245ddd93579b00317fee0734980f539fd8aea3cfcb945
           - name: kind
             value: task
         resolver: bundles
@@ -207,7 +207,7 @@ spec:
           - name: name
             value: build-vm-image
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.1@sha256:d2db64387775444e349c4b2bf08164eab77b00ce86003bf07a05f8b21ea7ce77
+            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.1@sha256:7423c4c78161d62c8f855ad189a33a101b99f1fe0b7c885c70c6ed1ea480e90d
           - name: kind
             value: task
     - name: build-image-index
@@ -231,7 +231,7 @@ spec:
           - name: name
             value: build-image-index
           - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.2@sha256:8fd2bd1329a833cf1c3c049c0044961d6f5d5bfc954ebf188c19a56852c42600
+            value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.2@sha256:30989fa1f475bb8f6bda811b26bd4ddf7187288ed5815ce634ba399341852c75
           - name: kind
             value: task
         resolver: bundles
