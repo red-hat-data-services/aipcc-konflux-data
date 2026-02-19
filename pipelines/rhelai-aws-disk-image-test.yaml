@@ -226,6 +226,8 @@ spec:
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
         - name: model-name
           value: "$(params.model-name)"
+        - name: pull-secret-name
+          value: "$(params.pull-secret-name)"
       runAfter:
         - create-vm-aws
       taskRef:
