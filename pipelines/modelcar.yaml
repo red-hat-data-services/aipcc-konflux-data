@@ -215,7 +215,12 @@ spec:
           operator: in
           values:
             - "false"
-    - name: clair-scan
+    - matrix:
+        params:
+        - name: image-platform
+          value:
+            - $(params.olot-platforms)
+      name: clair-scan
       params:
         - name: image-digest
           value: $(tasks.build-image-index.results.IMAGE_DIGEST)
@@ -237,7 +242,12 @@ spec:
           operator: in
           values:
             - "false"
-    - name: clamav-scan
+    - matrix:
+        params:
+          - name: image-arch
+            value:
+              - $(params.olot-platforms)
+      name: clamav-scan
       timeout: 6h
       params:
         - name: image-digest
