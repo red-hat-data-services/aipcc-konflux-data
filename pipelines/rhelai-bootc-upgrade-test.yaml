@@ -18,6 +18,9 @@ spec:
     - name: pull-secret-name
       default: "rhelai-bootc-pull"
       description: Name of the pull secret to use for pulling the container image
+    - name: rhel-ai-version
+      default: "3.2.0"
+      description: RHEL AI version that test will use to upgrade from (to version specified in SNAPSHOT)
     - name: SNAPSHOT
       description: |
         Snapshot of the application
@@ -85,7 +88,7 @@ spec:
         - name: tags
           value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687"
         - name: version
-          value: "3.0.0" # RHEL AI version
+          value: "$(params.rhel-ai-version)"
       runAfter:
         - create-configuration
       taskRef:
