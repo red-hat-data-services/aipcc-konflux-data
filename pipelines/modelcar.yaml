@@ -248,7 +248,7 @@ spec:
             value:
               - $(params.olot-platforms)
       name: clamav-scan
-      timeout: 6h
+      timeout: 24h
       params:
         - name: image-digest
           value: $(tasks.build-image-index.results.IMAGE_DIGEST)
@@ -319,6 +319,7 @@ spec:
           values:
             - "false"
     - name: rpms-signature-scan
+      timeout: 24h
       params:
         - name: image-digest
           value: $(tasks.build-image-index.results.IMAGE_DIGEST)
