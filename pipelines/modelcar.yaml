@@ -221,6 +221,7 @@ spec:
           value:
             - $(params.olot-platforms)
       name: clair-scan
+      timeout: 24h
       params:
         - name: image-digest
           value: $(tasks.build-image-index.results.IMAGE_DIGEST)
