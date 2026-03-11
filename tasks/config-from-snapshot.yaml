@@ -4,6 +4,9 @@ metadata:
   name: config-from-snapshot
 spec:
   params:
+    - name: architecture
+      default: "x86_64"
+      description: Architecture, e.g. x86_64, aarch64
     - name: component
     - name: SNAPSHOT
   results:
@@ -17,6 +20,8 @@ spec:
       description: Full git commit digest from the snapshot
     - name: inference-server-image
       description: Full reference to the inference server image, always populated for rhaiis
+    - name: mapt-architecture
+      description: Architecture string usable in mapt (aarch64 -> arm64)
     - name: model-opt-image
       description: Full reference to the model-opt container image, empty if not testing model-opt
     - name: product-image
@@ -102,7 +107,14 @@ spec:
               # g6e.4xlarge,g6e.8xlarge,g6e.12xlarge,g6e.16xlarge,g6e.24xlarge,g6e.48xlarge,gr6.8xlarge,p5.4xlarge
 
               cloud_provider="aws" # might have been empty
-              vm_types="g5.xlarge,g5.2xlarge,g5.4xlarge,g6.xlarge,g6.2xlarge,g6.4xlarge,g6e.xlarge,gr6.4xlarge"
+              if [[ "$(params.architecture)" == "x86_64" ]]; then
+                vm_types="g5.xlarge,g5.2xlarge,g5.4xlarge,g6.xlarge,g6.2xlarge,g6.4xlarge,g6e.xlarge,gr6.4xlarge"
+              elif [[ "$(params.architecture)" == "aarch64" ]]; then
+                vm_types="g5g.2xlarge,g5g.4xlarge,g5g.8xlarge,g5g.16xlarge"
+              else
+                echo "Architecture $(params.architecture) not supported for CUDA on AWS"
+                ret_value=1
+              fi
             else
               echo "Cloud provider ${cloud_provider} not supported for CUDA"
               ret_value=1
@@ -194,6 +206,12 @@ spec:
           echo "${inference_server_image}"
         fi
 
+        if [[ "$(params.architecture)" == "aarch64" ]]; then
+          mapt_architecture="arm64"
+        else
+          mapt_architecture="$(params.architecture)"
+        fi
+
         echo -e "\n === Storing results ==="
         # we need to store task results even if the task fails
         echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
@@ -201,6 +219,7 @@ spec:
         echo -n "${gitDigest}" | tee $(results.git-digest.path)
         echo -n "${EVENT_TYPE}" | tee $(results.event-type.path)
         echo -n "${inference_server_image}" | tee $(results.inference-server-image.path)
+        echo -n "${mapt_architecture}" | tee $(results.mapt-architecture.path)
         echo -n "${model_opt_image}" | tee $(results.model-opt-image.path)
         echo -n "${productImage}" | tee $(results.product-image.path)
         echo -n "${variant}" | tee $(results.variant.path)

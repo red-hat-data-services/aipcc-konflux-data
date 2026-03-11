@@ -4,8 +4,6 @@ metadata:
   name: configure-vm-cuda
 spec:
   params:
-    - name: arch
-      default: "x86_64"
     - name: cuda-compat-version
       default: "12-9"
     - name: host-access-secret-name
@@ -50,9 +48,10 @@ spec:
         echo -e "\n=== Installing Hugging Face CLI ==="
         ${ssh_cmd} sudo dnf install -y python3-pip
         ${ssh_cmd} pip install -U "huggingface_hub[cli]"
+        arch=$(${ssh_cmd} uname -m)
 
-        echo -e "\n=== Enabling rpm repositories"
-        if [ "$(params.arch)" = "x86_64" ]; then
+        echo -e "\n=== Enabling rpm repositories for ${arch}"
+        if [ "${arch}" = "x86_64" ]; then
           ${ssh_cmd} sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
         else
           ${ssh_cmd} sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/sbsa/cuda-rhel9.repo
