@@ -17,6 +17,12 @@
         "matchBaseBranches": [],
         "platformAutomerge": true,
         "automerge": true
+      },
+      {
+        "description": "Pin apply-tags in modelcar.yaml (block Renovate from updating)",
+        "matchPaths": ["pipelines/modelcar.yaml", "pipelines/models-oci-copy.yaml"],
+        "matchPackageNames": ["quay.io/konflux-ci/tekton-catalog/task-apply-tags"],
+        "enabled": false
       }
     ]
   }
