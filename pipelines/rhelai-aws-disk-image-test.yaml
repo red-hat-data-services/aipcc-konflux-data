@@ -34,6 +34,8 @@ spec:
     - name: create-configuration
       description: Extract container image and configuration from snapshot
       params:
+        - name: architecture
+          value: $(params.architecture)
         - name: component
           value: $(params.component)
         - name: SNAPSHOT
