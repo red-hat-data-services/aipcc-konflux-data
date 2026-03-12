@@ -18,6 +18,9 @@ spec:
     - name: dry-run
       description: If "true", only log actions without executing cleanup
       default: "false"
+    - name: force-destroy
+      description: If "true", force the destruction of resources even if there is a lock
+      default: "false"
     - name: secret-aws-credentials
       description: Name of the secret containing AWS credentials
       default: "aws-creds"
@@ -95,6 +98,8 @@ spec:
       params:
         - name: debug
           value: $(params.debug)
+        - name: force-destroy
+          value: $(params.force-destroy)
         - name: operation
           value: "destroy"
         - name: secret-aws-credentials
@@ -125,6 +130,8 @@ spec:
       params:
         - name: debug
           value: $(params.debug)
+        - name: force-destroy
+          value: $(params.force-destroy)
         - name: operation
           value: "destroy"
         - name: secret-aws-credentials
@@ -155,6 +162,8 @@ spec:
       params:
         - name: debug
           value: $(params.debug)
+        - name: force-destroy
+          value: $(params.force-destroy)
         - name: secret-aws-credentials
           value: $(params.secret-aws-credentials)
       matrix:
