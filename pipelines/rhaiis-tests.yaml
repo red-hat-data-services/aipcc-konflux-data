@@ -76,7 +76,7 @@ spec:
         - name: compute-sizes
           value: "$(tasks.create-configuration.results.vm-types)"
         - name: debug
-          value: "$(params.debug)"
+          value: "true"
         - name: id
           value: "$(context.pipelineRun.name)"
         - name: host-access-secret-name

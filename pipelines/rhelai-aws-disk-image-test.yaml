@@ -99,7 +99,7 @@ spec:
         - name: cpus
           value: "2"
         - name: debug
-          value: "$(params.debug)"
+          value: "true"
         - name: id
           value: "$(context.pipelineRun.name)-helper"
         - name: host-access-secret-name
@@ -145,7 +145,7 @@ spec:
         - name: container-image
           value: $(tasks.create-configuration.results.container-image)
         - name: debug
-          value: $(params.debug)
+          value: "true"
         - name: host-access-secret-name
           value: "$(tasks.create-helper-vm-aws.results.host-access-secret)"
         - name: pull-secret-name
@@ -187,7 +187,7 @@ spec:
         - name: custom-ami
           value: $(tasks.check-ami-exists.results.ami-name)
         - name: debug
-          value: "$(params.debug)"
+          value: "true"
         - name: id
           value: "$(context.pipelineRun.name)"
         - name: host-access-secret-name

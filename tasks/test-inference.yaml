@@ -54,11 +54,6 @@ spec:
           ${ssh_cmd} ${sudo_cmd} podman stop -i rhaiis
           ${ssh_cmd} ${sudo_cmd} podman rm -i rhaiis
 
-          DEBUG_FLAGS=""
-          if [ "$(params.debug)" == "true" ]; then
-            DEBUG_FLAGS="--log-level=debug --env HF_DEBUG=1 --env=VLLM_LOGGING_LEVEL=DEBUG"
-          fi
-
           # Configure variant-specific flags
           GPU_DEVICE_FLAGS=""
           GPU_PARALLEL_FLAGS=""
@@ -78,7 +73,10 @@ spec:
           fi
 
           echo -e "\n=== Starting RHAIIS container ==="
-          ${ssh_cmd} ${sudo_cmd} podman run -d --name rhaiis ${DEBUG_FLAGS} \
+          ${ssh_cmd} ${sudo_cmd} podman run -d --name rhaiis \
+            --log-level=debug \
+            --env HF_DEBUG=1 \
+            --env=VLLM_LOGGING_LEVEL=DEBUG \
             ${GPU_DEVICE_FLAGS} \
             --security-opt=label=disable \
             --shm-size=8g \
@@ -117,8 +115,10 @@ spec:
               echo "==="
               ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 rhaiis
               echo "==="
-              echo -e "\n=== Sleeping for 60 minutes ==="
-              sleep 3600
+              if [ "$(params.debug)" == "true" ]; then
+                echo -e "\n=== Sleeping for 60 minutes ==="
+                sleep 3600
+              fi
               exit 1
             fi
 
