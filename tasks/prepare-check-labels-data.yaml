@@ -163,26 +163,38 @@ spec:
         echo "========================================="
         echo ""
 
-        # Fetch labels from container image (same as apply-mapping does)
-        # Uses SA's linked image pull secrets for authentication
-        image_metadata=$(skopeo inspect \
-          --retry-times 3 \
-          --no-tags \
-          docker://"${IMAGE_REF}" | jq -c)
+        # skopeo inspect resolves multi-arch indices to the current platform automatically.
+        # Non-container artifacts (ML models, Helm charts) fail with "unsupported image-specific
+        # operation" — we catch that and leave labels/media_type empty so check-labels skips them.
+        media_type=""
+        labels_array="[]"
+        if image_metadata=$(skopeo inspect --retry-times 3 --no-tags docker://"${IMAGE_REF}" 2>&1); then
+          labels=$(jq -c '.Labels // {}' <<< "${image_metadata}")
 
-        labels=$(jq -c '.Labels // {}' <<< "${image_metadata}")
+          echo "Container labels:"
+          jq '.' <<< "${labels}"
+          echo ""
 
-        echo "Container labels:"
-        jq '.' <<< "${labels}"
+          # Convert labels from {key: value} to [{name: key, value: value}] format
+          labels_array=$(jq -c 'to_entries | map({name: .key, value: .value})' <<< "$labels")
+
+          # Infer config media_type from the layer MIME type
+          layer_mime=$(jq -r '.LayersData[0].MIMEType // ""' <<< "${image_metadata}")
+          if [[ "$layer_mime" == application/vnd.oci.image.layer.* ]]; then
+            media_type="application/vnd.oci.image.config.v1+json"
+          elif [[ "$layer_mime" == application/vnd.docker.image.rootfs.* ]]; then
+            media_type="application/vnd.docker.container.image.v1+json"
+          fi
+        else
+          echo "skopeo inspect failed — non-container artifact, skipping label enrichment"
+        fi
+
+        echo "Media type: ${media_type}"
         echo ""
 
-        # Convert labels from {key: value} to [{name: key, value: value}] format
-        # This is what apply-mapping does
-        labels_array=$(jq -c 'if . then to_entries | map({name: .key, value: .value}) else [] end' <<< "$labels")
-
-        # Enrich the component with labels (add to .metadata.labels)
-        enriched_component=$(jq -c --argjson labels "$labels_array" \
-          '.metadata = (.metadata // {}) * {labels: $labels}' <<< "$component")
+        # Enrich the component with labels and media_type (add to .metadata)
+        enriched_component=$(jq -c --argjson labels "$labels_array" --arg media_type "$media_type" \
+          '.metadata = (.metadata // {}) * {labels: $labels, media_type: $media_type}' <<< "$component")
 
         # Create snapshot with ONLY this single enriched component
         # This is critical for check-labels which iterates over ALL components
