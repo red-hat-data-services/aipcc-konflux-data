@@ -116,6 +116,8 @@ spec:
           value: "$(context.pipelineRun.uid)"
         - name: secret-aws-credentials
           value: "aws-konflux-tests"
+        - name: service-endpoints
+          value: "s3"
         - name: spot
           value: "false"
         - name: tags
@@ -184,7 +186,7 @@ spec:
       params:
         - name: compute-sizes
           value: "$(tasks.create-configuration.results.vm-types)"
-        - name: custom-ami
+        - name: custom-image
           value: $(tasks.check-ami-exists.results.ami-name)
         - name: debug
           value: "true"

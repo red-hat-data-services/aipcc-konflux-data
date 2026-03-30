@@ -65,8 +65,8 @@ spec:
         # Construct AMI name based on release mode or event type
         # mapt has two parameters for choosing the AMI name
         # 1. version - e.g. for "3.2.0" mapt will search for "rhel-ai-cuda-aws-3.2.0*" and returns the most recent AMI
-        # 2. custom-ami - e.g. "test-rhel-ai-cuda-aws-3.2.0-pr-12345678"
-        # we need "test-" prefix for custom-ami to avoid conflicts with the version search
+        # 2. custom-image - e.g. "test-rhel-ai-cuda-aws-3.2.0-pr-12345678"
+        # we need "test-" prefix for custom-image to avoid conflicts with the version search
         
         if [[ "${RELEASE_MODE}" == "true" ]]; then
           # Release mode: clean version only (no git digest)
