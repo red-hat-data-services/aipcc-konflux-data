@@ -64,6 +64,12 @@ spec:
             NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
             echo "=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
             GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_GPUS}"
+          elif [[ "${VARIANT}" =~ rocm ]]; then
+            echo -e "\n=== Configuring for ROCm variant ==="
+            GPU_DEVICE_FLAGS="--device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined"
+            NUMBER_OF_GPUS=$(${ssh_cmd} "rocminfo | grep -c 'Device Type:.*GPU' || echo 1")
+            echo "=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
+            GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_GPUS}"
           elif [[ "${VARIANT}" =~ cpu ]]; then
             echo -e "\n=== Configuring for CPU variant ==="
             # No GPU flags needed
@@ -84,7 +90,7 @@ spec:
             --userns=keep-id:uid=1001 \
             --env "HF_HUB_OFFLINE=1" \
             --env "VLLM_NO_USAGE_STATS=1" \
-            -v "${REMOTE_HOME}:/models-host" \
+            -v "${REMOTE_MODELS_REAL}:/models" \
             "${INFERENCE_SERVER_IMAGE}" \
             ${GPU_PARALLEL_FLAGS} \
             --model "${model_path_in_container}" \
@@ -108,6 +114,10 @@ spec:
                 ${ssh_cmd} nvidia-smi || true
                 echo "==="
                 ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+              elif [[ "${VARIANT}" =~ rocm ]]; then
+                ${ssh_cmd} amd-smi || true
+                echo "==="
+                ${ssh_cmd} rocminfo || true
               fi
 
               echo "==="
@@ -134,6 +144,9 @@ spec:
             if [[ "${VARIANT}" =~ cuda ]]; then
               echo "GPU memory free:"
               ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+            elif [[ "${VARIANT}" =~ rocm ]]; then
+              echo "ROCm GPU status:"
+              ${ssh_cmd} "amd-smi metric --vram" || true
             fi
 
             echo "==="
@@ -198,6 +211,10 @@ spec:
         REMOTE_HOME="$(${ssh_cmd} 'echo $HOME')"
         echo -e "\n=== Remote home directory: ${REMOTE_HOME} ==="
 
+        # Resolve the real path of ~/models in case it is a symlink (e.g. -> /mnt/models)
+        REMOTE_MODELS_REAL="$(${ssh_cmd} 'readlink -f ~/models 2>/dev/null || echo $HOME/models')"
+        echo -e "=== Remote models real path: ${REMOTE_MODELS_REAL} ==="
+
         # Variant-specific initialization checks
         if [[ "${VARIANT}" =~ cuda ]]; then
           # Used on p5.48xlarge, maybe on p4d.24xlarge
@@ -206,6 +223,16 @@ spec:
           ${ssh_cmd} nvidia-smi nvlink --status || true
 
           NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+          echo -e "\n=== Number of GPUs ==="
+          echo "${NUMBER_OF_GPUS}"
+        elif [[ "${VARIANT}" =~ rocm ]]; then
+          echo -e "\n=== amd-smi ==="
+          ${ssh_cmd} amd-smi || true
+
+          echo -e "\n=== rocminfo ==="
+          ${ssh_cmd} rocminfo || true
+
+          NUMBER_OF_GPUS=$(${ssh_cmd} "rocminfo | grep -c 'Device Type:.*GPU' || echo 1")
           echo -e "\n=== Number of GPUs ==="
           echo "${NUMBER_OF_GPUS}"
         fi
@@ -219,16 +246,16 @@ spec:
           #  - If test-model-opt-quantization ran before this task, use the quantized model
           #  - Otherwise, fall back to the regular HuggingFace model
           # This makes test-inference compatible with both scenarios (with and without quantization)
-          REMOTE_QUANTIZED_DIR="${REMOTE_HOME}/models/${model}-quantized"
-          REMOTE_HF_DIR="${REMOTE_HOME}/models/${model}"
+          REMOTE_QUANTIZED_DIR="${REMOTE_MODELS_REAL}/${model}-quantized"
+          REMOTE_HF_DIR="${REMOTE_MODELS_REAL}/${model}"
 
           # Check if quantized model directory exists AND is not empty
           if ${ssh_cmd} "[ -d '${REMOTE_QUANTIZED_DIR}' ] && [ -n \"\$(ls -A '${REMOTE_QUANTIZED_DIR}' 2>/dev/null)\" ]"; then
             echo "Found quantized model at ${REMOTE_QUANTIZED_DIR}, using it"
-            MODEL_PATH_IN_CONTAINER="/models-host/models/${model}-quantized"
+            MODEL_PATH_IN_CONTAINER="/models/${model}-quantized"
           else
             echo "No quantized model found, using original model at ${REMOTE_HF_DIR}"
-            MODEL_PATH_IN_CONTAINER="/models-host/models/${model}"
+            MODEL_PATH_IN_CONTAINER="/models/${model}"
           fi
 
           if [ "$(params.start-rhaiis)" == "true" ]; then

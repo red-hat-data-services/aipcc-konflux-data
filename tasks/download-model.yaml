@@ -41,6 +41,19 @@ spec:
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
+        echo -e "\n=== Selecting model download location ==="
+        # Use /mnt when it is a separate mount with more free space (common on Azure VMs).
+        # Fall back to ~/models when /mnt is not a real mount or has less space.
+        home_free=$(${ssh_cmd} df --output=avail '$HOME' | tail -1)
+        mnt_free=$(${ssh_cmd} df --output=avail /mnt 2>/dev/null | tail -1 || echo 0)
+        if [ -n "$mnt_free" ] && [ "$mnt_free" -gt "$home_free" ]; then
+          ${ssh_cmd} 'mkdir -p /mnt/models && rm -rf ~/models && ln -s /mnt/models ~/models'
+          echo "Using /mnt/models ($(( mnt_free / 1024 / 1024 )) GiB free)"
+        else
+          ${ssh_cmd} mkdir -p '~/models'
+          echo "Using ~/models ($(( home_free / 1024 / 1024 )) GiB free)"
+        fi
+
         echo -e "\n=== Downloading models ==="
         for model_name in "$@"; do
           echo -e "\n--- Downloading model: ${model_name} ---"
