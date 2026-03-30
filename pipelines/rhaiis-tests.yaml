@@ -4,6 +4,12 @@ metadata:
   name: rhaiis-tests
 spec:
   params:
+    - name: amdgpu-base-version
+      default: "6.4.4"
+      description: AMD GPU base version for repository URL
+    - name: amdgpu-version
+      default: "6.4.60404"
+      description: AMD GPU installer version
     - name: architecture
       default: "x86_64"
       description: One of x86_64, aarch64
@@ -77,10 +83,10 @@ spec:
           value: "$(tasks.create-configuration.results.vm-types)"
         - name: debug
           value: "true"
+        - name: host-access-secret-name
+          value: "mapt-rhel-$(context.pipelineRun.name)"          
         - name: id
           value: "$(context.pipelineRun.name)"
-        - name: host-access-secret-name
-          value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: operation
           value: "create"
         - name: ownerKind
@@ -93,10 +99,10 @@ spec:
           value: "aws-konflux-tests"
         - name: spot
           value: "true"
-        - name: spot-increase-rate
-          value: "100"
         - name: spot-eviction-tolerance
           value: "medium"
+        - name: spot-increase-rate
+          value: "100"
         - name: tags
           value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=687"
         - name: version
@@ -117,6 +123,55 @@ spec:
         - input: $(tasks.create-configuration.results.cloud-provider)
           operator: in
           values: ["aws"]
+    - name: create-vm-azure
+      params:
+        - name: arch
+          value: "$(tasks.create-configuration.results.mapt-architecture)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: debug
+          value: "true"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-rhel-$(context.pipelineRun.name)"
+        - name: location
+          value: "eastus"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+        - name: spot
+          value: "true"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: spot-increase-rate
+          value: "100"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=687"
+        - name: version
+          value: "9.6" # RHEL version
+      runAfter:
+        - create-configuration
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["azure"]
     - name: configure-vm-cuda
       params:
         - name: cuda-compat-version
@@ -127,6 +182,7 @@ spec:
           value: "$(params.nvidia-driver-version)"
       runAfter:
         - create-vm-aws
+        - create-vm-azure
       taskRef:
         resolver: git
         params:
@@ -156,6 +212,7 @@ spec:
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
       runAfter:
         - create-vm-aws
+        - create-vm-azure
       taskRef:
         resolver: git
         params:
@@ -179,6 +236,40 @@ spec:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
           values: ["cpu-ubi9"]
+    - name: configure-vm-rocm
+      params:
+        - name: amdgpu-base-version
+          value: "$(params.amdgpu-base-version)"
+        - name: amdgpu-version
+          value: "$(params.amdgpu-version)"
+        - name: host-access-secret-name
+          value: "mapt-rhel-$(context.pipelineRun.name)"
+      runAfter:
+        - create-vm-aws
+        - create-vm-azure
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-vm-rocm.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      when:
+        - input: $(tasks.create-configuration.results.variant)
+          operator: in
+          values: ["rocm-ubi9"]
     - name: pull-images
       params:
         - name: container-images
@@ -186,12 +277,13 @@ spec:
             - "$(tasks.create-configuration.results.inference-server-image)"
             - "$(tasks.create-configuration.results.model-opt-image)"
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: pull-secret-name
           value: "$(params.pull-secret-name)"
       runAfter:
         - configure-vm-cuda
         - configure-vm-cpu
+        - configure-vm-rocm
       taskRef:
         resolver: git
         params:
@@ -216,10 +308,11 @@ spec:
         - name: model-names
           value: ["$(params.model-names[*])"]
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-rhel-$(context.pipelineRun.name)"
       runAfter:
         - configure-vm-cuda
         - configure-vm-cpu
+        - configure-vm-rocm
       taskRef:
         resolver: git
         params:
@@ -244,7 +337,7 @@ spec:
         - name: container-image
           value: "$(tasks.create-configuration.results.model-opt-image)"
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: model-names
           value: ["$(params.model-names[*])"]
         - name: git-url
@@ -288,7 +381,7 @@ spec:
         - name: variant
           value: "$(tasks.create-configuration.results.variant)"
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: model-names
           value: ["$(params.model-names[*])"]
       runAfter:
@@ -337,3 +430,24 @@ spec:
         - input: $(tasks.create-configuration.results.cloud-provider)
           operator: in
           values: ["aws"]
+    - name: delete-vm-azure
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["azure"]

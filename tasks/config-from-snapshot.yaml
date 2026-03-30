@@ -140,11 +140,25 @@ spec:
             fi
             ;;
           *-rocm*)
-            echo "ROCM not implemented yet"
-            vm_types="g4ad.xlarge,g4ad.2xlarge,g4ad.4xlarge,g4ad.8xlarge,g4ad.16xlarge"
-            cloud_provider="aws"
             variant="rocm-ubi9"
-            ret_value=1
+
+            if [[ "${cloud_provider}" == "azure" ]] || [[ -z "${cloud_provider}" ]]; then
+              # Azure GPU-enabled VMs with AMD MI300X GPUs
+              # Standard_ND96is_MI300X_v5 - 96 vCPUs, 1.9 TB RAM, 8x MI300X GPUs (InfiniBand)
+              # Standard_ND96isr_MI300X_v5 - 96 vCPUs, 1.9 TB RAM, 8x MI300X GPUs (InfiniBand + RDMA)
+              # Only Azure provides AMD MI300X GPUs required for ROCm testing
+              vm_types="Standard_ND96is_MI300X_v5,Standard_ND96isr_MI300X_v5"
+              cloud_provider="azure"
+            elif [[ "${cloud_provider}" == "aws" ]]; then
+              # AWS AMD GPUs (g4ad series) use older Radeon Pro V520
+              # Not suitable for MI300X testing, but kept for compatibility
+              echo "⚠ AWS g4ad instances use Radeon Pro V520, not MI300X - testing may be limited"
+              vm_types="g4ad.xlarge,g4ad.2xlarge,g4ad.4xlarge,g4ad.8xlarge,g4ad.16xlarge"
+              cloud_provider="aws"
+            else
+              echo "Cloud provider ${cloud_provider} not supported for ROCm"
+              ret_value=1
+            fi
             ;;
           *-spyre*)
             echo "Spyre not implemented yet"

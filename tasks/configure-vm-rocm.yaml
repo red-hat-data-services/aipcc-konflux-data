@@ -1,0 +1,160 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: configure-vm-rocm
+spec:
+  params:
+    - name: amdgpu-base-version
+      default: "6.4.4"
+      description: AMD GPU base version for repository URL
+    - name: amdgpu-version
+      default: "6.4.60404"
+      description: AMD GPU installer version
+    - name: host-access-secret-name
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+        - name: shared-ssh-key
+          mountPath: /mnt/shared-ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+
+        echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Adding shared SSH key ==="
+        cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
+
+        echo -e "\n=== lspci ==="
+        ${ssh_cmd} lspci | grep -i amd
+
+        echo -e "\n=== Installing prerequisites ==="
+        ${ssh_cmd} sudo dnf install -y python3-pip
+        ${ssh_cmd} pip install -U "huggingface_hub[cli]"
+
+        echo -e "\n=== Installing AMDGPU installer package ==="
+        ${ssh_cmd} sudo dnf install -y https://repo.radeon.com/amdgpu-install/$(params.amdgpu-base-version)/rhel/9.6/amdgpu-install-$(params.amdgpu-version)-1.el9.noarch.rpm
+
+        echo -e "\n=== Installing ROCm stack with graphics driver (first pass) ==="
+        # AMD requires running this twice or rebooting between driver and ROCm installation
+        # First installation may fail, so we use || true
+        ${ssh_cmd} sudo amdgpu-install -y --usecase=graphics || true
+        ${ssh_cmd} sudo dnf clean all
+
+        echo -e "\n=== Rebooting the VM after driver installation ==="
+        ${ssh_cmd} sudo reboot
+
+        echo -e "\n=== Waiting for the VM to reboot ==="
+        for i in $(seq 1 20); do
+          echo -e "\n=== Sleeping for 30 seconds $i/20 ==="
+          sleep 30
+
+          if ${ssh_cmd} true; then
+            ${ssh_cmd} 'until systemctl is-system-running --wait >/dev/null 2>&1; do sleep 2; done'
+            break
+          fi
+        done
+
+        echo -e "\n=== Installing ROCm stack (second pass) ==="
+        ${ssh_cmd} sudo amdgpu-install -y --usecase=rocm
+        ${ssh_cmd} sudo dnf clean all
+
+        echo -e "\n=== Adding user to required groups ==="
+        ${ssh_cmd} "sudo usermod -a -G render,video \$USER"
+
+        echo -e "\n=== Configuring SELinux allow device access in podman ==="
+        ${ssh_cmd} sudo setsebool -P container_use_devices 1
+
+        echo -e "\n=== Enabling linger for podman ==="
+        ${ssh_cmd} "sudo loginctl enable-linger \$USER"
+
+        echo -e "\n=== Rebooting the VM to load drivers and apply group changes ==="
+        ${ssh_cmd} sudo reboot
+
+        echo -e "\n=== Waiting for the VM to reboot ==="
+        for i in $(seq 1 20); do
+          echo -e "\n=== Sleeping for 30 seconds $i/20 ==="
+          sleep 30
+
+          if ${ssh_cmd} true; then
+            ${ssh_cmd} 'until systemctl is-system-running --wait >/dev/null 2>&1; do sleep 2; done'
+            break
+          fi
+        done
+
+        echo -e "\n=== Verifying AMD GPU is detected ==="
+        ${ssh_cmd} lspci | grep -i amd
+
+        echo -e "\n=== Manually loading amdgpu module if needed ==="
+        ${ssh_cmd} sudo modprobe amdgpu || true
+
+        echo -e "\n=== amd-smi ==="
+        ${ssh_cmd} amd-smi
+
+        echo -e "\n=== rocminfo ==="
+        ${ssh_cmd} rocminfo
+
+        echo -e "\n=== Verify GPU device files ==="
+        ${ssh_cmd} ls -la /dev/kfd /dev/dri/render* || true
+
+        echo -e "\n=== Check user groups ==="
+        ${ssh_cmd} groups
+
+        echo -e "\n=== Verify loginctl linger ==="
+        ${ssh_cmd} "loginctl show-user \$USER | grep Linger"
+
+        echo -e "\n=== Disk usage after installation ==="
+        ${ssh_cmd} df -h
+
+        echo -e "\n=== Configuring podman storage to use largest available disk ==="
+        home_free=$(${ssh_cmd} df --output=avail '$HOME' | tail -1)
+        mnt_free=$(${ssh_cmd} df --output=avail /mnt 2>/dev/null | tail -1 || echo 0)
+        if [ -n "$mnt_free" ] && [ "$mnt_free" -gt "$home_free" ]; then
+          echo "Using /mnt for podman storage ($(( mnt_free / 1024 / 1024 )) GiB free vs $(( home_free / 1024 / 1024 )) GiB on home)"
+          ${ssh_cmd} "sudo chown -R \$USER:\$USER /mnt || true"
+          ${ssh_cmd} 'mkdir -p /mnt/models && rm -rf ~/models && ln -s /mnt/models ~/models'
+          ${ssh_cmd} "mkdir -p ~/.config/containers"
+          ${ssh_cmd} "echo '[storage]' > ~/.config/containers/storage.conf"
+          ${ssh_cmd} "echo 'driver = \"overlay\"' >> ~/.config/containers/storage.conf"
+          ${ssh_cmd} "echo 'runroot = \"/mnt/containers/run\"' >> ~/.config/containers/storage.conf"
+          ${ssh_cmd} "echo 'graphroot = \"/mnt/containers/storage\"' >> ~/.config/containers/storage.conf"
+          ${ssh_cmd} "podman info | grep -E 'graphRoot|runRoot'"
+        else
+          echo "Using default podman storage (home: $(( home_free / 1024 / 1024 )) GiB free, /mnt: $(( mnt_free / 1024 / 1024 )) GiB free)"
+        fi
+
+  volumes:
+    - name: mapt-ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
+    - name: shared-ssh-key
+      secret:
+        secretName: "shared-ssh-key"
+        defaultMode: 0400
+        items:
+          - key: id_rsa.pub
+            path: aipcc.pub
+            mode: 0400
