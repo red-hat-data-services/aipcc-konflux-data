@@ -1,0 +1,24 @@
+include:
+  # AI Code Review
+  - project: 'redhat/rhel-ai/core/tools/ai-review'
+    file: 'ai-review.gitlab-ci.yml'
+    inputs:
+      INSTRUCTIONS: "Use the repo-reviewer skill for specialized Konflux data review. Focus on Tekton pipeline/task correctness, release definition accuracy, and pipelinerun parameter consistency."
+    rules:
+      - if: '$CI_MERGE_REQUEST_LABELS =~ /ai-review/'
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+stages:
+  - lint
+
+# TODO: Remove this job once real CI jobs are added to this repo.
+# It exists only to prevent "no valid stages" errors when the ai-review
+# label is not applied (the ai-review include is the only other job).
+ci-placeholder:
+  stage: lint
+  script: ["echo 'Add the ai-review label to this MR to trigger AI code review.'"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
