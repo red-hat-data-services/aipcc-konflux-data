@@ -68,6 +68,8 @@ spec:
       params:
         - name: debug
           value: $(params.debug)
+        - name: force-destroy
+          value: $(params.force-destroy)
         - name: operation
           value: "destroy"
         - name: secret-aws-credentials
