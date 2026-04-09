@@ -1,0 +1,121 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: configure-vm-neuron
+spec:
+  params:
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials for the VM
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+        - name: shared-ssh-key
+          mountPath: /mnt/shared-ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+
+        echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        reboot_and_wait() {
+          echo -e "\n=== Rebooting the VM ==="
+          ${ssh_cmd} sudo reboot
+
+          echo -e "\n=== Waiting for the VM to reboot ==="
+          for i in $(seq 1 20); do
+            echo -e "\n=== Sleeping for 30 seconds $i/20 ==="
+            sleep 30
+
+            if ${ssh_cmd} true; then
+              ${ssh_cmd} 'until systemctl is-system-running --wait >/dev/null 2>&1; do sleep 2; done'
+              break
+            fi
+          done
+        }
+
+        echo -e "\n=== Adding shared SSH key ==="
+        cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
+
+        echo -e "\n=== Installing prerequisites ==="
+        ${ssh_cmd} sudo dnf install -y python3-pip
+        ${ssh_cmd} pip install -U "huggingface_hub[cli]"
+
+        echo -e "\n=== Configuring Neuron YUM repository ==="
+        ${ssh_cmd} "sudo tee /etc/yum.repos.d/neuron.repo > /dev/null <<'REPO'
+        [neuron]
+        name=Neuron YUM Repository
+        baseurl=https://yum.repos.neuron.amazonaws.com
+        enabled=1
+        metadata_expire=0
+        REPO"
+        ${ssh_cmd} sudo rpm --import https://yum.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB
+        ${ssh_cmd} sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+
+        echo -e "\n=== Installing latest kernel ==="
+        # kernel headers and kernel-devel for shipped kernel are not available in the repos
+        ${ssh_cmd} 'sudo dnf update -y kernel'
+
+        echo -e "\n=== Installing kernel headers for DKMS ==="
+        ${ssh_cmd} 'sudo dnf install -y kernel-headers kernel-devel dkms'
+
+        reboot_and_wait
+
+        kernel_version=$(${ssh_cmd} 'uname -r')
+        echo -e "\n=== Kernel version: ${kernel_version} ==="
+
+        echo -e "\n=== Installing AWS Neuron driver and tools ==="
+        # Only Inferentia2 (inf2) and Trainium (trn1/trn2) are supported.
+        # Inferentia v1 (inf1) aws-neuron-dkms driver is incompatible with RHEL 9 kernels.
+        ${ssh_cmd} sudo dnf install -y aws-neuronx-dkms aws-neuronx-runtime-lib aws-neuronx-tools
+
+        echo -e "\n=== Configuring SELinux allow device access in podman ==="
+        ${ssh_cmd} sudo setsebool -P container_use_devices 1
+
+        reboot_and_wait
+
+        echo -e "\n=== Verifying Neuron devices ==="
+        ${ssh_cmd} ls -la /dev/neuron*
+
+        echo -e "\n=== neuron-ls ==="
+        ${ssh_cmd} neuron-ls
+
+        echo -e "\n=== Enabling linger for podman ==="
+        ${ssh_cmd} "sudo loginctl enable-linger \$USER"
+        ${ssh_cmd} "loginctl show-user \$USER | grep Linger"
+
+        echo -e "\n=== Neuron VM configuration complete ==="
+  volumes:
+    - name: mapt-ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
+    - name: shared-ssh-key
+      secret:
+        secretName: "shared-ssh-key"
+        defaultMode: 0400
+        items:
+          - key: id_rsa.pub
+            path: aipcc.pub
+            mode: 0400
