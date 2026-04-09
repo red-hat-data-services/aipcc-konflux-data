@@ -130,7 +130,7 @@ This repository contains:
 
 #### Required
 - Every pipeline that creates VMs (via mapt) MUST have a corresponding `finally` block to destroy them
-- AWS tags must include required cost tracking tags: `app-code=GITL-005`, `service-phase=dev`, `cost-center=687`
+- AWS tags must include required cost tracking tags: `app-code=GITL-005`, `service-phase=dev`, `cost-center=722`
 - AMI naming must follow the pattern: `rhel-ai-cuda-aws-{version}` (release) or `test-rhel-ai-cuda-aws-{version}-pr-{digest}` (PR)
 - VM cleanup pipeline (`cleanup-resources.yaml`) TTL values should be reasonable (48h for VMs, 72h for AMIs)
 - Spot instances should be used for CI testing with appropriate eviction tolerance

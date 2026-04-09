@@ -75,7 +75,7 @@ spec:
         - name: spot
           value: "false"
         - name: tags
-          value: "konflux=true,ci=true,component=rhel-ai-aws-disk-image,product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687,purpose=helper"
+          value: "konflux=true,ci=true,component=rhel-ai-aws-disk-image,product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
         - name: version
           value: "43"
       runAfter:

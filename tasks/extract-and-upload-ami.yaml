@@ -153,7 +153,7 @@ spec:
           --image-name $(params.ami-name) \
           --image-path /data/disk-image.raw \
           --replicate \
-          --tags konflux=true,ci=true,product=rhelai,ami-name=$(params.ami-name),app-code=GITL-005,service-phase=dev,cost-center=687 \
+          --tags konflux=true,ci=true,product=rhelai,ami-name=$(params.ami-name),app-code=GITL-005,service-phase=dev,cost-center=722 \
           ${cloud_importer_params}
 
         ${ssh_cmd} podman ps -a
