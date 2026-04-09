@@ -106,7 +106,7 @@ spec:
         - name: spot-increase-rate
           value: "100"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=687"
+          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=722"
         - name: version
           value: "9.6" # RHEL version
       runAfter:
@@ -156,7 +156,7 @@ spec:
         - name: spot-increase-rate
           value: "100"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=687"
+          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=722"
         - name: version
           value: "9.6" # RHEL version
       runAfter:

@@ -121,7 +121,7 @@ spec:
         - name: spot
           value: "false"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687,purpose=helper"
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
         - name: version
           value: "43"
       runAfter:
@@ -211,7 +211,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=687"
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
       runAfter:
         - extract-and-upload-ami
       taskRef:
