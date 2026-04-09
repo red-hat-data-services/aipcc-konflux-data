@@ -57,22 +57,40 @@ spec:
           # Configure variant-specific flags
           GPU_DEVICE_FLAGS=""
           GPU_PARALLEL_FLAGS=""
+          VARIANT_EXTRA_FLAGS="--enforce-eager"
 
-          if [[ "${VARIANT}" =~ cuda ]]; then
+          if [[ "${VARIANT}" =~ cpu ]]; then
+            echo -e "\n=== Configuring for CPU variant ==="
+            # No GPU flags needed
+          elif [[ "${VARIANT}" =~ cuda ]]; then
             echo -e "\n=== Configuring for CUDA variant ==="
             GPU_DEVICE_FLAGS="--device nvidia.com/gpu=all"
             NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
             echo "=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
             GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_GPUS}"
+          elif [[ "${VARIANT}" =~ neuron ]]; then
+            echo -e "\n=== Configuring for Neuron variant ==="
+            # Map all available Neuron devices into the container
+            NEURON_DEVICES=$(${ssh_cmd} "ls -1 /dev/neuron* 2>/dev/null")
+            for dev in ${NEURON_DEVICES}; do
+              GPU_DEVICE_FLAGS="${GPU_DEVICE_FLAGS} --device=${dev}"
+            done
+            echo "=== Neuron device flags: ${GPU_DEVICE_FLAGS} ==="
+            # Get number of NeuronCores for tensor-parallel-size
+            NUMBER_OF_CORES=$(${ssh_cmd} "neuron-ls --json-output 2>/dev/null | jq '[.[].nc_count] | add'" || echo "2")
+            echo "=== Number of Neuron cores: ${NUMBER_OF_CORES} ==="
+            GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_CORES}"
+            # Neuron-specific vLLM flags per Red Hat AI Inference Server docs:
+            # --no-enable-prefix-caching: required for Neuron hardware
+            # --max-num-seqs 1: recommended for stability
+            # --additional-config: override async_mode for stability
+            VARIANT_EXTRA_FLAGS="--no-enable-prefix-caching --max-num-seqs 1 --additional-config '{\"override_neuron_config\": {\"async_mode\": false}}'"
           elif [[ "${VARIANT}" =~ rocm ]]; then
             echo -e "\n=== Configuring for ROCm variant ==="
             GPU_DEVICE_FLAGS="--device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined"
             NUMBER_OF_GPUS=$(${ssh_cmd} "rocminfo | grep -c 'Device Type:.*GPU' || echo 1")
             echo "=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
             GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_GPUS}"
-          elif [[ "${VARIANT}" =~ cpu ]]; then
-            echo -e "\n=== Configuring for CPU variant ==="
-            # No GPU flags needed
           else
             echo -e "\n=== Unknown variant, assuming CPU ==="
             # No GPU flags needed
@@ -96,7 +114,7 @@ spec:
             --model "${model_path_in_container}" \
             --served-model-name "${model_name}" \
             --max-model-len 1024 \
-            --enforce-eager
+            ${VARIANT_EXTRA_FLAGS}
         }
 
         wait_for_rhaiis() {
@@ -114,6 +132,8 @@ spec:
                 ${ssh_cmd} nvidia-smi || true
                 echo "==="
                 ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+              elif [[ "${VARIANT}" =~ neuron ]]; then
+                ${ssh_cmd} neuron-ls || true
               elif [[ "${VARIANT}" =~ rocm ]]; then
                 ${ssh_cmd} amd-smi || true
                 echo "==="
@@ -144,6 +164,9 @@ spec:
             if [[ "${VARIANT}" =~ cuda ]]; then
               echo "GPU memory free:"
               ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+            elif [[ "${VARIANT}" =~ neuron ]]; then
+              echo "Neuron GPU status:"
+              ${ssh_cmd} neuron-ls || true
             elif [[ "${VARIANT}" =~ rocm ]]; then
               echo "ROCm GPU status:"
               ${ssh_cmd} "amd-smi metric --vram" || true
@@ -225,6 +248,16 @@ spec:
           NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
           echo -e "\n=== Number of GPUs ==="
           echo "${NUMBER_OF_GPUS}"
+        elif [[ "${VARIANT}" =~ neuron ]]; then
+          echo -e "\n=== neuron-ls ==="
+          ${ssh_cmd} neuron-ls || true
+
+          echo -e "\n=== Neuron devices ==="
+          ${ssh_cmd} ls -la /dev/neuron* || true
+
+          NUMBER_OF_CORES=$(${ssh_cmd} "neuron-ls --json-output 2>/dev/null | jq '[.[].nc_count] | add'" || echo "2")
+          echo -e "\n=== Number of Neuron cores ==="
+          echo "${NUMBER_OF_CORES}"
         elif [[ "${VARIANT}" =~ rocm ]]; then
           echo -e "\n=== amd-smi ==="
           ${ssh_cmd} amd-smi || true

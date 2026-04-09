@@ -131,8 +131,9 @@ spec:
             variant="neuron-ubi9"
 
             if [[ "${cloud_provider}" == "aws" ]] || [[ -z "${cloud_provider}" ]]; then
-              # instances with at least 16 GiB of GPU memory with reasonable price
-              vm_types="inf1.2xlarge,inf1.6xlarge,inf1.24xlarge,inf2.xlarge,inf2.8xlarge,trn1.2xlarge"
+              # Inferentia v1 (inf1) is not supported - aws-neuron-dkms driver is incompatible with RHEL 9 kernels
+              # Trainium v1 (trn1) and Trainium v2 (trn2) are supported but only available in certain regions
+              vm_types="inf2.xlarge,inf2.8xlarge,inf2.24xlarge"
               cloud_provider="aws" # might have been empty
             else
               echo "Cloud provider ${cloud_provider} not supported for Neuron"
