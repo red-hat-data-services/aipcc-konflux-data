@@ -15,6 +15,11 @@ spec:
       description: One of x86_64, aarch64
     - name: component
       description: Konflux component to test, e.g. rhaiis-cuda-ubi9
+    - name: inference-server-fallback-image
+      default: ""
+      description: >
+        Fallback inference server image to use when testing model-opt and the
+        inference server is not in the SNAPSHOT.
     - name: cuda-compat-version
       default: "12-9"
       description: |
@@ -31,9 +36,11 @@ spec:
     - name: nvidia-driver-version
       default: "570"
       description: NVIDIA driver version to install, 570 for CUDA 12.8
-    - name: pull-secret-name
-      default: "rhaiis-pull"
-      description: Name of the pull secret to use for pulling the container image
+    - name: pull-secret-names
+      type: array
+      default:
+        - "rhaiis-pull"
+      description: List of pull secret names for image authentication
     - name: SNAPSHOT
       description: |
         Snapshot of the application
@@ -56,6 +63,8 @@ spec:
           value: $(params.architecture)
         - name: component
           value: $(params.component)
+        - name: inference-server-fallback-image
+          value: $(params.inference-server-fallback-image)
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       taskRef:
@@ -310,8 +319,8 @@ spec:
             - "$(tasks.create-configuration.results.model-opt-image)"
         - name: host-access-secret-name
           value: "mapt-rhel-$(context.pipelineRun.name)"
-        - name: pull-secret-name
-          value: "$(params.pull-secret-name)"
+        - name: pull-secret-names
+          value: ["$(params.pull-secret-names[*])"]
       runAfter:
         - configure-vm-cuda
         - configure-vm-cpu
