@@ -8,6 +8,11 @@ spec:
       default: "x86_64"
       description: Architecture, e.g. x86_64, aarch64
     - name: component
+    - name: inference-server-fallback-image
+      default: ""
+      description: >
+        Fallback inference server image to use when testing model-opt and the
+        inference server is not in the SNAPSHOT.
     - name: SNAPSHOT
   results:
     - name: cloud-provider
@@ -41,6 +46,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.labels['pac.test.appstudio.openshift.io/event-type']
+        - name: INFERENCE_SERVER_FALLBACK_IMAGE
+          value: $(params.inference-server-fallback-image)
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       script: |
@@ -210,9 +217,13 @@ spec:
             '.components[] | select(.name==$comp) | .containerImage' || echo "")
 
           if [ -n "${inference_server_image}" ]; then
-            echo "✓ Found inference server image: ${inference_server_image}"
+            echo "✓ Found inference server image in snapshot: ${inference_server_image}"
+          elif [ -n "${INFERENCE_SERVER_FALLBACK_IMAGE}" ]; then
+            echo "⚠ No inference server image found in snapshot for ${inference_component}"
+            inference_server_image="${INFERENCE_SERVER_FALLBACK_IMAGE}"
+            echo "✓ Using fallback inference server image: ${inference_server_image}"
           else
-            echo "⚠ No inference server image found for ${inference_component}"
+            echo "✗ No inference server image found in snapshot and no fallback image provided"
           fi
         elif [[ "${COMPONENT}" == rhaiis-* ]]; then
           # Testing regular rhaiis component (not model-opt)
