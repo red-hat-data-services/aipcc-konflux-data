@@ -19,6 +19,7 @@ stages:
 # label is not applied (the ai-review include is the only other job).
 ci-placeholder:
   stage: lint
+  image: registry.access.redhat.com/ubi9/ubi-micro
   script: ["echo 'Add the ai-review label to this MR to trigger AI code review.'"]
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
