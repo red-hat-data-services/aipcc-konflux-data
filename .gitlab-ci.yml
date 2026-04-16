@@ -7,6 +7,10 @@ include:
     rules:
       - if: '$CI_MERGE_REQUEST_LABELS =~ /ai-review/'
 
+default:
+  tags:
+    - aipcc-k8s-cicd
+
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
