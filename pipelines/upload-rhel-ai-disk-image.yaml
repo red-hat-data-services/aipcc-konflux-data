@@ -1,33 +1,45 @@
 kind: Pipeline
 apiVersion: tekton.dev/v1
 metadata:
-  name: upload-rhel-ai-aws-disk-image
+  name: upload-rhel-ai-disk-image
 spec:
   params:
+    - name: accelerator
+      default: "cuda"
+      description: "Accelerator type for image naming (cuda, rocm)"
+    - name: cloud-provider
+      default: "aws"
+      description: "Target cloud provider (aws, azure)"
     - name: container-image
       description: |
-        Full reference to the OCI artifact containing the disk image, e.g. 
+        Full reference to the OCI artifact containing the disk image, e.g.
         quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc-3-2/bootc-cuda-aws-disk-image-3-2@sha256:b1c8752fbe49c574f46bade651bd00a3c1c5de48bb16c44a6563bf35a31f2002
     - name: pull-secret-name
       description: Name of the pull secret to use for pulling the container image
       default: "rhelai-bootc-3-2-pull"
     - name: rhel-ai-version
-      description: RHEL AI version for AMI naming, e.g. 3.2.0
+      description: RHEL AI version for image naming, e.g. 3.2.0
     - name: debug
       default: "false"
   results:
-    - name: ami-name
-      value: $(tasks.check-ami-exists.results.ami-name)
+    - name: image-name
+      value: $(tasks.check-cloud-image-exists.results.image-name)
   tasks:
-    - name: check-ami-exists
-      description: Check if release AMI already exists
+    - name: check-cloud-image-exists
+      description: Check if release cloud image already exists
       params:
+        - name: accelerator
+          value: "$(params.accelerator)"
+        - name: cloud-provider
+          value: "$(params.cloud-provider)"
         - name: rhel-ai-version
           value: "$(params.rhel-ai-version)"
         - name: release-mode
           value: "true"
         - name: secret-aws-credentials
           value: "aws-konflux-tests"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
       taskRef:
         resolver: git
         params:
@@ -40,9 +52,9 @@ spec:
           - name: serverURL
             value: "https://gitlab.com"
           - name: revision
-            value: "main"
+            value: "azure_disk_image"
           - name: pathInRepo
-            value: "tasks/check-ami-exists.yaml"
+            value: "tasks/check-cloud-image-exists.yaml"
           - name: token
             value: "pipelines-as-code-secret"
           - name: tokenKey
@@ -61,7 +73,7 @@ spec:
         - name: host-access-secret-name
           value: "mapt-helper-$(context.pipelineRun.name)"
         - name: memory
-          value: "1"
+          value: "2"
         - name: operation
           value: "create"
         - name: ownerKind
@@ -75,13 +87,13 @@ spec:
         - name: spot
           value: "false"
         - name: tags
-          value: "konflux=true,ci=true,component=rhel-ai-aws-disk-image,product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
+          value: "konflux=true,ci=true,component=rhel-ai-disk-image,product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
         - name: version
           value: "43"
       runAfter:
-        - check-ami-exists
+        - check-cloud-image-exists
       when:
-        - input: $(tasks.check-ami-exists.results.ami-exists)
+        - input: $(tasks.check-cloud-image-exists.results.image-exists)
           operator: in
           values: ["false"]
       taskRef:
@@ -93,25 +105,29 @@ spec:
             value: "main"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
-    - name: extract-and-upload-ami
-      description: Extract disk image from OCI artifact and upload to AWS as AMI
+    - name: extract-and-upload-cloud-image
+      description: Extract disk image from OCI artifact and upload to target cloud
       params:
-        - name: ami-name
-          value: "$(tasks.check-ami-exists.results.ami-name)"
+        - name: cloud-provider
+          value: "$(params.cloud-provider)"
         - name: container-image
           value: "$(params.container-image)"
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
           value: "$(tasks.create-helper-vm-aws.results.host-access-secret)"
+        - name: image-name
+          value: "$(tasks.check-cloud-image-exists.results.image-name)"
         - name: pull-secret-name
           value: "$(params.pull-secret-name)"
         - name: secret-aws-credentials
           value: "aws-konflux-tests"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
       runAfter:
         - create-helper-vm-aws
       when:
-        - input: $(tasks.check-ami-exists.results.ami-exists)
+        - input: $(tasks.check-cloud-image-exists.results.image-exists)
           operator: in
           values: ["false"]
       taskRef:
@@ -126,9 +142,9 @@ spec:
           - name: serverURL
             value: "https://gitlab.com"
           - name: revision
-            value: "main"
+            value: "azure_disk_image"
           - name: pathInRepo
-            value: "tasks/extract-and-upload-ami.yaml"
+            value: "tasks/extract-and-upload-cloud-image.yaml"
           - name: token
             value: "pipelines-as-code-secret"
           - name: tokenKey
@@ -153,6 +169,6 @@ spec:
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
       when:
-        - input: $(tasks.check-ami-exists.results.ami-exists)
+        - input: $(tasks.check-cloud-image-exists.results.image-exists)
           operator: in
           values: ["false"]
