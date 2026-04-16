@@ -1,0 +1,245 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: extract-and-upload-cloud-image
+spec:
+  params:
+    - name: cloud-provider
+      default: "aws"
+      description: "Cloud provider to upload the image to (aws, azure)"
+    - name: container-image
+      description: Full reference to the OCI artifact containing the disk image
+    - name: debug
+      default: "false"
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials for the helper VM
+    - name: image-name
+      description: The name of the cloud image to be created
+    - name: pull-secret-name
+      default: "global-pull-secret"
+      description: Name of the secret containing docker config for image authentication
+    - name: secret-aws-credentials
+      description: Name of the secret containing AWS credentials
+      default: aws-konflux-tests
+    - name: secret-az-credentials
+      description: Name of the secret containing Azure credentials
+      default: secret-az-credentials
+    - name: share-orgs-ids
+      default: ""
+      description: |
+        Comma-separated list of AWS account IDs to share the image with. AWS would use arn format for orgs, and Azure will use tenantIds.
+        If not provided, default values will be used for AWS and Azure.
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+      env:
+        - name: CLOUD_PROVIDER
+          value: $(params.cloud-provider)
+        - name: CONTAINER_IMAGE
+          value: $(params.container-image)
+        - name: DEBUG
+          value: $(params.debug)
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+        - name: auth-file
+          mountPath: /mnt/auth-file
+        - name: aws-credentials
+          mountPath: /mnt/aws-credentials
+        - name: az-credentials
+          mountPath: /mnt/az-credentials
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        echo -e "\n=== Copying auth file ==="
+        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+        ${ssh_cmd} ls -al auth.json
+
+        echo -e "\n=== Installing required tools on helper VM ==="
+        ${ssh_cmd} "sudo dnf install -y jq podman skopeo"
+
+        echo -e "\n=== Creating working directory ==="
+        ${ssh_cmd} df -h /home
+        DISK_IMAGE_DIR="/home/fedora/disk-image"
+        ${ssh_cmd} "mkdir -p ${DISK_IMAGE_DIR}"
+
+        echo -e "\n=== Downloading OCI artifact ==="
+        echo "Container image: ${CONTAINER_IMAGE}"
+        ${ssh_cmd} "skopeo copy --authfile auth.json 'docker://${CONTAINER_IMAGE}' 'dir:${DISK_IMAGE_DIR}'"
+
+        echo -e "\n=== Identifying largest layer ==="
+        disk_image_layer=$(${ssh_cmd} "du -aBM ${DISK_IMAGE_DIR} 2>/dev/null | sort -nr | head -n 1 | awk '{print \$2}'")
+        echo "Disk image layer: ${disk_image_layer}"
+
+        if [ -z "${disk_image_layer}" ]; then
+          echo "ERROR: Could not identify disk image layer"
+          exit 1
+        fi
+
+        echo -e "\n=== Identifying file type ==="
+        file_type=$(${ssh_cmd} "file -b ${disk_image_layer}")
+        echo "File type: ${file_type}"
+
+        # Set disk image filename based on cloud provider
+        if [[ "${CLOUD_PROVIDER}" == "azure" ]]; then
+          DISK_IMAGE_FILE="disk-image.vhd"
+        else
+          DISK_IMAGE_FILE="disk-image.raw"
+        fi
+
+        echo -e "\n=== Extracting disk image as ${DISK_IMAGE_FILE} ==="
+        if [[ "${file_type}" == *"gzip"* ]]; then
+          echo "Decompressing gzip file"
+          ${ssh_cmd} "gunzip -c ${disk_image_layer} > ${DISK_IMAGE_DIR}/${DISK_IMAGE_FILE}"
+        else
+          echo "File is not compressed, copying"
+          ${ssh_cmd} "cp ${disk_image_layer} ${DISK_IMAGE_DIR}/${DISK_IMAGE_FILE}"
+        fi
+
+        echo -e "\n=== Verifying disk image ==="
+        disk_size=$(${ssh_cmd} "du -h ${DISK_IMAGE_DIR}/${DISK_IMAGE_FILE} | awk '{print \$1}'")
+        echo "Disk image path: ${DISK_IMAGE_DIR}/${DISK_IMAGE_FILE}"
+        echo "Disk image size: ${disk_size}"
+
+        if [ "${DEBUG}" == "true" ]; then
+          echo -e "\n=== Content of working directory ${DISK_IMAGE_DIR} ==="
+          ${ssh_cmd} "ls -lh ${DISK_IMAGE_DIR}"
+        fi
+
+        # === Cloud-specific upload ===
+        IMAGE_NAME="$(params.image-name)"
+        CREDENTIALS_FILE="/tmp/cloud-credentials"
+
+        cloud_importer_params=""
+        if [[ "${DEBUG}" == "true" ]]; then
+          cloud_importer_params+="--debug "
+        fi
+
+        if [[ "${CLOUD_PROVIDER}" == "aws" ]]; then
+          echo -e "\n=== Creating AWS credentials for cloud-importer ==="
+          AWS_ACCESS_KEY_ID=$(cat /mnt/aws-credentials/access-key)
+          AWS_SECRET_ACCESS_KEY=$(cat /mnt/aws-credentials/secret-key)
+          AWS_REGION=$(cat /mnt/aws-credentials/region)
+          AWS_BUCKET=$(cat /mnt/aws-credentials/bucket)
+
+          ${ssh_cmd} "echo 'AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'AWS_DEFAULT_REGION=${AWS_REGION}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'BUCKET=${AWS_BUCKET}' >> ${CREDENTIALS_FILE}"
+
+          if [[ "$(params.share-orgs-ids)" != "" ]]; then
+            cloud_importer_params+="--share-orgs-ids $(params.share-orgs-ids) "
+          elif [[ "$(params.cloud-provider)" == "azure" ]]; then
+            # default value for Azure
+            # cloud_importer_params+="--share-orgs-ids not-needed-yet "
+            echo -e "\n=== No need to share image with different tenants in Azure ==="
+          elif [[ "$(params.cloud-provider)" == "aws" ]]; then
+            # default value for AWS
+            cloud_importer_params+="--share-orgs-ids arn:aws:organizations::329260820478:organization/o-melcpnc7lj,arn:aws:organizations::253721312158:organization/o-iorgj25jqr,arn:aws:organizations::103138678430:organization/o-melcpnc7lj "
+          fi
+
+          echo -e "\n=== Running cloud-importer for AWS ==="
+
+          ${ssh_cmd} podman run -d --name cloud-importer \
+            --env-file ${CREDENTIALS_FILE} \
+            -v ${DISK_IMAGE_DIR}:/data:Z \
+            ghcr.io/mapt-oss/cloud-importer:latest \
+            rhelai aws \
+            --backed-url s3://${AWS_BUCKET}/cloud-importer \
+            --project-name ${IMAGE_NAME} \
+            --image-name ${IMAGE_NAME} \
+            --image-path /data/${DISK_IMAGE_FILE} \
+            --replicate \
+            --tags konflux=true,ci=true,product=rhelai,image-name=${IMAGE_NAME},app-code=GITL-005,service-phase=dev,cost-center=722 \
+            ${cloud_importer_params}
+
+        elif [[ "${CLOUD_PROVIDER}" == "azure" ]]; then
+          echo -e "\n=== Creating Azure credentials for cloud-importer ==="
+          ARM_CLIENT_ID=$(cat /mnt/az-credentials/client_id)
+          ARM_CLIENT_SECRET=$(cat /mnt/az-credentials/client_secret)
+          ARM_LOCATION_NAME=$(cat /mnt/az-credentials/location)
+          ARM_SUBSCRIPTION_ID=$(cat /mnt/az-credentials/subscription_id)
+          ARM_TENANT_ID=$(cat /mnt/az-credentials/tenant_id)
+          AZURE_STORAGE_ACCOUNT=$(cat /mnt/az-credentials/storage_account)
+          AZURE_STORAGE_KEY=$(cat /mnt/az-credentials/storage_key)
+
+          ${ssh_cmd} "echo 'ARM_CLIENT_ID=${ARM_CLIENT_ID}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'ARM_CLIENT_SECRET=${ARM_CLIENT_SECRET}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'ARM_LOCATION_NAME=${ARM_LOCATION_NAME}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'ARM_SUBSCRIPTION_ID=${ARM_SUBSCRIPTION_ID}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'ARM_TENANT_ID=${ARM_TENANT_ID}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'AZURE_STORAGE_ACCOUNT=${AZURE_STORAGE_ACCOUNT}' >> ${CREDENTIALS_FILE}"
+          ${ssh_cmd} "echo 'AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY}' >> ${CREDENTIALS_FILE}"
+
+          echo -e "\n=== Running cloud-importer for Azure ==="
+
+          ${ssh_cmd} podman run -d --name cloud-importer \
+            --env-file ${CREDENTIALS_FILE} \
+            -v ${DISK_IMAGE_DIR}:/data:Z \
+            ghcr.io/mapt-oss/cloud-importer:latest \
+            rhelai az \
+            --backed-url azblob://aipcc-productization/cloud-importer \
+            --project-name ${IMAGE_NAME} \
+            --image-name ${IMAGE_NAME} \
+            --image-path /data/${DISK_IMAGE_FILE} \
+            --replicate \
+            --tags konflux=true,ci=true,product=rhelai,image-name=${IMAGE_NAME},app-code=GITL-005,service-phase=dev,cost-center=722 \
+            ${cloud_importer_params}
+
+        else
+          echo "ERROR: Unsupported cloud provider: ${CLOUD_PROVIDER}"
+          exit 1
+        fi
+
+        ${ssh_cmd} podman ps -a
+
+        ${ssh_cmd} podman logs -f cloud-importer
+
+        container_exit_code=$(${ssh_cmd} "podman inspect -f '{{.State.ExitCode}}' cloud-importer")
+        if [[ "${container_exit_code}" != 0 ]]; then
+          echo "Container finished with exit code ${container_exit_code}"
+          exit 1
+        fi
+
+        echo -e "\n=== Stopping and removing cloud-importer container ==="
+        ${ssh_cmd} podman rm -f cloud-importer
+
+  volumes:
+    - name: auth-file
+      secret:
+        secretName: "$(params.pull-secret-name)"
+        items:
+          - key: ".dockerconfigjson"
+            path: auth.json
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
+    - name: aws-credentials
+      secret:
+        secretName: "$(params.secret-aws-credentials)"
+        optional: true
+    - name: az-credentials
+      secret:
+        secretName: "$(params.secret-az-credentials)"
+        optional: true

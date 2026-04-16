@@ -105,7 +105,7 @@ spec:
         - name: host-access-secret-name
           value: "mapt-helper-$(context.pipelineRun.name)"
         - name: memory
-          value: "1"
+          value: "2"
         - name: operation
           value: "create"
         - name: ownerKind

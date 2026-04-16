@@ -1,0 +1,131 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: check-cloud-image-exists
+spec:
+  params:
+    - name: accelerator
+      default: "cuda"
+      description: "Accelerator type for image naming (cuda, rocm)"
+    - name: cloud-provider
+      default: "aws"
+      description: "Cloud provider (aws, azure)"
+    - name: git-digest
+      default: "not-provided"
+      description: Git commit digest to use in image name
+    - name: event-type
+      default: "not-provided"
+      description: Event type (e.g., pull_request, merge_request, push)
+    - name: rhel-ai-version
+      description: RHEL AI version for image naming
+    - name: release-mode
+      description: If true, omit git digest from image name for release uploads
+      default: "false"
+    - name: secret-aws-credentials
+      description: Name of the secret containing AWS credentials
+      default: aws-konflux-tests
+    - name: secret-az-credentials
+      description: Name of the secret containing Azure credentials
+      default: secret-az-credentials
+  results:
+    - name: image-exists
+      description: true if cloud image exists, false otherwise
+    - name: image-name
+      description: Expected image name based on parameters
+  steps:
+    - name: check-image
+      image: ghcr.io/mapt-oss/cloud-importer@sha256:0eff2e8f9208131a18a4a9dab37831e665b38567e586b55a6cdb51b7ba9d9fc2
+      env:
+        - name: ACCELERATOR
+          value: $(params.accelerator)
+        - name: CLOUD_PROVIDER
+          value: $(params.cloud-provider)
+        - name: GIT_DIGEST
+          value: $(params.git-digest)
+        - name: HOME
+          value: /opt/cloud-importer/run
+        - name: EVENT_TYPE
+          value: $(params.event-type)
+        - name: RHEL_AI_VERSION
+          value: $(params.rhel-ai-version)
+        - name: RELEASE_MODE
+          value: $(params.release-mode)
+      volumeMounts:
+        - name: aws-credentials
+          mountPath: /mnt/aws-credentials
+        - name: az-credentials
+          mountPath: /mnt/az-credentials
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Shorten git digest to 8 characters
+        SHORT_DIGEST="${GIT_DIGEST:0:8}"
+
+        # Convert event type to lowercase
+        EVENT_TYPE_LOWER=$(echo "${EVENT_TYPE}" | tr '[:upper:]' '[:lower:]')
+
+        # Construct image name: rhel-ai-{accelerator}-{cloud}-{version}
+        # mapt has two parameters for choosing the image name
+        # 1. version - e.g. for "3.2.0" mapt will search for "rhel-ai-cuda-aws-3.2.0*" and returns the most recent image
+        # 2. custom-image - e.g. "test-rhel-ai-cuda-aws-3.2.0-pr-12345678"
+        # we need "test-" prefix for custom-image to avoid conflicts with the version search
+
+        if [[ "${RELEASE_MODE}" == "true" ]]; then
+          # Release mode: clean version only (no git digest)
+          IMAGE_NAME="rhel-ai-${ACCELERATOR}-${CLOUD_PROVIDER}-${RHEL_AI_VERSION}"
+        elif [[ "${EVENT_TYPE_LOWER}" == "pull_request" || "${EVENT_TYPE_LOWER}" == "merge_request" ]]; then
+          # Test mode (merge request): version with -pr- prefix and git digest
+          IMAGE_NAME="test-rhel-ai-${ACCELERATOR}-${CLOUD_PROVIDER}-${RHEL_AI_VERSION}-pr-${SHORT_DIGEST}"
+        else
+          # Test mode (commit): version with git digest
+          IMAGE_NAME="test-rhel-ai-${ACCELERATOR}-${CLOUD_PROVIDER}-${RHEL_AI_VERSION}-${SHORT_DIGEST}"
+        fi
+
+        echo -e "\n=== Checking for image '${IMAGE_NAME}' on ${CLOUD_PROVIDER} ==="
+
+        # Map cloud-provider param to cloud-importer subcommand
+        if [[ "${CLOUD_PROVIDER}" == "aws" ]]; then
+          export AWS_ACCESS_KEY_ID=$(cat /mnt/aws-credentials/access-key)
+          export AWS_SECRET_ACCESS_KEY=$(cat /mnt/aws-credentials/secret-key)
+          export AWS_DEFAULT_REGION=$(cat /mnt/aws-credentials/region)
+          CLOUD_CMD="aws"
+        elif [[ "${CLOUD_PROVIDER}" == "azure" ]]; then
+          export ARM_CLIENT_ID=$(cat /mnt/az-credentials/client_id)
+          export ARM_CLIENT_SECRET=$(cat /mnt/az-credentials/client_secret)
+          export ARM_LOCATION_NAME=$(cat /mnt/az-credentials/location)
+          export ARM_SUBSCRIPTION_ID=$(cat /mnt/az-credentials/subscription_id)
+          export ARM_TENANT_ID=$(cat /mnt/az-credentials/tenant_id)
+          CLOUD_CMD="az"
+        else
+          echo "ERROR: Unsupported cloud provider: ${CLOUD_PROVIDER}"
+          exit 1
+        fi
+
+        # cloud-importer check exit codes: 0=found, 1=not found, 2=error
+        set +e
+        cloud-importer check ${CLOUD_CMD} --image-name "${IMAGE_NAME}"
+        exit_code=$?
+        set -e
+
+        if [[ ${exit_code} -eq 0 ]]; then
+          echo -e "\n=== Image ${IMAGE_NAME} found on ${CLOUD_PROVIDER} ==="
+          echo -n "true" > $(results.image-exists.path)
+        elif [[ ${exit_code} -eq 1 ]]; then
+          echo -e "\n=== Image ${IMAGE_NAME} not found on ${CLOUD_PROVIDER} ==="
+          echo -n "false" > $(results.image-exists.path)
+        else
+          echo "ERROR: cloud-importer check failed with exit code ${exit_code}"
+          exit 1
+        fi
+
+        echo -n "${IMAGE_NAME}" > $(results.image-name.path)
+  volumes:
+    - name: aws-credentials
+      secret:
+        secretName: "$(params.secret-aws-credentials)"
+        optional: true
+    - name: az-credentials
+      secret:
+        secretName: "$(params.secret-az-credentials)"
+        optional: true
