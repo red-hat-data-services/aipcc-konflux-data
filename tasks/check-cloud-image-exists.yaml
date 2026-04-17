@@ -4,29 +4,29 @@ metadata:
   name: check-cloud-image-exists
 spec:
   params:
-    - name: accelerator
-      default: "cuda"
-      description: "Accelerator type for image naming (cuda, rocm)"
     - name: cloud-provider
       default: "aws"
       description: "Cloud provider (aws, azure)"
-    - name: git-digest
-      default: "not-provided"
-      description: Git commit digest to use in image name
     - name: event-type
       default: "not-provided"
       description: Event type (e.g., pull_request, merge_request, push)
+    - name: git-digest
+      default: "not-provided"
+      description: Git commit digest to use in image name
+    - name: release-mode
+      default: "false"
+      description: If true, omit git digest from image name for release uploads
     - name: rhel-ai-version
       description: RHEL AI version for image naming
-    - name: release-mode
-      description: If true, omit git digest from image name for release uploads
-      default: "false"
     - name: secret-aws-credentials
-      description: Name of the secret containing AWS credentials
       default: aws-konflux-tests
+      description: Name of the secret containing AWS credentials
     - name: secret-az-credentials
-      description: Name of the secret containing Azure credentials
       default: secret-az-credentials
+      description: Name of the secret containing Azure credentials
+    - name: variant
+      default: "cuda"
+      description: "Variant for image naming, e.g. cuda-ubi9, rocm-ubi9, or just cuda, rocm"
   results:
     - name: image-exists
       description: true if cloud image exists, false otherwise
@@ -36,8 +36,6 @@ spec:
     - name: check-image
       image: ghcr.io/mapt-oss/cloud-importer@sha256:0eff2e8f9208131a18a4a9dab37831e665b38567e586b55a6cdb51b7ba9d9fc2
       env:
-        - name: ACCELERATOR
-          value: $(params.accelerator)
         - name: CLOUD_PROVIDER
           value: $(params.cloud-provider)
         - name: GIT_DIGEST
@@ -50,6 +48,8 @@ spec:
           value: $(params.rhel-ai-version)
         - name: RELEASE_MODE
           value: $(params.release-mode)
+        - name: VARIANT
+          value: $(params.variant)
       volumeMounts:
         - name: aws-credentials
           mountPath: /mnt/aws-credentials
@@ -58,6 +58,9 @@ spec:
       script: |
         #!/bin/bash
         set -e
+
+        # Derive accelerator from variant (e.g. cuda-ubi9 -> cuda, rocm -> rocm)
+        ACCELERATOR="${VARIANT%%-*}"
 
         # Shorten git digest to 8 characters
         SHORT_DIGEST="${GIT_DIGEST:0:8}"

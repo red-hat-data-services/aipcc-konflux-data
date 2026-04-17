@@ -1,7 +1,7 @@
 kind: Pipeline
 apiVersion: tekton.dev/v1
 metadata:
-  name: rhelai-aws-disk-image-test
+  name: rhelai-disk-image-test
 spec:
   params:
     - name: architecture
@@ -19,15 +19,15 @@ spec:
       default: "rhelai-bootc-pull"
       description: Name of the pull secret to use for pulling the container image
     - name: rhel-ai-version
-      description: RHEL AI version for AMI naming, e.g. 3.2.5
+      description: RHEL AI version for image naming, e.g. 3.2.5
     - name: SNAPSHOT
       description: |
         Snapshot of the application
         Example:
         {"components":[{"containerImage":"quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-aws-disk-image@sha256:xxx","name":"bootc-cuda-aws-disk-image","source":{"git":{"revision":"xxx","url":"https://gitlab.com/redhat/rhel-ai/containers/bootc"}}}]}
   results:
-    - name: ami-name
-      value: $(tasks.check-ami-exists.results.ami-name)
+    - name: image-name
+      value: $(tasks.check-cloud-image-exists.results.image-name)
     - name: container-image
       value: $(tasks.create-configuration.results.container-image)
   tasks:
@@ -59,9 +59,11 @@ spec:
             value: pipelines-as-code-secret
           - name: tokenKey
             value: password
-    - name: check-ami-exists
-      description: Check if AMI already exists for this git commit
+    - name: check-cloud-image-exists
+      description: Check if cloud image already exists for this git commit
       params:
+        - name: cloud-provider
+          value: "$(tasks.create-configuration.results.cloud-provider)"
         - name: git-digest
           value: $(tasks.create-configuration.results.git-digest)
         - name: event-type
@@ -70,6 +72,10 @@ spec:
           value: $(params.rhel-ai-version)
         - name: secret-aws-credentials
           value: aws-konflux-tests
+        - name: secret-az-credentials
+          value: secret-az-credentials
+        - name: variant
+          value: "$(tasks.create-configuration.results.variant)"
       runAfter:
         - create-configuration
       taskRef:
@@ -86,7 +92,7 @@ spec:
           - name: revision
             value: main
           - name: pathInRepo
-            value: tasks/check-ami-exists.yaml
+            value: tasks/check-cloud-image-exists.yaml
           - name: token
             value: pipelines-as-code-secret
           - name: tokenKey
@@ -125,9 +131,9 @@ spec:
         - name: version
           value: "43"
       runAfter:
-        - check-ami-exists
+        - check-cloud-image-exists
       when:
-        - input: $(tasks.check-ami-exists.results.ami-exists)
+        - input: $(tasks.check-cloud-image-exists.results.image-exists)
           operator: in
           values: ["false"]
       taskRef:
@@ -139,27 +145,29 @@ spec:
             value: "main"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
-    - name: extract-and-upload-ami
-      description: Extract disk image from OCI artifact and upload to AWS as AMI
+    - name: extract-and-upload-cloud-image
+      description: Extract disk image from OCI artifact and upload to target cloud
       params:
-        - name: ami-name
-          value: $(tasks.check-ami-exists.results.ami-name)
+        - name: cloud-provider
+          value: "$(tasks.create-configuration.results.cloud-provider)"
         - name: container-image
           value: $(tasks.create-configuration.results.container-image)
         - name: debug
           value: "true"
         - name: host-access-secret-name
-          value: "$(tasks.create-helper-vm-aws.results.host-access-secret)"
+          value: "mapt-helper-$(context.pipelineRun.name)"
+        - name: image-name
+          value: $(tasks.check-cloud-image-exists.results.image-name)
         - name: pull-secret-name
           value: $(params.pull-secret-name)
         - name: secret-aws-credentials
           value: aws-konflux-tests
-        - name: id
-          value: "$(context.pipelineRun.name)"
+        - name: secret-az-credentials
+          value: secret-az-credentials
       runAfter:
         - create-helper-vm-aws
       when:
-        - input: $(tasks.check-ami-exists.results.ami-exists)
+        - input: $(tasks.check-cloud-image-exists.results.image-exists)
           operator: in
           values: ["false"]
       taskRef:
@@ -176,18 +184,18 @@ spec:
           - name: revision
             value: main
           - name: pathInRepo
-            value: tasks/extract-and-upload-ami.yaml
+            value: tasks/extract-and-upload-cloud-image.yaml
           - name: token
             value: pipelines-as-code-secret
           - name: tokenKey
             value: password
     - name: create-vm-aws
-      description: Create AWS VM instance using the uploaded AMI
+      description: Create AWS VM instance using the uploaded image
       params:
         - name: compute-sizes
           value: "$(tasks.create-configuration.results.vm-types)"
         - name: custom-image
-          value: $(tasks.check-ami-exists.results.ami-name)
+          value: $(tasks.check-cloud-image-exists.results.image-name)
         - name: debug
           value: "true"
         - name: id
@@ -213,7 +221,11 @@ spec:
         - name: tags
           value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
       runAfter:
-        - extract-and-upload-ami
+        - extract-and-upload-cloud-image
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["aws"]
       taskRef:
         resolver: git
         params:
@@ -223,17 +235,68 @@ spec:
             value: "main"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel-ai.yaml"
+    - name: create-vm-azure
+      description: Create Azure VM instance using the uploaded image
+      params:
+        - name: accelerator
+          value: "$(tasks.create-configuration.results.accelerator)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: custom-image
+          value: $(tasks.check-cloud-image-exists.results.image-name)
+        - name: debug
+          value: "true"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+      runAfter:
+        - extract-and-upload-cloud-image
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["azure"]
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel-ai.yaml"
     - name: configure-vm
       description: Configure the RHEL AI VM instance
       params:
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-$(context.pipelineRun.name)"
         - name: model-name
           value: "$(params.model-name)"
         - name: pull-secret-name
           value: "$(params.pull-secret-name)"
+        - name: variant
+          value: "$(tasks.create-configuration.results.variant)"
       runAfter:
         - create-vm-aws
+        - create-vm-azure
       taskRef:
         resolver: git
         params:
@@ -259,7 +322,7 @@ spec:
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-$(context.pipelineRun.name)"
         - name: inference-server-image
           value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: model-names
@@ -314,6 +377,28 @@ spec:
         - input: $(tasks.create-configuration.results.cloud-provider)
           operator: in
           values: ["aws"]
+    - name: delete-vm-azure
+      description: Clean up the Azure VM instance
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel-ai.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["azure"]
     - name: delete-helper-vm-aws
       description: Clean up the AWS helper VM instance
       params:
@@ -333,9 +418,6 @@ spec:
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
       when:
-        - input: $(tasks.create-configuration.results.cloud-provider)
-          operator: in
-          values: ["aws"]
-        - input: $(tasks.check-ami-exists.results.ami-exists)
+        - input: $(tasks.check-cloud-image-exists.results.image-exists)
           operator: in
           values: ["false"]

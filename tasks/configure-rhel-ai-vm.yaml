@@ -9,6 +9,9 @@ spec:
       description: Name of the model to test
     - name: pull-secret-name
       description: Name of the secret containing docker config for image authentication
+    - name: variant
+      default: "cuda"
+      description: "Variant for image naming, e.g. cuda, rocm"
   steps:
     - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
       env:
@@ -48,11 +51,31 @@ spec:
         echo -e "\n=== Adding shared SSH key ==="
         cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
 
-        echo -e "\n=== /proc/driver/nvidia/version ==="
-        ${ssh_cmd} cat /proc/driver/nvidia/version
+        VARIANT="$(params.variant)"
+        ACCELERATOR="${VARIANT%%-*}"
 
-        echo -e "\n=== nvidia-smi ==="
-        ${ssh_cmd} nvidia-smi
+        if [[ "${ACCELERATOR}" == "cuda" ]]; then
+          echo -e "\n=== /proc/driver/nvidia/version ==="
+          ${ssh_cmd} cat /proc/driver/nvidia/version
+
+          echo -e "\n=== nvidia-smi ==="
+          ${ssh_cmd} nvidia-smi
+
+          NUMBER_OF_GPUS=$( ${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+        elif [[ "${ACCELERATOR}" == "rocm" ]]; then
+          echo -e "\n=== amd-smi version ==="
+          ${ssh_cmd} amd-smi version
+
+          echo -e "\n=== amd-smi list ==="
+          ${ssh_cmd} amd-smi list
+
+          NUMBER_OF_GPUS=$(${ssh_cmd} "rocminfo | grep -c 'Device Type:.*GPU' || echo 1")
+        else
+          echo "ERROR: Unsupported variant: ${VARIANT}"
+          exit 1
+        fi
+
+        echo -e "\n=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
 
         echo -e "\n=== Checking /etc/ostree/auth.json ==="
         ${ssh_cmd} "sudo ls -al /etc/ostree/auth.json || true"
@@ -66,10 +89,6 @@ spec:
         echo -e "\n=== Enabling linger for podman ==="
         ${ssh_cmd} sudo loginctl enable-linger $USERNAME
         ${ssh_cmd} "loginctl show-user $USERNAME | grep Linger"
-
-        NUMBER_OF_GPUS=$( ${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
-        echo -e "\n=== Number of GPUs ==="
-        echo "${NUMBER_OF_GPUS}"
 
         echo -e "\n=== Creating quadlet configuration ==="
         config_file="/etc/containers/systemd/rhaiis.container.d/install.conf"
