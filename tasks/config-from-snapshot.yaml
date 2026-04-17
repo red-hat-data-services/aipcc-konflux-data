@@ -15,6 +15,8 @@ spec:
         inference server is not in the SNAPSHOT.
     - name: SNAPSHOT
   results:
+    - name: accelerator
+      description: "Accelerator derived from variant, e.g. cuda, rocm, neuron, cpu"
     - name: cloud-provider
       description: Cloud provider, e.g. aws, ibm, gcp, azure
     - name: container-image
@@ -120,6 +122,13 @@ spec:
                 vm_types="g5g.2xlarge,g5g.4xlarge,g5g.8xlarge,g5g.16xlarge"
               else
                 echo "Architecture $(params.architecture) not supported for CUDA on AWS"
+                ret_value=1
+              fi
+            elif [[ "${cloud_provider}" == "azure" ]]; then
+              if [[ "$(params.architecture)" == "x86_64" ]]; then
+                vm_types="Standard_NC4as_T4_v3,Standard_NC8as_T4_v3,Standard_NC16as_T4_v3,Standard_NC64as_T4_v3,Standard_NC40ads_H100_v5,Standard_NCC40ads_H100_v5"
+              else
+                echo "Architecture $(params.architecture) not supported for CUDA on Azure"
                 ret_value=1
               fi
             else
@@ -238,8 +247,11 @@ spec:
           mapt_architecture="$(params.architecture)"
         fi
 
+        accelerator="${variant%%-*}"
+
         echo -e "\n === Storing results ==="
         # we need to store task results even if the task fails
+        echo -n "${accelerator}" | tee $(results.accelerator.path)
         echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
         echo -n "${containerImage}" | tee $(results.container-image.path)
         echo -n "${gitDigest}" | tee $(results.git-digest.path)

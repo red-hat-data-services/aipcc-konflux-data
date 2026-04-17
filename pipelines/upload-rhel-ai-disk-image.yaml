@@ -28,18 +28,18 @@ spec:
     - name: check-cloud-image-exists
       description: Check if release cloud image already exists
       params:
-        - name: accelerator
-          value: "$(params.accelerator)"
         - name: cloud-provider
           value: "$(params.cloud-provider)"
-        - name: rhel-ai-version
-          value: "$(params.rhel-ai-version)"
         - name: release-mode
           value: "true"
+        - name: rhel-ai-version
+          value: "$(params.rhel-ai-version)"
         - name: secret-aws-credentials
           value: "aws-konflux-tests"
         - name: secret-az-credentials
           value: "secret-az-credentials"
+        - name: variant
+          value: "$(params.accelerator)"
       taskRef:
         resolver: git
         params:

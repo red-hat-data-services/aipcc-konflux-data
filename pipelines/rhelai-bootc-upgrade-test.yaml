@@ -60,6 +60,8 @@ spec:
             value: password
     - name: create-vm-aws
       params:
+        - name: accelerator
+          value: "$(tasks.create-configuration.results.accelerator)"
         # arch is not supported for RHEL AI
         # - name: arch
         #   value: "$(tasks.create-configuration.results.mapt-architecture)"
@@ -98,7 +100,6 @@ spec:
         params:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
-          # todo configure renovate to update this
           - name: revision
             value: "main"
           - name: pathInRepo
@@ -107,16 +108,66 @@ spec:
         - input: $(tasks.create-configuration.results.cloud-provider)
           operator: in
           values: ["aws"]
+    - name: create-vm-azure
+      params:
+        - name: accelerator
+          value: "$(tasks.create-configuration.results.accelerator)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: debug
+          value: "true"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+        - name: version
+          value: "$(params.rhel-ai-version)"
+      runAfter:
+        - create-configuration
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel-ai.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["azure"]
     - name: configure-vm
       params:
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-$(context.pipelineRun.name)"
         - name: pull-secret-name
           value: "$(params.pull-secret-name)"
         - name: model-name
           value: "$(params.model-name)"
+        - name: variant
+          value: "$(tasks.create-configuration.results.variant)"
       runAfter:
         - create-vm-aws
+        - create-vm-azure
       taskRef:
         resolver: git
         params:
@@ -139,7 +190,7 @@ spec:
     - name: bootc-switch
       params:
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-$(context.pipelineRun.name)"
         - name: script
           value: |
             #!/bin/bash
@@ -177,7 +228,7 @@ spec:
     - name: after-switch
       params:
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-$(context.pipelineRun.name)"
         - name: script
           value: |
             #!/bin/bash
@@ -185,14 +236,11 @@ spec:
             cat /etc/redhat-release
 
             echo -e "\n=== nvidia-smi ==="
-            nvidia-smi
+            nvidia-smi 2> /dev/null || amd-smi 2> /dev/null || true
 
             echo -e "\n=== Checking /etc/ostree/auth.json ==="
             sudo ls -al /etc/ostree/auth.json || true
 
-            echo -e "\n=== Checking /proc/driver/nvidia/version ==="
-            cat /proc/driver/nvidia/version
-            
             echo -e "\n=== bootc status ==="
             sudo bootc status
 
@@ -229,7 +277,7 @@ spec:
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
-          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+          value: "mapt-$(context.pipelineRun.name)"
         - name: inference-server-image
           value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: model-names
@@ -275,7 +323,6 @@ spec:
         params:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
-          # TODO configure renovate to update this
           - name: revision
             value: "main"
           - name: pathInRepo
@@ -284,3 +331,24 @@ spec:
         - input: $(tasks.create-configuration.results.cloud-provider)
           operator: in
           values: ["aws"]
+    - name: delete-vm-azure
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "main"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel-ai.yaml"
+      when:
+        - input: $(tasks.create-configuration.results.cloud-provider)
+          operator: in
+          values: ["azure"]
