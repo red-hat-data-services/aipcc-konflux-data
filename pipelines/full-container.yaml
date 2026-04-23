@@ -108,7 +108,7 @@ spec:
       description: Array of --build-arg values ("arg=value" strings) for buildah
       name: build-args
       type: array
-    - default: "SYS_ADMIN"
+    - default: ""
       description: Parameter for ADD_CAPABILITIES for the container build
       name: add-capabilities
       type: string
