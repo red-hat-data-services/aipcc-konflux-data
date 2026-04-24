@@ -7,7 +7,6 @@ spec:
     - name: architecture
       default: "x86_64"
       description: Architecture, e.g. x86_64, aarch64
-    - name: component
     - name: inference-server-fallback-image
       default: ""
       description: >
@@ -19,6 +18,8 @@ spec:
       description: "Accelerator derived from variant, e.g. cuda, rocm, neuron, cpu"
     - name: cloud-provider
       description: Cloud provider, e.g. aws, ibm, gcp, azure
+    - name: component
+      description: Component name from the appstudio.openshift.io/component label
     - name: container-image
       description: Full reference to the container image to test, including the registry and the sha digest
     - name: event-type
@@ -43,7 +44,9 @@ spec:
       workingDir: /workspace
       env:
         - name: COMPONENT
-          value: $(params.component)
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['appstudio.openshift.io/component']
         - name: EVENT_TYPE
           valueFrom:
             fieldRef:
@@ -55,6 +58,11 @@ spec:
       script: |
         #!/bin/bash
         set -e
+
+        if [ -z "${COMPONENT}" ]; then
+          echo "ERROR: COMPONENT is empty. Ensure the PipelineRun has the label appstudio.openshift.io/component set."
+          exit 1
+        fi
 
         snapshotComponents=$(jq -c '.components[]' <<< "${SNAPSHOT}")
         productImage=${COMPONENT%-*-*}
@@ -253,6 +261,7 @@ spec:
         # we need to store task results even if the task fails
         echo -n "${accelerator}" | tee $(results.accelerator.path)
         echo -n "${cloud_provider}" | tee $(results.cloud-provider.path)
+        echo -n "${COMPONENT}" | tee $(results.component.path)
         echo -n "${containerImage}" | tee $(results.container-image.path)
         echo -n "${gitDigest}" | tee $(results.git-digest.path)
         echo -n "${EVENT_TYPE}" | tee $(results.event-type.path)

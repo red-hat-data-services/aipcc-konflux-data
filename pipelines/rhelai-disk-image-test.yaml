@@ -7,9 +7,6 @@ spec:
     - name: architecture
       default: "x86_64"
       description: One of x86_64, aarch64
-    - name: component
-      description: Konflux component to test, e.g. bootc-cuda-aws-disk-image
-      default: bootc-cuda-aws-disk-image
     - name: debug
       default: "false"
     - name: model-name
@@ -36,8 +33,6 @@ spec:
       params:
         - name: architecture
           value: $(params.architecture)
-        - name: component
-          value: $(params.component)
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       taskRef:
@@ -127,7 +122,7 @@ spec:
         - name: spot
           value: "false"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
         - name: version
           value: "43"
       runAfter:
@@ -219,7 +214,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
       runAfter:
         - extract-and-upload-cloud-image
       when:
@@ -267,7 +262,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
       runAfter:
         - extract-and-upload-cloud-image
       when:

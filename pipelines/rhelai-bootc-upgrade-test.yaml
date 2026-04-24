@@ -7,9 +7,6 @@ spec:
     - name: architecture
       default: "x86_64"
       description: One of x86_64, aarch64
-    - name: component
-      description: Konflux component to test, e.g. bootc-cuda or bootc-cuda-aws
-      default: bootc-cuda
     - name: debug
       default: "false"
     - name: model-name
@@ -35,8 +32,6 @@ spec:
       params:
         - name: architecture
           value: $(params.architecture)
-        - name: component
-          value: $(params.component)
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       taskRef:
@@ -90,7 +85,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
         - name: version
           value: "$(params.rhel-ai-version)"
       runAfter:
@@ -137,7 +132,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
         - name: version
           value: "$(params.rhel-ai-version)"
       runAfter:
