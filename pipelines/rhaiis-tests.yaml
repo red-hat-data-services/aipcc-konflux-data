@@ -13,8 +13,6 @@ spec:
     - name: architecture
       default: "x86_64"
       description: One of x86_64, aarch64
-    - name: component
-      description: Konflux component to test, e.g. rhaiis-cuda-ubi9
     - name: inference-server-fallback-image
       default: ""
       description: >
@@ -61,8 +59,6 @@ spec:
       params:
         - name: architecture
           value: $(params.architecture)
-        - name: component
-          value: $(params.component)
         - name: inference-server-fallback-image
           value: $(params.inference-server-fallback-image)
         - name: SNAPSHOT
@@ -115,7 +111,7 @@ spec:
         - name: spot-increase-rate
           value: "100"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=722"
         - name: version
           value: "9.6" # RHEL version
       runAfter:
@@ -165,7 +161,7 @@ spec:
         - name: spot-increase-rate
           value: "100"
         - name: tags
-          value: "konflux=true,ci=true,component=$(params.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhaiis,mapt-id=$(context.pipelineRun.name),mapt-type=rhel,app-code=GITL-005,service-phase=dev,cost-center=722"
         - name: version
           value: "9.6" # RHEL version
       runAfter:
