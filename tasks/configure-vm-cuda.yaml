@@ -36,7 +36,7 @@ spec:
         chmod 400 id_rsa
 
         echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
-        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
         echo -e "\n=== Adding shared SSH key ==="
@@ -75,7 +75,7 @@ spec:
         ${ssh_cmd} sudo setsebool -P container_use_devices 1
 
         echo -e "\n=== Rebooting the VM ==="
-        ${ssh_cmd} sudo reboot
+        ${ssh_cmd} sudo reboot || true
 
         echo -e "\n=== Waiting for the VM to reboot ==="
         # VM restart quickly but bare metal VMs need some time to be ready
