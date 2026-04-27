@@ -308,6 +308,7 @@ spec:
           operator: in
           values: ["rocm-ubi9"]
     - name: pull-images
+      retries: 3
       params:
         - name: container-images
           value:

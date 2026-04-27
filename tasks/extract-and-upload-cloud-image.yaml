@@ -64,11 +64,11 @@ spec:
         echo -e "\n=== Preparing SSH private key ==="
         cp /mnt/ssh-key/id_rsa id_rsa
         chmod 400 id_rsa
-        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
         echo -e "\n=== Copying auth file ==="
-        scp -i id_rsa -o StrictHostKeyChecking=no /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+        scp -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
         ${ssh_cmd} ls -al auth.json
 
         echo -e "\n=== Installing required tools on helper VM ==="
