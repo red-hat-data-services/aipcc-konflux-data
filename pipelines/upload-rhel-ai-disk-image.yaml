@@ -52,7 +52,7 @@ spec:
           - name: serverURL
             value: "https://gitlab.com"
           - name: revision
-            value: "azure_disk_image"
+            value: "main"
           - name: pathInRepo
             value: "tasks/check-cloud-image-exists.yaml"
           - name: token
@@ -142,7 +142,7 @@ spec:
           - name: serverURL
             value: "https://gitlab.com"
           - name: revision
-            value: "azure_disk_image"
+            value: "main"
           - name: pathInRepo
             value: "tasks/extract-and-upload-cloud-image.yaml"
           - name: token
