@@ -1,0 +1,116 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: configure-vm-gaudi
+spec:
+  params:
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials for the VM
+  steps:
+    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+        - name: shared-ssh-key
+          mountPath: /mnt/shared-ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+        echo -e "\n=== Preparing SSH private key ==="
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+
+        echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ${ssh_cmd} cat /etc/redhat-release
+
+        reboot_and_wait() {
+          echo -e "\n=== Rebooting the VM ==="
+          ${ssh_cmd} sudo reboot || true
+
+          echo -e "\n=== Waiting for the VM to reboot ==="
+          for i in $(seq 1 20); do
+            echo -e "\n=== Sleeping for 30 seconds $i/20 ==="
+            sleep 30
+
+            if ${ssh_cmd} true; then
+              ${ssh_cmd} 'until systemctl is-system-running --wait >/dev/null 2>&1; do sleep 2; done'
+              break
+            fi
+          done
+        }
+
+        echo -e "\n=== Adding shared SSH key ==="
+        cat /mnt/shared-ssh-key/aipcc.pub | ${ssh_cmd} "cat >> ~/.ssh/authorized_keys"
+
+        echo -e "\n=== Installing prerequisites ==="
+        ${ssh_cmd} sudo dnf install -y python3-pip
+        ${ssh_cmd} pip install -U "huggingface_hub[cli]"
+
+        echo -e "\n=== Pinning releasever to match VM version ==="
+        ${ssh_cmd} "cat /etc/os-release | grep VERSION_ID"
+        ${ssh_cmd} "grep -oP '[0-9]+\.[0-9]+' /etc/os-release | head -1 | sudo tee /etc/dnf/vars/releasever"
+
+        echo -e "\n=== Installing kernel-devel and kernel-headers ==="
+        ${ssh_cmd} sudo dnf install -y kernel-devel kernel-headers
+        KVER=$(${ssh_cmd} "rpm -q kernel-devel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -1")
+        echo "Kernel-devel version: ${KVER}"
+
+        echo -e "\n=== Installing matching kernel version ==="
+        ${ssh_cmd} sudo dnf install -y kernel-${KVER}
+        ${ssh_cmd} "sudo grubby --set-default /boot/vmlinuz-${KVER}"
+
+        reboot_and_wait
+
+        echo -e "\n=== Verify running kernel ==="
+        ${ssh_cmd} uname -r
+
+        echo -e "\n=== Installing Habana Labs software via installer ==="
+        ${ssh_cmd} "sudo curl -fsSL https://vault.habana.ai/artifactory/gaudi-installer/1.24.0/habanalabs-installer.sh -o /tmp/habanalabs-installer.sh"
+        ${ssh_cmd} sudo chmod +x /tmp/habanalabs-installer.sh
+        ${ssh_cmd} "sudo /tmp/habanalabs-installer.sh install --type base --force 2>&1"
+
+        echo -e "\n=== Configuring SELinux allow device access in podman ==="
+        ${ssh_cmd} sudo setsebool -P container_use_devices 1
+
+        reboot_and_wait
+
+        echo -e "\n=== Verifying Gaudi devices ==="
+        ${ssh_cmd} ls -la /dev/accel/
+
+        echo -e "\n=== hl-smi ==="
+        ${ssh_cmd} hl-smi
+
+        echo -e "\n=== Enabling linger for podman ==="
+        ${ssh_cmd} "sudo loginctl enable-linger \$USER"
+        ${ssh_cmd} "loginctl show-user \$USER | grep Linger"
+
+        echo -e "\n=== Gaudi VM configuration complete ==="
+  volumes:
+    - name: mapt-ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
+    - name: shared-ssh-key
+      secret:
+        secretName: "shared-ssh-key"
+        defaultMode: 0400
+        items:
+          - key: id_rsa.pub
+            path: aipcc.pub
+            mode: 0400

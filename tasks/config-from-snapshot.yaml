@@ -145,9 +145,8 @@ spec:
             fi
             ;;
           *-gaudi*)
-            echo "Gaudi not implemented yet"
-            vm_types="dl1.24xlarge"
-            cloud_provider="aws"
+            echo "Gaudi not supported yet (requires Gaudi 2+ hardware, not available on AWS/Azure)"
+            cloud_provider="ibm"
             variant="gaudi-ubi9"
             ret_value=1
             ;;

@@ -273,6 +273,36 @@ spec:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
           values: ["neuron-ubi9"]
+    - name: configure-vm-gaudi
+      params:
+        - name: host-access-secret-name
+          value: "$(tasks.create-vm-aws.results.host-access-secret)"
+      runAfter:
+        - create-vm-aws
+        - create-vm-azure
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-vm-gaudi.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      when:
+        - input: $(tasks.create-configuration.results.variant)
+          operator: in
+          values: ["gaudi-ubi9"]
     - name: configure-vm-rocm
       params:
         - name: amdgpu-base-version
@@ -321,6 +351,7 @@ spec:
       runAfter:
         - configure-vm-cuda
         - configure-vm-cpu
+        - configure-vm-gaudi
         - configure-vm-neuron
         - configure-vm-rocm
       taskRef:
@@ -351,6 +382,7 @@ spec:
       runAfter:
         - configure-vm-cuda
         - configure-vm-cpu
+        - configure-vm-gaudi
         - configure-vm-neuron
         - configure-vm-rocm
       taskRef:
