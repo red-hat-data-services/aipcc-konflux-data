@@ -85,6 +85,12 @@ spec:
             # --max-num-seqs 1: recommended for stability
             # --additional-config: override async_mode for stability
             VARIANT_EXTRA_FLAGS="--no-enable-prefix-caching --max-num-seqs 1 --additional-config '{\"override_neuron_config\": {\"async_mode\": false}}'"
+          elif [[ "${VARIANT}" =~ gaudi ]]; then
+            echo -e "\n=== Configuring for Gaudi variant ==="
+            GPU_DEVICE_FLAGS="--privileged"
+            NUMBER_OF_HPUS=$(${ssh_cmd} "ls -1d /dev/accel/accel* 2>/dev/null | grep -v controlD | wc -l" || echo "1")
+            echo "=== Number of HPUs: ${NUMBER_OF_HPUS} ==="
+            GPU_PARALLEL_FLAGS="--tensor-parallel-size ${NUMBER_OF_HPUS}"
           elif [[ "${VARIANT}" =~ rocm ]]; then
             echo -e "\n=== Configuring for ROCm variant ==="
             GPU_DEVICE_FLAGS="--device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined"
@@ -132,6 +138,8 @@ spec:
                 ${ssh_cmd} nvidia-smi || true
                 echo "==="
                 ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+              elif [[ "${VARIANT}" =~ gaudi ]]; then
+                ${ssh_cmd} hl-smi || true
               elif [[ "${VARIANT}" =~ neuron ]]; then
                 ${ssh_cmd} neuron-ls || true
               elif [[ "${VARIANT}" =~ rocm ]]; then
@@ -164,6 +172,9 @@ spec:
             if [[ "${VARIANT}" =~ cuda ]]; then
               echo "GPU memory free:"
               ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+            elif [[ "${VARIANT}" =~ gaudi ]]; then
+              echo "Gaudi HPU status:"
+              ${ssh_cmd} hl-smi || true
             elif [[ "${VARIANT}" =~ neuron ]]; then
               echo "Neuron GPU status:"
               ${ssh_cmd} neuron-ls || true
@@ -248,6 +259,26 @@ spec:
           NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
           echo -e "\n=== Number of GPUs ==="
           echo "${NUMBER_OF_GPUS}"
+        elif [[ "${VARIANT}" =~ gaudi ]]; then
+          echo -e "\n=== hl-smi ==="
+          ${ssh_cmd} hl-smi || true
+
+          echo -e "\n=== Gaudi devices ==="
+          ${ssh_cmd} ls -la /dev/accel/ || true
+
+          echo -e "\n=== Host habanalabs kernel module ==="
+          ${ssh_cmd} "modinfo habanalabs 2>/dev/null | grep -E '^(filename|version|description):'" || true
+
+          echo -e "\n=== Host SynapseAI version ==="
+          ${ssh_cmd} "cat /opt/habanalabs/VERSION 2>/dev/null || dpkg -l 2>/dev/null | grep habana || rpm -qa 2>/dev/null | grep habana" || true
+
+          echo -e "\n=== Container habana_frameworks version ==="
+          ${ssh_cmd} ${sudo_cmd} podman run --rm --privileged --entrypoint python3 "${INFERENCE_SERVER_IMAGE}" -c \
+            "\"import habana_frameworks; print('habana_frameworks:', habana_frameworks.__version__)\"" 2>/dev/null || true
+
+          NUMBER_OF_HPUS=$(${ssh_cmd} "ls -1d /dev/accel/accel* 2>/dev/null | grep -v controlD | wc -l" || echo "1")
+          echo -e "\n=== Number of HPUs ==="
+          echo "${NUMBER_OF_HPUS}"
         elif [[ "${VARIANT}" =~ neuron ]]; then
           echo -e "\n=== neuron-ls ==="
           ${ssh_cmd} neuron-ls || true
