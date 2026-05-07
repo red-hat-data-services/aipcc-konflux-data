@@ -1,7 +1,7 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: upload-rhel-ai-aws-disk-image-
+  generateName: upload-rhel-ai-disk-image-
   namespace: rhel-ai-tenant
 spec:
   params:
@@ -13,10 +13,17 @@ spec:
     - name: pull-secret-name
       value: "rhelai-bootc-3-2-pull"
 
-    # RHEL AI version - this will be used in the AMI name
-    # AMI name format: rhel-ai-cuda-aws-{version}
+    # RHEL AI version - used in the cloud image name
     - name: rhel-ai-version
       value: "3.2.0"
+
+    # Accelerator type (cuda, rocm)
+    - name: accelerator
+      value: "cuda"
+
+    # Target cloud provider (aws, azure)
+    - name: cloud-provider
+      value: "aws"
 
     # Debug mode (optional)
     - name: debug
@@ -36,7 +43,7 @@ spec:
       - name: revision
         value: main
       - name: pathInRepo
-        value: pipelines/upload-rhel-ai-aws-disk-image.yaml
+        value: pipelines/upload-rhel-ai-disk-image.yaml
       - name: token
         value: pipelines-as-code-secret
       - name: tokenKey
