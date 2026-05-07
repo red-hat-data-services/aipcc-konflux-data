@@ -151,7 +151,7 @@ spec:
             echo -e "\n=== No need to share image with different tenants in Azure ==="
           elif [[ "$(params.cloud-provider)" == "aws" ]]; then
             # default value for AWS
-            cloud_importer_params+="--share-orgs-ids arn:aws:organizations::329260820478:organization/o-melcpnc7lj,arn:aws:organizations::253721312158:organization/o-iorgj25jqr,arn:aws:organizations::103138678430:organization/o-melcpnc7lj "
+            cloud_importer_params+="--share-orgs-ids arn:aws:organizations::329260820478:organization/o-melcpnc7lj,arn:aws:organizations::253721312158:organization/o-iorgj25jqr "
           fi
 
           echo -e "\n=== Running cloud-importer for AWS ==="
