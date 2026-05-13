@@ -7,6 +7,9 @@ spec:
     - name: architecture
       default: "x86_64"
       description: One of x86_64, aarch64
+    - name: container-name
+      default: "rhaii"
+      description: Name of the RHAIIS podman container to monitor (rhaii for 3.4+, rhaiis for earlier versions)
     - name: debug
       default: "false"
     - name: model-name
@@ -314,6 +317,8 @@ spec:
     - name: test-inference
       description: Run inference tests on the configured VM
       params:
+        - name: container-name
+          value: "$(params.container-name)"
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
