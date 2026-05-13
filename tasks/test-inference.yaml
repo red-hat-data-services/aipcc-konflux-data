@@ -17,6 +17,9 @@ spec:
     - name: start-rhaiis
       default: "true"
       description: Start the RHAIIS container before testing the models (set to false when testing RHEL AI)
+    - name: container-name
+      default: "rhaii"
+      description: Name of the RHAIIS container to monitor (rhaii for 3.4+, rhaiis for earlier versions)
     - name: use-sudo
       default: "false"
       description: Use sudo to execute podman commands (set to true when testing RHEL AI)
@@ -43,6 +46,7 @@ spec:
 
         INFERENCE_SERVER_IMAGE="$(params.inference-server-image)"
         VARIANT="$(params.variant)"
+        CONTAINER_NAME="$(params.container-name)"
         echo -e "\n=== Using inference server image: ${INFERENCE_SERVER_IMAGE} ==="
         echo -e "=== Variant: ${VARIANT} ==="
 
@@ -51,8 +55,8 @@ spec:
           local model_path_in_container=$2
 
           echo -e "\n=== Removing existing RHAIIS container ==="
-          ${ssh_cmd} ${sudo_cmd} podman stop -i rhaii
-          ${ssh_cmd} ${sudo_cmd} podman rm -i rhaii
+          ${ssh_cmd} ${sudo_cmd} podman stop -i ${CONTAINER_NAME}
+          ${ssh_cmd} ${sudo_cmd} podman rm -i ${CONTAINER_NAME}
 
           # Configure variant-specific flags
           GPU_DEVICE_FLAGS=""
@@ -103,7 +107,7 @@ spec:
           fi
 
           echo -e "\n=== Starting RHAIIS container ==="
-          ${ssh_cmd} ${sudo_cmd} podman run -d --name rhaii \
+          ${ssh_cmd} ${sudo_cmd} podman run -d --name ${CONTAINER_NAME} \
             --log-level=debug \
             --env HF_DEBUG=1 \
             --env=VLLM_LOGGING_LEVEL=DEBUG \
@@ -128,7 +132,7 @@ spec:
           attempt=1
           while [ $attempt -lt $max_attempts ]; do
             echo -e "\n=== Waiting for RHAIIS container to be ready $attempt/$max_attempts ==="
-            container_state=$(${ssh_cmd} "${sudo_cmd} podman inspect -f '{{.State.Running}}' rhaii")
+            container_state=$(${ssh_cmd} "${sudo_cmd} podman inspect -f '{{.State.Running}}' ${CONTAINER_NAME}")
             if [[ "${container_state}" == "false" ]]; then
               echo "Container is not running!"
               echo "==="
@@ -149,9 +153,9 @@ spec:
               fi
 
               echo "==="
-              ${ssh_cmd} ${sudo_cmd} podman inspect rhaii | jq '.[0].State'
+              ${ssh_cmd} ${sudo_cmd} podman inspect ${CONTAINER_NAME} | jq '.[0].State'
               echo "==="
-              ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 rhaii
+              ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 ${CONTAINER_NAME}
               echo "==="
               if [ "$(params.debug)" == "true" ]; then
                 echo -e "\n=== Sleeping for 60 minutes ==="
@@ -188,14 +192,14 @@ spec:
             ${ssh_cmd} "free -m"
             echo "==="
             echo "Last 5 lines of logs:"
-            ${ssh_cmd} ${sudo_cmd} podman logs --tail 5 rhaii
+            ${ssh_cmd} ${sudo_cmd} podman logs --tail 5 ${CONTAINER_NAME}
             sleep 30
           done
 
           if [ $attempt -eq $max_attempts ]; then
             echo "Container failed to become ready within $(($max_attempts * 30)) seconds"
             echo -e "\n=== Podman logs ==="
-            ${ssh_cmd} ${sudo_cmd} podman logs rhaii
+            ${ssh_cmd} ${sudo_cmd} podman logs ${CONTAINER_NAME}
             exit 1
           fi
         }
