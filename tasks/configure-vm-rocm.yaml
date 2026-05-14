@@ -36,6 +36,9 @@ spec:
         cp /mnt/mapt-ssh-key/id_rsa id_rsa
         chmod 400 id_rsa
 
+        HOST=$(echo "${HOST}" | tr -d '\n\r')
+        USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
+
         echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release

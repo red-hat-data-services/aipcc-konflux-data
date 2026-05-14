@@ -79,6 +79,10 @@ spec:
         echo "=== Model-opt quantization test ==="
 
         CONTAINER_IMAGE="$(params.container-image)"
+
+        HOST=$(echo "${HOST}" | tr -d '\n\r')
+        USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
+
         REMOTE_SCRIPT_DIR="/home/${USERNAME}/scripts"
 
         # Prepare SSH
