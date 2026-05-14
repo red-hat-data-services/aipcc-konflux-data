@@ -37,6 +37,10 @@ spec:
         echo -e "\n=== Preparing SSH private key ==="
         cp /mnt/ssh-key/id_rsa id_rsa
         chmod 400 id_rsa
+
+        HOST=$(echo "${HOST}" | tr -d '\n\r')
+        USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
+
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
 
         if [[ "$(params.wait-for-connection)" == "true" ]]; then
