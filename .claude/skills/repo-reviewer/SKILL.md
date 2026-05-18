@@ -17,13 +17,13 @@ This repository contains:
 
 - **`pipelines/`** -- Tekton Pipeline definitions (YAML) that orchestrate multi-step build, test, scan, and release workflows. These are referenced by Konflux components and pipelineruns.
   - Build pipelines: `full-container.yaml`, `disk-image-container.yaml`, `disk-image.yaml`, `modelcar.yaml`, `models-oci-copy.yaml`
-  - Test pipelines: `rhaiis-tests.yaml`, `rhelai-aws-disk-image-test.yaml`, `rhelai-bootc-upgrade-test.yaml`, `check-labels-its.yaml`
-  - Operational pipelines: `cleanup-resources.yaml`, `copy-clair-scan-results.yaml`, `upload-rhel-ai-aws-disk-image.yaml`
+  - Test pipelines: `rhaiis-tests.yaml`, `rhelai-disk-image-test.yaml`, `rhelai-bootc-upgrade-test.yaml`, `check-labels-its.yaml`
+  - Operational pipelines: `cleanup-resources.yaml`, `copy-clair-scan-results.yaml`, `upload-rhel-ai-disk-image.yaml`
 
 - **`tasks/`** -- Tekton Task definitions (YAML) with embedded shell/Python scripts. These are the atomic units of work. Tasks are resolved via the `git` resolver from this repo at runtime.
-  - VM management: `configure-vm-cuda.yaml`, `configure-vm-cpu.yaml`, `configure-rhel-ai-vm.yaml`, `execute-script-on-vm.yaml`
+  - VM management: `configure-vm-cuda.yaml`, `configure-vm-cpu.yaml`, `configure-vm-neuron.yaml`, `configure-vm-rocm.yaml`, `configure-rhel-ai-vm.yaml`, `execute-script-on-vm.yaml`
   - Model testing: `test-inference.yaml`, `test-model-opt-quantization.yaml`, `download-model.yaml`
-  - Image operations: `pull-image.yaml`, `extract-and-upload-ami.yaml`, `check-ami-exists.yaml`
+  - Image operations: `pull-image.yaml`, `extract-and-upload-cloud-image.yaml`, `check-cloud-image-exists.yaml`
   - Configuration: `config-from-snapshot.yaml`, `prepare-check-labels-data.yaml`
   - Cleanup: `find-resources-to-prune.yaml`
 
@@ -52,7 +52,7 @@ This repository contains:
 - `timeout` values should be set for long-running tasks (builds, scans, VM operations)
 
 #### Anti-patterns
-- Missing `finally` block for pipelines that create cloud resources (VMs, AMIs)
+- Missing `finally` block for pipelines that create cloud resources (VMs, cloud images)
 - Referencing `$(tasks.X.results.Y)` from a task that might be skipped by a `when` condition
 - Using `runAfter` with tasks that have `when` conditions without considering the skip case
 - Hardcoded `revision: main` in git resolver refs without a TODO/comment about pinning
@@ -131,8 +131,8 @@ This repository contains:
 #### Required
 - Every pipeline that creates VMs (via mapt) MUST have a corresponding `finally` block to destroy them
 - AWS tags must include required cost tracking tags: `app-code=GITL-005`, `service-phase=dev`, `cost-center=722`
-- AMI naming must follow the pattern: `rhel-ai-cuda-aws-{version}` (release) or `test-rhel-ai-cuda-aws-{version}-pr-{digest}` (PR)
-- VM cleanup pipeline (`cleanup-resources.yaml`) TTL values should be reasonable (48h for VMs, 72h for AMIs)
+- Cloud image naming must follow the pattern: `rhel-ai-{variant}-{cloud}-{version}` (release) or `test-rhel-ai-{variant}-{cloud}-{version}-pr-{digest}` (PR)
+- VM cleanup pipeline (`cleanup-resources.yaml`) TTL values should be reasonable (48h for VMs, 72h for cloud images)
 - Spot instances should be used for CI testing with appropriate eviction tolerance
 - `id` parameters for mapt must use `$(context.pipelineRun.name)` to ensure uniqueness
 
