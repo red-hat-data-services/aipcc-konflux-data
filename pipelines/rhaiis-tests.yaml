@@ -126,7 +126,7 @@ spec:
             value: "https://github.com/redhat-developer/mapt"
           # todo configure renovate to update this
           - name: revision
-            value: "main"
+            value: "v0.13.0"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -175,7 +175,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "main"
+            value: "v0.13.0"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel.yaml"
       when:
@@ -500,7 +500,7 @@ spec:
             value: "https://github.com/redhat-developer/mapt"
           # TODO configure renovate to update this
           - name: revision
-            value: "main"
+            value: "v0.13.0"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -521,7 +521,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "main"
+            value: "v0.13.0"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel.yaml"
       when:
