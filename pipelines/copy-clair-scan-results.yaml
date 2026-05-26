@@ -22,7 +22,7 @@ spec:
               value: $(params.snapshot)
             - name: TARGET_REPO
               value: $(params.target-repo)
-           image: quay.io/konflux-ci/release-service-utils@sha256:9b9b36b80ac68add8b9e7d1b9f1f4f1280b41d67a49e5649eaedb9df5589d259
+           image: quay.io/konflux-ci/release-service-utils@sha256:9460d206ab78a096679cf0d96bf812b3f9a5227dd2f7061e06e8e58c49cdad16
            script: |
               #!/bin/bash
               echo -e "\nFetching Snapshot Spec"
