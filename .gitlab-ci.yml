@@ -18,12 +18,11 @@ workflow:
 stages:
   - lint
 
-# TODO: Remove this job once real CI jobs are added to this repo.
-# It exists only to prevent "no valid stages" errors when the ai-review
-# label is not applied (the ai-review include is the only other job).
-ci-placeholder:
+check-trusted-tasks:
   stage: lint
-  image: registry.access.redhat.com/ubi9/ubi-micro
-  script: ["echo 'Add the ai-review label to this MR to trigger AI code review.'"]
+  image: registry.access.redhat.com/ubi9/python-312
+  script:
+    - pip install pyyaml
+    - python3 scripts/check-trusted-tasks.py
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
