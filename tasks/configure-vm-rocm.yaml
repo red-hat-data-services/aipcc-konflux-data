@@ -12,7 +12,8 @@ spec:
       description: AMD GPU installer version
     - name: host-access-secret-name
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+    - name: configure-vm
+      image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
       env:
         - name: HOST
           valueFrom:
@@ -40,7 +41,7 @@ spec:
         USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
 
         echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
-        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${USERNAME}@${HOST}"
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
         echo -e "\n=== Adding shared SSH key ==="
@@ -133,7 +134,7 @@ spec:
         if [ -n "$mnt_free" ] && [ "$mnt_free" -gt "$home_free" ]; then
           echo "Using /mnt for podman storage ($(( mnt_free / 1024 / 1024 )) GiB free vs $(( home_free / 1024 / 1024 )) GiB on home)"
           ${ssh_cmd} "sudo chown -R \$USER:\$USER /mnt || true"
-          ${ssh_cmd} 'mkdir -p /mnt/models && rm -rf ~/models && ln -s /mnt/models ~/models'
+          ${ssh_cmd} 'mkdir -p /mnt/models && rm -rf ~/models && ln -sf /mnt/models ~/models'
           ${ssh_cmd} "mkdir -p ~/.config/containers"
           ${ssh_cmd} "echo '[storage]' > ~/.config/containers/storage.conf"
           ${ssh_cmd} "echo 'driver = \"overlay\"' >> ~/.config/containers/storage.conf"

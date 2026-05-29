@@ -183,6 +183,7 @@ spec:
           operator: in
           values: ["azure"]
     - name: configure-vm-cuda
+      retries: 1
       params:
         - name: cuda-compat-version
           value: "$(params.cuda-compat-version)"
@@ -217,6 +218,7 @@ spec:
           operator: in
           values: ["cuda-ubi9"]
     - name: configure-vm-cpu
+      retries: 1
       params:
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
@@ -247,6 +249,7 @@ spec:
           operator: in
           values: ["cpu-ubi9"]
     - name: configure-vm-neuron
+      retries: 1
       params:
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
@@ -277,6 +280,7 @@ spec:
           operator: in
           values: ["neuron-ubi9"]
     - name: configure-vm-gaudi
+      retries: 1
       params:
         - name: host-access-secret-name
           value: "$(tasks.create-vm-aws.results.host-access-secret)"
@@ -307,6 +311,7 @@ spec:
           operator: in
           values: ["gaudi-ubi9"]
     - name: configure-vm-rocm
+      retries: 1
       params:
         - name: amdgpu-base-version
           value: "$(params.amdgpu-base-version)"

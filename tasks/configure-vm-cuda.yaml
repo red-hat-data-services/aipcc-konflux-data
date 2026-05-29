@@ -11,7 +11,8 @@ spec:
       default: "570"
       description: NVIDIA driver version to install, 570 for CUDA 12.8
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+    - name: configure-vm
+      image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
       env:
         - name: HOST
           valueFrom:
@@ -39,7 +40,7 @@ spec:
         USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
 
         echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
-        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${USERNAME}@${HOST}"
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
         echo -e "\n=== Adding shared SSH key ==="
@@ -83,7 +84,7 @@ spec:
         echo -e "\n=== Waiting for the VM to reboot ==="
         # VM restart quickly but bare metal VMs need some time to be ready
         for i in $(seq 1 20); do
-          echo -e "\n=== Sleeping for 30 seconds $i/10 ==="
+          echo -e "\n=== Sleeping for 30 seconds $i/20 ==="
           sleep 30
 
           if ${ssh_cmd} true; then

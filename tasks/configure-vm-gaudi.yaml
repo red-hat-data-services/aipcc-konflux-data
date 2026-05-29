@@ -7,7 +7,8 @@ spec:
     - name: host-access-secret-name
       description: Name of the secret containing SSH credentials for the VM
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
+    - name: configure-vm
+      image: quay.io/konflux-ci/release-service-utils@sha256:2f9e6863e82bbc9ddce5a290f3fd0e87657c475e3de8a832b2ef7f8d0671e7d3
       env:
         - name: HOST
           valueFrom:
@@ -35,7 +36,7 @@ spec:
         USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
 
         echo -e "\n=== ssh to the VM ${USERNAME}@${HOST} and print OS version ==="
-        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no ${USERNAME}@${HOST}"
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
         reboot_and_wait() {
