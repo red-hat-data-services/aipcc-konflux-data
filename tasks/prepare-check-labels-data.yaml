@@ -90,7 +90,7 @@ spec:
       runAsUser: 1001
   steps:
     - name: enrich-snapshot-and-create-data
-      image: quay.io/konflux-ci/release-service-utils@sha256:b331048c1c0a6110cba23ba40ae62419276c27622e72858574eacae2579ef74b
+      image: quay.io/konflux-ci/release-service-utils@sha256:04f3b2f47223a0fd06c688544fadd42473450224ad1fcb7c92afd2cbf5cc1030
       computeResources:
         limits:
           memory: 256Mi
