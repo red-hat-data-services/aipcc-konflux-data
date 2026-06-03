@@ -8,7 +8,7 @@ spec:
       description: Name of the secret containing SSH credentials for the VM
   steps:
     - name: configure-vm
-      image: quay.io/konflux-ci/release-service-utils@sha256:ca7b3b17b61055de6133eee588aea2148cf0424ef20737a5e290a51f915b9bcf
+      image: quay.io/konflux-ci/release-service-utils@sha256:8beed3e8d5c2b9c7796d6d731a6adad1dab49bad444a05ba33a58585f8c32fd8
       env:
         - name: HOST
           valueFrom:
