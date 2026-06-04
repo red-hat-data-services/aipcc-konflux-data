@@ -34,7 +34,7 @@ spec:
       description: Expected image name based on parameters
   steps:
     - name: check-image
-      image: ghcr.io/mapt-oss/cloud-importer@sha256:8aa77d384764a31bd7a52f89037f899b2ae773b63fe366957d546a0a7d05cac5
+      image: ghcr.io/mapt-oss/cloud-importer@sha256:26b9eb2ca43477a94b1169046aed5f188d237a8cc6ad4ac327001a5fcf6cc2f3
       env:
         - name: CLOUD_PROVIDER
           value: $(params.cloud-provider)
