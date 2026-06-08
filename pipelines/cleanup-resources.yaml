@@ -30,6 +30,11 @@ spec:
     - name: ttl-hours-vms
       description: Time-to-live in hours for resources before pruning (e.g., "48" for 2 days)
       default: "48"
+    - name: send-slack-notification
+      default: "true"
+    - name: slack-key-name
+      description: Key within the slack-webhook secret for the webhook URL
+      default: "rhel-ai-notification"
   tasks:
     - name: find-resources
       description: Scan S3 for old resources
@@ -186,3 +191,40 @@ spec:
         - input: $(params.dry-run)
           operator: in
           values: ["false"]
+  finally:
+    - name: pipeline-failure-notification
+      when:
+        - input: $(tasks.status)
+          operator: in
+          values: ["Failed"]
+        - input: $(params.send-slack-notification)
+          operator: in
+          values: ["true"]
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/konflux-pipeline-failure-notification.yaml
+          - name: token
+            value: gitlab-konflux-data-ro
+          - name: tokenKey
+            value: password
+      params:
+        - name: header
+          value: "Cleanup Resources Pipeline Failed"
+        - name: slack-key-name
+          value: $(params.slack-key-name)
+        - name: pipeline-name
+          value: $(context.pipelineRun.name)
+        - name: pipeline-namespace
+          value: $(context.pipelineRun.namespace)
