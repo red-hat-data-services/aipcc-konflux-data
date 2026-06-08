@@ -1,0 +1,86 @@
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata:
+  name: slack-blockkit-notification
+  annotations:
+    tekton.dev/description: |
+      Sends a Block Kit formatted Slack notification.
+      All content is parameterized — the consuming Task builds the values.
+
+      Prerequisites:
+        1. Slack webhook secret:
+           - kubectl create secret generic slack-webhook \
+               --from-literal=<key-name>=https://hooks.slack.com/services/...
+        2. The consuming Task must define a volume for the webhook secret
+           and pass its name via slack-volume.
+spec:
+  params:
+    - name: message
+      type: string
+      description: The notification body (supports Slack mrkdwn)
+    - name: header
+      type: string
+      description: Header text for the notification
+    - name: subtitle
+      type: string
+      default: ""
+      description: Optional subtitle line below the header (supports mrkdwn, e.g. a link)
+    - name: footer
+      type: string
+      default: ""
+      description: Optional footer context line (supports mrkdwn)
+    - name: color
+      type: string
+      default: "#d32f2f"
+      description: Attachment sidebar color (hex)
+    - name: slack-key-name
+      type: string
+      description: Key name within the mounted slack secret
+    - name: slack-volume
+      type: string
+      description: Name of the volume with Slack webhook secret
+  env:
+    - name: HEADER
+      value: $(params.header)
+    - name: SUBTITLE
+      value: $(params.subtitle)
+    - name: MESSAGE
+      value: $(params.message)
+    - name: FOOTER
+      value: $(params.footer)
+    - name: COLOR
+      value: $(params.color)
+    - name: SLACK_KEY_NAME
+      value: $(params.slack-key-name)
+  image: quay.io/konflux-ci/release-service-utils@sha256:8beed3e8d5c2b9c7796d6d731a6adad1dab49bad444a05ba33a58585f8c32fd8
+  volumeMounts:
+    - name: $(params.slack-volume)
+      mountPath: /etc/secrets
+      readOnly: true
+  script: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    WEBHOOK_URL="$(cat /etc/secrets/${SLACK_KEY_NAME})"
+
+    blocks=$(jq --compact-output --null-input \
+      --arg header "$HEADER" \
+      --arg subtitle "$SUBTITLE" \
+      --arg message "$MESSAGE" \
+      --arg footer "$FOOTER" \
+      '[
+        {type: "header", text: {type: "plain_text", text: $header, emoji: true}},
+        (if $subtitle != "" then {type: "section", text: {type: "mrkdwn", text: $subtitle}} else empty end),
+        {type: "section", text: {type: "mrkdwn", text: $message}},
+        (if $footer != "" then {type: "context", elements: [{type: "mrkdwn", text: $footer}]} else empty end)
+      ]')
+
+    data=$(jq --compact-output --null-input \
+      --arg color "$COLOR" \
+      --argjson blocks "$blocks" \
+      '{attachments: [{color: $color, blocks: $blocks}]}')
+
+    echo "Sending Slack notification..."
+    curl --silent -X POST -H 'Content-type: application/json' --data "${data}" "$WEBHOOK_URL"
+    echo ""
+    echo "Slack notification sent."

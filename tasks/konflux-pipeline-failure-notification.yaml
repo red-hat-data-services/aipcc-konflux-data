@@ -1,0 +1,193 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: konflux-pipeline-failure-notification
+  annotations:
+    tekton.dev/description: |
+      Troubleshoots a failed Konflux PipelineRun using AI (claudio) and sends
+      a Slack notification with the root cause analysis.
+      Composes the claudio-run and slack-notification StepActions.
+spec:
+  params:
+    - name: prompt
+      type: string
+      default: |
+        PipelineRun $(params.pipeline-name) in namespace $(params.pipeline-namespace) has failed.
+        Troubleshoot the failure using kubectl to inspect the PipelineRun status, TaskRun conditions, and pod logs.
+        Write a 1-2 sentence root cause summary to /home/claudio/output/output.txt.
+      description: Prompt for claudio troubleshooting
+
+    - name: header
+      type: string
+      default: ""
+      description: Slack notification header (e.g. 'RHAIIS Test Pipeline Failed'). If empty, falls back to 'Konflux Pipeline Failed'.
+
+    - name: konflux-base-url
+      type: string
+      default: "https://konflux-ui.apps.stone-prod-p02.hjvn.p1.openshiftapps.com"
+      description: Base URL for the Konflux UI (used to build PipelineRun links)
+
+    - name: slack-secret-name
+      type: string
+      default: "slack-webhook"
+      description: Secret containing the Slack webhook URL
+
+    - name: slack-key-name
+      type: string
+      description: Key within the secret for the webhook URL
+
+    - name: pipeline-name
+      type: string
+      description: PipelineRun name (use $(context.pipelineRun.name))
+
+    - name: pipeline-namespace
+      type: string
+      description: PipelineRun namespace (use $(context.pipelineRun.namespace))
+
+    - name: claudio-image
+      type: string
+      default: "quay.io/aipcc-cicd/claudio:v0.7.3"
+      description: Claudio container image
+
+    - name: gcp-credentials
+      type: string
+      default: "claudio-adc"
+      description: Secret holding GCP Vertex AI credentials
+
+    - name: claudio-extra-args
+      type: array
+      default:
+        - "--allowedTools"
+        - "Bash(kubectl get *)"
+        - "Bash(kubectl describe *)"
+        - "Bash(kubectl logs *)"
+        - "Bash(curl *)"
+        - "Write"
+        - "Bash(cat *)"
+        - "Bash(env)"
+        - "Bash(printenv *)"
+        - "Bash(ls *)"
+        - "Bash(head *)"
+        - "Bash(tail *)"
+        - "Read"
+        - "Glob"
+        - "Grep"
+      description: Extra arguments passed to entrypoint (default allows read-only kubectl + curl + filesystem read + write)
+
+  volumes:
+    - name: gcp-credentials
+      secret:
+        secretName: $(params.gcp-credentials)
+    - name: slack-webhook
+      secret:
+        secretName: $(params.slack-secret-name)
+    - name: claudio-output
+      emptyDir: {}
+
+  steps:
+    - name: claudio
+      onError: continue
+      ref:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: stepactions/claudio-run.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      params:
+        - name: prompt
+          value: $(params.prompt)
+        - name: image
+          value: $(params.claudio-image)
+        - name: gcp-volume
+          value: gcp-credentials
+        - name: output-volume
+          value: claudio-output
+        - name: extra-args
+          value:
+            - $(params.claudio-extra-args[*])
+
+    - name: build-message
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      volumeMounts:
+        - name: claudio-output
+          mountPath: /home/claudio/output
+      env:
+        - name: PIPELINE_NAME
+          value: $(params.pipeline-name)
+        - name: PIPELINE_NAMESPACE
+          value: $(params.pipeline-namespace)
+        - name: KONFLUX_BASE_URL
+          value: $(params.konflux-base-url)
+        - name: HEADER_OVERRIDE
+          value: $(params.header)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        HEADER="${HEADER_OVERRIDE:-Konflux Pipeline Failed}"
+        printf '%s' "$HEADER" > $(step.results.header.path)
+
+        SUBTITLE="*${PIPELINE_NAME}*  |  <${KONFLUX_BASE_URL}/ns/${PIPELINE_NAMESPACE}/applications/undefined/pipelineruns/${PIPELINE_NAME}|View PipelineRun>"
+        printf '%s' "$SUBTITLE" > $(step.results.subtitle.path)
+
+        if [ -s /home/claudio/output/output.txt ]; then
+          MESSAGE="$(sed '/^$/d' /home/claudio/output/output.txt)"
+        fi
+        MESSAGE="${MESSAGE:-PipelineRun *${PIPELINE_NAME}* in namespace \`${PIPELINE_NAMESPACE}\` has failed. Automated troubleshooting was unable to determine the root cause.}"
+        printf '%s' "$MESSAGE" > $(step.results.message.path)
+
+        TIMESTAMP="$(date -u '+%b %-d, %Y %H:%M UTC')"
+        FOOTER=":round_pushpin: ${PIPELINE_NAMESPACE} · ${TIMESTAMP}"
+        printf '%s' "$FOOTER" > $(step.results.footer.path)
+      results:
+        - name: header
+        - name: subtitle
+        - name: message
+        - name: footer
+
+    - name: send-slack
+      ref:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: stepactions/slack-blockkit-notification.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      params:
+        - name: message
+          value: $(steps.build-message.results.message)
+        - name: header
+          value: $(steps.build-message.results.header)
+        - name: subtitle
+          value: $(steps.build-message.results.subtitle)
+        - name: footer
+          value: $(steps.build-message.results.footer)
+        - name: slack-key-name
+          value: $(params.slack-key-name)
+        - name: slack-volume
+          value: slack-webhook
