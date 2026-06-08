@@ -1,0 +1,58 @@
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata:
+  name: claudio-run
+  annotations:
+    tekton.dev/description: |
+      Runs claudio (Claude Code agent) with a given prompt.
+      Writes output to a shared volume at /home/claudio/output/.
+
+      Prerequisites:
+        1. GCP credentials secret (default: "claudio-adc"):
+           - Key: application_default_credentials.json (GCP service account for Vertex AI)
+           - kubectl create secret generic claudio-adc \
+               --from-file=application_default_credentials.json=<path-to-key.json>
+        2. The consuming Task must define two volumes and pass their names via
+           gcp-volume and output-volume params.
+        3. ServiceAccount with permissions matching the tools in extra-args
+           (e.g. read access to pods, pods/log, pipelineruns, taskruns for kubectl).
+
+spec:
+  params:
+    - name: prompt
+      type: string
+      description: Prompt for claudio
+    - name: image
+      type: string
+      default: "quay.io/aipcc-cicd/claudio:v0.7.3"
+    - name: gcp-volume
+      type: string
+      description: Name of the volume with GCP credentials
+    - name: output-volume
+      type: string
+      description: Name of the volume for claudio output
+    - name: extra-args
+      type: array
+      default: []
+      description: Extra args passed to entrypoint (e.g. --allowedTools ...)
+  env:
+    - name: CLAUDIO_PROMPT
+      value: $(params.prompt)
+    - name: CLAUDIO_STREAM
+      value: "1"
+    - name: NO_COLOR
+      value: "1"
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/run/secrets/gcp/application_default_credentials.json
+  image: $(params.image)
+  args:
+    - $(params.extra-args[*])
+  volumeMounts:
+    - name: $(params.gcp-volume)
+      mountPath: /var/run/secrets/gcp
+      readOnly: true
+    - name: $(params.output-volume)
+      mountPath: /home/claudio/output
+  script: |
+    #!/usr/bin/env bash
+    entrypoint.sh -p "$CLAUDIO_PROMPT" "$@"
