@@ -220,6 +220,11 @@ spec:
           - name: tokenKey
             value: password
       params:
+        - name: prompt
+          value: |
+            PipelineRun $(context.pipelineRun.name) in namespace $(context.pipelineRun.namespace) has failed.
+            Troubleshoot the failure using kubectl to inspect the PipelineRun status, TaskRun conditions, and pod logs.
+            Write a 1-2 sentence root cause summary to /home/claudio/output/output.txt.
         - name: header
           value: "Cleanup Resources Pipeline Failed"
         - name: slack-key-name
@@ -228,3 +233,5 @@ spec:
           value: $(context.pipelineRun.name)
         - name: pipeline-namespace
           value: $(context.pipelineRun.namespace)
+        - name: git-resolver-token-secret
+          value: gitlab-konflux-data-ro
