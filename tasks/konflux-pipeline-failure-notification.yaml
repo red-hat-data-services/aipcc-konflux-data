@@ -12,20 +12,25 @@ spec:
     - name: prompt
       type: string
       default: |
-        PipelineRun $(params.pipeline-name) in namespace $(params.pipeline-namespace) has failed.
-        Troubleshoot the failure using kubectl to inspect the PipelineRun status, TaskRun conditions, and pod logs.
-        Write a 1-2 sentence root cause summary to /home/claudio/output/output.txt.
-      description: Prompt for claudio troubleshooting
+        You are running as a finally task in a Konflux PipelineRun that has failed.
+        Use kubectl to discover which PipelineRun in your namespace has failed, then inspect its TaskRun conditions and pod logs.
+        Troubleshoot the root cause and write a 1-2 sentence summary to /home/claudio/output/output.txt.
+      description: Prompt for claudio troubleshooting. Callers should pass this explicitly using $(context.pipelineRun.name) for better context.
 
     - name: header
       type: string
       default: ""
       description: Slack notification header (e.g. 'RHAIIS Test Pipeline Failed'). If empty, falls back to 'Konflux Pipeline Failed'.
 
+    - name: openshift-console-url
+      type: string
+      default: "https://console-openshift-console.apps.mpp-e1-preprod.syvu.p1.openshiftapps.com"
+      description: Base URL for the OpenShift console (used when application-name is not set)
+
     - name: konflux-base-url
       type: string
       default: "https://konflux-ui.apps.stone-prod-p02.hjvn.p1.openshiftapps.com"
-      description: Base URL for the Konflux UI (used to build PipelineRun links)
+      description: Base URL for the Konflux UI (used when application-name is set)
 
     - name: slack-secret-name
       type: string
@@ -53,6 +58,21 @@ spec:
       type: string
       default: "claudio-adc"
       description: Secret holding GCP Vertex AI credentials
+
+    - name: git-resolver-token-secret
+      type: string
+      default: "pipelines-as-code-secret"
+      description: Secret name containing the token for the git resolver
+
+    - name: git-resolver-token-key
+      type: string
+      default: "password"
+      description: Key within the git resolver token secret
+
+    - name: application-name
+      type: string
+      default: ""
+      description: Konflux application name (used in the PipelineRun UI link). If empty, omitted from the URL.
 
     - name: claudio-extra-args
       type: array
@@ -103,9 +123,9 @@ spec:
           - name: pathInRepo
             value: stepactions/claudio-run.yaml
           - name: token
-            value: pipelines-as-code-secret
+            value: $(params.git-resolver-token-secret)
           - name: tokenKey
-            value: password
+            value: $(params.git-resolver-token-key)
       params:
         - name: prompt
           value: $(params.prompt)
@@ -131,8 +151,12 @@ spec:
           value: $(params.pipeline-namespace)
         - name: KONFLUX_BASE_URL
           value: $(params.konflux-base-url)
+        - name: OPENSHIFT_CONSOLE_URL
+          value: $(params.openshift-console-url)
         - name: HEADER_OVERRIDE
           value: $(params.header)
+        - name: APPLICATION_NAME
+          value: $(params.application-name)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -140,7 +164,12 @@ spec:
         HEADER="${HEADER_OVERRIDE:-Konflux Pipeline Failed}"
         printf '%s' "$HEADER" > $(step.results.header.path)
 
-        SUBTITLE="*${PIPELINE_NAME}*  |  <${KONFLUX_BASE_URL}/ns/${PIPELINE_NAMESPACE}/applications/undefined/pipelineruns/${PIPELINE_NAME}|View PipelineRun>"
+        if [ -n "${APPLICATION_NAME:-}" ]; then
+          PIPELINERUN_URL="${KONFLUX_BASE_URL}/ns/${PIPELINE_NAMESPACE}/applications/${APPLICATION_NAME}/pipelineruns/${PIPELINE_NAME}"
+        else
+          PIPELINERUN_URL="${OPENSHIFT_CONSOLE_URL}/k8s/ns/${PIPELINE_NAMESPACE}/tekton.dev~v1~PipelineRun/${PIPELINE_NAME}/logs"
+        fi
+        SUBTITLE="*${PIPELINE_NAME}*  |  <${PIPELINERUN_URL}|View PipelineRun>"
         printf '%s' "$SUBTITLE" > $(step.results.subtitle.path)
 
         if [ -s /home/claudio/output/output.txt ]; then
@@ -175,9 +204,9 @@ spec:
           - name: pathInRepo
             value: stepactions/slack-blockkit-notification.yaml
           - name: token
-            value: pipelines-as-code-secret
+            value: $(params.git-resolver-token-secret)
           - name: tokenKey
-            value: password
+            value: $(params.git-resolver-token-key)
       params:
         - name: message
           value: $(steps.build-message.results.message)

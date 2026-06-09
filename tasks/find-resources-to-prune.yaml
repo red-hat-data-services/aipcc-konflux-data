@@ -111,13 +111,7 @@ spec:
                 )
                 return json.loads(result.stdout) if result.stdout.strip() else None
             except subprocess.CalledProcessError as e:
-                print(f"ERROR executing command: {cmd}")
-                print(f"STDERR: {e.stderr}")
-                return None
-            except json.JSONDecodeError as e:
-                print(f"ERROR parsing JSON from command: {cmd}")
-                print(f"Output: {result.stdout}")
-                return None
+                raise RuntimeError(f"AWS command failed: {cmd}\n{e.stderr.strip()}") from e
 
         def list_s3_directories(prefix):
             """List directories (common prefixes) under S3 prefix"""
