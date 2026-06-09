@@ -190,6 +190,13 @@ spec:
             variant="spyre-ubi9"
             ret_value=1
             ;;
+          *-rubin*)
+            echo "Rubin not implemented yet"
+            cloud_provider="aws"
+            variant="rubin-ubi9"
+            vm_types=""
+            ret_value=1
+            ;;
           *-tpu*)
             echo "TPU not implemented yet"
             cloud_provider="gcp"
