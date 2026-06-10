@@ -13,7 +13,7 @@ spec:
     - name: host-access-secret-name
   steps:
     - name: configure-vm
-      image: quay.io/konflux-ci/release-service-utils@sha256:4995e31056b797556fb7b6708dcf27c0a131c42db8503135d411fa7c32e51cb2
+      image: quay.io/konflux-ci/release-service-utils@sha256:4728bb344a1ef9b66c17114dfe96e7e5da6f6818ae5d2d8a258479379e0e55ce
       env:
         - name: HOST
           valueFrom:
