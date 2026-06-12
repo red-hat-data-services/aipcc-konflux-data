@@ -41,7 +41,7 @@ spec:
       type: array
   steps:
     - name: check-s3-bucket
-      image: ghcr.io/mapt-oss/cloud-importer@sha256:f0120660253000b70f5fbca3c8c5373b81f31a4fada6e11ca36f00bc91c7302f
+      image: ghcr.io/mapt-oss/cloud-importer@sha256:045a60a89cc5f9db3514fab05c65444ce91f48d13527ad9a0ab54b3caf88577f
       env:
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
