@@ -1,7 +1,7 @@
 include:
   # AI Code Review
-  - project: 'redhat/rhel-ai/core/tools/ai-review'
-    file: 'ai-review.gitlab-ci.yml'
+  - project: 'redhat/rhel-ai/agentic-ci/code-review'
+    file: 'ci/code-review.gitlab-ci.yml'
     inputs:
       INSTRUCTIONS: "Use the repo-reviewer skill for specialized Konflux data review. Focus on Tekton pipeline/task correctness, release definition accuracy, and pipelinerun parameter consistency."
     rules:
