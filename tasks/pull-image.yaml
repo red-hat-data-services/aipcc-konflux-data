@@ -16,7 +16,7 @@ spec:
       description: List of pull secret names for image authentication
   steps:
     - name: prepare-auth
-      image: quay.io/konflux-ci/release-service-utils@sha256:c81b122f6274b2bc437a09ecef657af7ccc8f99887e29278f62c424ac911a2f3
+      image: quay.io/konflux-ci/release-service-utils@sha256:48323c256efcb3c318762cb66b3a9cabd827a0bef2485cb91e8c7aed7d1fb1f0
       args: ["$(params.pull-secret-names[*])"]
       script: |
         #!/bin/bash
@@ -33,7 +33,7 @@ spec:
         echo "✓ Auth file ready"
 
     - name: pull-images
-      image: quay.io/konflux-ci/release-service-utils@sha256:c81b122f6274b2bc437a09ecef657af7ccc8f99887e29278f62c424ac911a2f3
+      image: quay.io/konflux-ci/release-service-utils@sha256:48323c256efcb3c318762cb66b3a9cabd827a0bef2485cb91e8c7aed7d1fb1f0
       args: ["$(params.container-images[*])"]
       env:
         - name: HOST
