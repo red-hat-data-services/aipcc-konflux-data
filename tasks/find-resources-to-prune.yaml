@@ -4,11 +4,12 @@ metadata:
   name: find-resources-to-prune
 spec:
   description: |
-    Scans S3 bucket for old mapt and cloud-importer resources.
-    Outputs lists of resources that need cleanup via infra-aws tasks.
+    Scans S3 bucket for old mapt and cloud-importer resources, and Azure Blob
+    Storage for old Azure cloud-importer images.
+    Outputs lists of resources that need cleanup via infra-aws and cloud-importer tasks.
   params:
-    - name: ami-name-filters
-      description: List of substrings to filter AMI names
+    - name: image-name-filters
+      description: List of substrings that must ALL be present in cloud image names to be considered for cleanup (applies to both AWS AMIs and Azure images)
       type: array
       default:
         - "rhel-ai"
@@ -20,12 +21,20 @@ spec:
     - name: secret-aws-credentials
       description: Name of the secret containing AWS credentials (access-key, secret-key, region, bucket)
       type: string
+    - name: secret-az-credentials
+      description: Name of the secret containing Azure credentials (client_id, client_secret, tenant_id, subscription_id, location, storage_account, storage_key)
+      type: string
+      default: "secret-az-credentials"
     - name: ttl-hours-amis
       description: Time-to-live in hours for merge request AMIs before pruning (e.g., "72" for 3 days)
       type: string
     - name: ttl-hours-vms
       description: Time-to-live in hours for resources before pruning (e.g., "168" for 7 days)
       type: string
+    - name: ttl-hours-azure-images
+      description: Time-to-live in hours for Azure test images before pruning (e.g., "72" for 3 days)
+      type: string
+      default: "72"
   results:
     - name: rhel-resources
       description: Array of RHEL resource IDs to cleanup
@@ -36,12 +45,15 @@ spec:
     - name: fedora-resources
       description: Array of Fedora resource IDs to cleanup
       type: array
-    - name: cloud-importer-resources
-      description: Array of cloud-importer resource IDs to cleanup
+    - name: aws-cloud-importer-resources
+      description: Array of AWS cloud-importer resource IDs to cleanup
+      type: array
+    - name: azure-cloud-importer-resources
+      description: Array of Azure cloud-importer resource IDs to cleanup
       type: array
   steps:
     - name: check-s3-bucket
-      image: ghcr.io/mapt-oss/cloud-importer@sha256:045a60a89cc5f9db3514fab05c65444ce91f48d13527ad9a0ab54b3caf88577f
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.3
       env:
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
@@ -70,7 +82,7 @@ spec:
         - name: TTL_HOURS_VMS
           value: $(params.ttl-hours-vms)
       args:
-        - $(params.ami-name-filters[*])
+        - $(params.image-name-filters[*])
       script: |
         #!/usr/bin/env python3
         import os
@@ -193,8 +205,142 @@ spec:
             with open('/tekton/results/fedora-resources', 'w') as f:
                 f.write(json.dumps(fedora_resources))
 
-            with open('/tekton/results/cloud-importer-resources', 'w') as f:
+            with open('/tekton/results/aws-cloud-importer-resources', 'w') as f:
                 f.write(json.dumps(cloud_importer_resources))
+
+            print("\n=== Task completed successfully ===")
+
+        except Exception as e:
+            print(f"\n=== ERROR: Task failed ===")
+            print(f"Exception: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+    - name: check-azure-blob
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.3
+      env:
+        - name: AZURE_STORAGE_ACCOUNT
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-az-credentials)
+              key: storage_account
+              optional: true
+        - name: AZURE_STORAGE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-az-credentials)
+              key: storage_key
+              optional: true
+        - name: DRY_RUN
+          value: $(params.dry-run)
+        - name: TTL_HOURS_AZURE_IMAGES
+          value: $(params.ttl-hours-azure-images)
+      args:
+        - $(params.image-name-filters[*])
+      script: |
+        #!/usr/bin/env python3
+        import os
+        import json
+        import subprocess
+        import sys
+        from datetime import datetime, timezone, timedelta
+
+        # Install azure-storage-blob to /tmp (container runs as non-root, /.local not writable)
+        pip_target = '/tmp/pip-packages'
+        subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', '-q', '--target', pip_target, 'azure-storage-blob'],
+            check=True
+        )
+        sys.path.insert(0, pip_target)
+        from azure.storage.blob import BlobServiceClient
+
+        # Configuration
+        azure_image_name_filters = sys.argv[1:]
+        dry_run = os.environ['DRY_RUN'].lower() == 'true'
+        storage_account = os.environ.get('AZURE_STORAGE_ACCOUNT', '')
+        storage_key = os.environ.get('AZURE_STORAGE_KEY', '')
+
+        if not storage_account or not storage_key:
+            print("Azure credentials not provided, skipping Azure scan")
+            with open('/tekton/results/azure-cloud-importer-resources', 'w') as f:
+                f.write(json.dumps([]))
+            sys.exit(0)
+        ttl_hours = int(os.environ['TTL_HOURS_AZURE_IMAGES'])
+        container_name = 'aipcc-productization'
+        blob_prefix = 'cloud-importer/'
+
+        cutoff_date = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+
+        print(f"\n=== Azure Resource Pruner Configuration ===")
+        print(f"Storage Account: {storage_account}")
+        print(f"Container: {container_name}")
+        print(f"Blob Prefix: {blob_prefix}")
+        print(f"Image Name Filters: {azure_image_name_filters}")
+        print(f"TTL: {ttl_hours} hours ({ttl_hours / 24:.1f} days)")
+        print(f"Cutoff date: {cutoff_date.isoformat()}")
+        print(f"Dry run mode: {dry_run}")
+        print("=" * 50)
+
+        try:
+            account_url = f"https://{storage_account}.blob.core.windows.net"
+            client = BlobServiceClient(account_url=account_url, credential=storage_key)
+            container_client = client.get_container_client(container_name)
+
+            # List all blobs under the cloud-importer/ prefix and group by project name
+            # Each project is stored at cloud-importer/<project-name>/.pulumi/...
+            print(f"\n=== Scanning Azure Blob Storage: {container_name}/{blob_prefix} ===")
+            blobs = list(container_client.list_blobs(name_starts_with=blob_prefix))
+
+            if not blobs:
+                print(f"No blobs found under {blob_prefix}")
+                with open('/tekton/results/azure-cloud-importer-resources', 'w') as f:
+                    f.write(json.dumps([]))
+                sys.exit(0)
+
+            # Group blobs by project name (first path segment after blob_prefix)
+            # and track the oldest last-modified time per project (matching AWS behaviour)
+            projects = {}
+            for blob in blobs:
+                # blob.name = "cloud-importer/<project-name>/.pulumi/..."
+                relative = blob.name[len(blob_prefix):]
+                if not relative:
+                    continue
+                project_name = relative.split('/')[0]
+                if not project_name:
+                    continue
+                last_modified = blob.last_modified
+                if last_modified and last_modified.tzinfo is None:
+                    last_modified = last_modified.replace(tzinfo=timezone.utc)
+                if project_name not in projects or (last_modified and last_modified < projects[project_name]):
+                    projects[project_name] = last_modified
+
+            print(f"Found {len(projects)} projects")
+
+            old_resources = []
+            for project_name, last_modified in projects.items():
+                # Apply name filters (all must match)
+                if azure_image_name_filters:
+                    if not all(f in project_name for f in azure_image_name_filters):
+                        print(f"  SKIP: {project_name} (does not match all filters: {azure_image_name_filters})")
+                        continue
+
+                if last_modified is None:
+                    print(f"  SKIP: {project_name} (no modification time)")
+                    continue
+
+                age_hours = (datetime.now(timezone.utc) - last_modified).total_seconds() / 3600
+
+                if last_modified < cutoff_date:
+                    print(f"  MARK FOR CLEANUP: {project_name} (age: {age_hours:.1f} hours, last modified: {last_modified.isoformat()})")
+                    old_resources.append(project_name)
+                else:
+                    print(f"  KEEP: {project_name} (age: {age_hours:.1f} hours, last modified: {last_modified.isoformat()})")
+
+            print(f"\n=== Results ===")
+            print(f"Azure cloud-importer resources to cleanup: {old_resources}")
+
+            with open('/tekton/results/azure-cloud-importer-resources', 'w') as f:
+                f.write(json.dumps(old_resources))
 
             print("\n=== Task completed successfully ===")
 
