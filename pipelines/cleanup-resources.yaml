@@ -4,11 +4,11 @@ metadata:
   name: cleanup-resources
 spec:
   description: |
-    Cleanup pipeline that finds and destroys old mapt resources and PR AMIs.
+    Cleanup pipeline that finds and destroys old mapt resources, AWS AMIs, and Azure images.
     Uses matrix feature to parallelize cleanup of multiple resources.
   params:
-    - name: ami-name-filters
-      description: List of substrings that must ALL be present in AMI names to be considered for cleanup (e.g., ["rhel-ai", "-pr-"] will only match AMIs containing both substrings)
+    - name: image-name-filters
+      description: List of substrings that must ALL be present in cloud image names to be considered for cleanup (applies to both AWS AMIs and Azure images, e.g., ["rhel-ai", "-pr-"] will only match images containing both substrings)
       type: array
       default:
         - "rhel-ai"
@@ -24,8 +24,14 @@ spec:
     - name: secret-aws-credentials
       description: Name of the secret containing AWS credentials
       default: "aws-creds"
+    - name: secret-az-credentials
+      description: Name of the secret containing Azure credentials
+      default: "secret-az-credentials"
     - name: ttl-hours-amis
       description: Time-to-live in hours for merge request AMIs before pruning (e.g., "72" for 3 days)
+      default: "72"
+    - name: ttl-hours-azure-images
+      description: Time-to-live in hours for Azure test images before pruning (e.g., "72" for 3 days)
       default: "72"
     - name: ttl-hours-vms
       description: Time-to-live in hours for resources before pruning (e.g., "48" for 2 days)
@@ -37,17 +43,21 @@ spec:
       default: "rhel-ai-notification"
   tasks:
     - name: find-resources
-      description: Scan S3 for old resources
+      description: Scan S3 and Azure Blob Storage for old resources
       params:
-        - name: ami-name-filters
+        - name: image-name-filters
           value:
-            - $(params.ami-name-filters[*])
+            - $(params.image-name-filters[*])
         - name: dry-run
           value: $(params.dry-run)
         - name: secret-aws-credentials
           value: $(params.secret-aws-credentials)
+        - name: secret-az-credentials
+          value: $(params.secret-az-credentials)
         - name: ttl-hours-amis
           value: $(params.ttl-hours-amis)
+        - name: ttl-hours-azure-images
+          value: $(params.ttl-hours-azure-images)
         - name: ttl-hours-vms
           value: $(params.ttl-hours-vms)
       taskRef:
@@ -171,21 +181,51 @@ spec:
           value: $(params.debug)
         - name: force-destroy
           value: $(params.force-destroy)
+        - name: operation
+          value: "destroy"
         - name: secret-aws-credentials
           value: $(params.secret-aws-credentials)
       matrix:
         params:
           - name: id
-            value: $(tasks.find-resources.results.cloud-importer-resources[*])
+            value: $(tasks.find-resources.results.aws-cloud-importer-resources[*])
       runAfter:
         - find-resources
       taskRef:
         resolver: http
         params:
           - name: url
-            value: "https://raw.githubusercontent.com/ppitonak/cloud-importer/refs/heads/tkn_destroy/tkn/destroy-aws.yaml"
+            value: "https://raw.githubusercontent.com/mapt-oss/cloud-importer/refs/tags/v0.0.3/tkn/rhelai-aws.yaml"
       when:
-        - input: $(tasks.find-resources.results.cloud-importer-resources)
+        - input: $(tasks.find-resources.results.aws-cloud-importer-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
+    - name: cleanup-azure-images
+      params:
+        - name: debug
+          value: $(params.debug)
+        - name: force-destroy
+          value: $(params.force-destroy)
+        - name: operation
+          value: "destroy"
+        - name: secret-az-credentials
+          value: $(params.secret-az-credentials)
+      matrix:
+        params:
+          - name: id
+            value: $(tasks.find-resources.results.azure-cloud-importer-resources[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: http
+        params:
+          - name: url
+            value: "https://raw.githubusercontent.com/mapt-oss/cloud-importer/refs/tags/v0.0.3/tkn/rhelai-azure.yaml"
+      when:
+        - input: $(tasks.find-resources.results.azure-cloud-importer-resources)
           operator: notin
           values: ["[]"]
         - input: $(params.dry-run)
