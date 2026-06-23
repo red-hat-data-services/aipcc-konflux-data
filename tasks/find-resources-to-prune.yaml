@@ -53,7 +53,7 @@ spec:
       type: array
   steps:
     - name: check-s3-bucket
-      image: quay.io/aipcc-cicd/cloud-importer:v0.0.3
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.4
       env:
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
@@ -217,7 +217,7 @@ spec:
             traceback.print_exc()
             sys.exit(1)
     - name: check-azure-blob
-      image: quay.io/aipcc-cicd/cloud-importer:v0.0.3
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.4
       env:
         - name: AZURE_STORAGE_ACCOUNT
           valueFrom:

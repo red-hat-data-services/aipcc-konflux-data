@@ -34,7 +34,7 @@ spec:
       description: Expected image name based on parameters
   steps:
     - name: check-image
-      image: quay.io/aipcc-cicd/cloud-importer:v0.0.3
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.4
       env:
         - name: CLOUD_PROVIDER
           value: $(params.cloud-provider)

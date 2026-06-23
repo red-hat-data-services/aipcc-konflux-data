@@ -175,7 +175,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.0"
+            value: "v0.14.1"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel.yaml"
       when:
@@ -526,7 +526,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.0"
+            value: "v0.14.1"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel.yaml"
       when:
