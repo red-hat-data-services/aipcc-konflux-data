@@ -34,7 +34,7 @@ spec:
       description: Expected image name based on parameters
   steps:
     - name: check-image
-      image: ghcr.io/mapt-oss/cloud-importer@sha256:045a60a89cc5f9db3514fab05c65444ce91f48d13527ad9a0ab54b3caf88577f
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.3
       env:
         - name: CLOUD_PROVIDER
           value: $(params.cloud-provider)

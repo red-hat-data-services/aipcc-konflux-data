@@ -49,7 +49,7 @@ spec:
 
   steps:
     - name: run-model-opt
-      image: quay.io/konflux-ci/release-service-utils@sha256:d957b8a02ceb1401deffd249eb2982dfb118c47df60c5fe20cf4c35d418e6c2a
+      image: quay.io/konflux-ci/release-service-utils@sha256:48323c256efcb3c318762cb66b3a9cabd827a0bef2485cb91e8c7aed7d1fb1f0
       args: ["$(params.model-names[*])"]
       env:
         - name: HOST

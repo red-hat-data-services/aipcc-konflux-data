@@ -163,7 +163,7 @@ spec:
           ${ssh_cmd} podman run -d --name cloud-importer \
             --env-file ${CREDENTIALS_FILE} \
             -v ${DISK_IMAGE_DIR}:/data:Z \
-            ghcr.io/mapt-oss/cloud-importer:latest \
+            quay.io/aipcc-cicd/cloud-importer:v0.0.3 \
             rhelai aws \
             --backed-url s3://${AWS_BUCKET}/cloud-importer \
             --project-name ${IMAGE_NAME} \
@@ -196,7 +196,7 @@ spec:
           ${ssh_cmd} podman run -d --name cloud-importer \
             --env-file ${CREDENTIALS_FILE} \
             -v ${DISK_IMAGE_DIR}:/data:Z \
-            ghcr.io/mapt-oss/cloud-importer:latest \
+            quay.io/aipcc-cicd/cloud-importer:v0.0.3 \
             rhelai az \
             --backed-url azblob://aipcc-productization/cloud-importer \
             --project-name ${IMAGE_NAME} \
