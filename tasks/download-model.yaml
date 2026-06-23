@@ -10,7 +10,7 @@ spec:
     - name: host-access-secret-name
       description: Name of the secret containing SSH credentials
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:48323c256efcb3c318762cb66b3a9cabd827a0bef2485cb91e8c7aed7d1fb1f0
+    - image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
       args: ["$(params.model-names[*])"]
       env:
         - name: HF_TOKEN
