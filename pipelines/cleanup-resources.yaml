@@ -192,10 +192,14 @@ spec:
       runAfter:
         - find-resources
       taskRef:
-        resolver: http
+        resolver: git
         params:
           - name: url
-            value: "https://raw.githubusercontent.com/mapt-oss/cloud-importer/refs/tags/v0.0.3/tkn/rhelai-aws.yaml"
+            value: "https://github.com/mapt-oss/cloud-importer"
+          - name: revision
+            value: "v0.0.3"
+          - name: pathInRepo
+            value: "tkn/rhelai-aws.yaml"
       when:
         - input: $(tasks.find-resources.results.aws-cloud-importer-resources)
           operator: notin
