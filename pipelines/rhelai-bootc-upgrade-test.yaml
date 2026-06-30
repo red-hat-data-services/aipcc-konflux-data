@@ -88,7 +88,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "$(tasks.create-configuration.results.base-tags),pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
         - name: version
           value: "$(params.rhel-ai-version)"
       runAfter:
@@ -135,7 +135,7 @@ spec:
         - name: spot-eviction-tolerance
           value: "medium"
         - name: tags
-          value: "konflux=true,ci=true,component=$(tasks.create-configuration.results.component),product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722"
+          value: "$(tasks.create-configuration.results.base-tags),pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
         - name: version
           value: "$(params.rhel-ai-version)"
       runAfter:

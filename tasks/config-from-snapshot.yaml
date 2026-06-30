@@ -13,6 +13,12 @@ spec:
         Fallback inference server image to use when testing model-opt and the
         inference server is not in the SNAPSHOT.
     - name: SNAPSHOT
+    - name: konflux-console-url
+      default: "https://konflux-ui.apps.stone-prod-p02.hjvn.p1.openshiftapps.com"
+      description: >
+        Base URL of the Konflux console UI, used to build pipeline-run-url tags.
+        Defaults to prod. Override via IntegrationTestScenario params for staging,
+        e.g. https://konflux-ui.apps.<staging-cluster>.openshiftapps.com
   results:
     - name: accelerator
       description: "Accelerator derived from variant, e.g. cuda, rocm, neuron, cpu"
@@ -38,6 +44,13 @@ spec:
       description: Variant, e.g. cuda-ubi9, gaudi-ubi9, neuron-ubi9, rocm-ubi9, spyre-ubi9, tpu-ubi9, cpu-ubi9
     - name: vm-types
       description: Comma-separated list of VM types based on variant
+    - name: base-tags
+      description: >
+        Comma-separated base cloud resource tags for cost tracking and resource identification.
+        Pipelines append per-invocation tags (mapt-id, purpose, etc).
+    - name: pipeline-run-url-prefix
+      description: >
+        Konflux console URL prefix. Pipelines append $(context.pipelineRun.name) to get the full URL.
   steps:
     - name: parse-snapshot-components
       image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
@@ -51,8 +64,18 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.labels['pac.test.appstudio.openshift.io/event-type']
+        - name: APPLICATION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['appstudio.openshift.io/application']
+        - name: CONSOLE_URL
+          value: $(params.konflux-console-url)
         - name: INFERENCE_SERVER_FALLBACK_IMAGE
           value: $(params.inference-server-fallback-image)
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       script: |
@@ -263,6 +286,26 @@ spec:
 
         accelerator="${variant%%-*}"
 
+        # Derive product name for tags
+        case "${COMPONENT}" in
+          rhaiis*)
+            product="rhaiis"
+            ;;
+          *)
+            product="rhel-ai"
+            ;;
+        esac
+
+        # Base tags — common to all cloud resources
+        base_tags="konflux=true,ci=true,component=${COMPONENT},product=${product},app-code=RHAI-014,service-phase=dev,cost-center=722"
+
+        # Pipeline run URL prefix (full URL = prefix + pipelineRunName, assembled at pipeline level)
+        if [[ -n "${APPLICATION}" ]]; then
+          pipeline_run_url_prefix="${CONSOLE_URL}/ns/${NAMESPACE}/applications/${APPLICATION}/pipelineruns/"
+        else
+          pipeline_run_url_prefix=""
+        fi
+
         echo -e "\n === Storing results ==="
         # we need to store task results even if the task fails
         echo -n "${accelerator}" | tee $(results.accelerator.path)
@@ -277,6 +320,8 @@ spec:
         echo -n "${productImage}" | tee $(results.product-image.path)
         echo -n "${variant}" | tee $(results.variant.path)
         echo -n "${vm_types}" | tee $(results.vm-types.path)
+        echo -n "${base_tags}" | tee $(results.base-tags.path)
+        echo -n "${pipeline_run_url_prefix}" | tee $(results.pipeline-run-url-prefix.path)
 
         exit ${ret_value}
         

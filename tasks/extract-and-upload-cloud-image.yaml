@@ -29,6 +29,11 @@ spec:
       description: |
         Comma-separated list of AWS account IDs to share the image with. AWS would use arn format for orgs, and Azure will use tenantIds.
         If not provided, default values will be used for AWS and Azure.
+    - name: tags
+      default: ""
+      description: >
+        Comma-separated tags. If empty, fallback defaults are used.
+        image-name is appended automatically.
   steps:
     - image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
       env:
@@ -38,6 +43,8 @@ spec:
           value: $(params.container-image)
         - name: DEBUG
           value: $(params.debug)
+        - name: TAGS
+          value: $(params.tags)
         - name: HOST
           valueFrom:
             secretKeyRef:
@@ -130,6 +137,12 @@ spec:
         IMAGE_NAME="$(params.image-name)"
         CREDENTIALS_FILE="/tmp/cloud-credentials"
 
+        if [[ -n "${TAGS}" ]]; then
+          CLOUD_TAGS="${TAGS},image-name=${IMAGE_NAME}"
+        else
+          CLOUD_TAGS="konflux=true,ci=true,product=rhelai,image-name=${IMAGE_NAME},app-code=RHAI-014,service-phase=dev,cost-center=722"
+        fi
+
         cloud_importer_params=""
         if [[ "${DEBUG}" == "true" ]]; then
           cloud_importer_params+="--debug "
@@ -170,7 +183,7 @@ spec:
             --image-name ${IMAGE_NAME} \
             --image-path /data/${DISK_IMAGE_FILE} \
             --replicate \
-            --tags konflux=true,ci=true,product=rhelai,image-name=${IMAGE_NAME},app-code=GITL-005,service-phase=dev,cost-center=722 \
+            --tags ${CLOUD_TAGS} \
             ${cloud_importer_params}
 
         elif [[ "${CLOUD_PROVIDER}" == "azure" ]]; then
@@ -203,7 +216,7 @@ spec:
             --image-name ${IMAGE_NAME} \
             --image-path /data/${DISK_IMAGE_FILE} \
             --replicate \
-            --tags konflux=true,ci=true,product=rhelai,image-name=${IMAGE_NAME},app-code=GITL-005,service-phase=dev,cost-center=722 \
+            --tags ${CLOUD_TAGS} \
             ${cloud_importer_params}
 
         else
