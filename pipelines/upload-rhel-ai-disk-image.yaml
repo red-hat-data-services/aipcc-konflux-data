@@ -21,6 +21,9 @@ spec:
       description: RHEL AI version for image naming, e.g. 3.2.0
     - name: debug
       default: "false"
+    - name: base-tags
+      default: "konflux=true,ci=true,component=rhel-ai-disk-image,product=rhel-ai,app-code=RHAI-014,service-phase=dev,cost-center=722"
+      description: Base cloud resource tags for cost tracking and resource identification
   results:
     - name: image-name
       value: $(tasks.check-cloud-image-exists.results.image-name)
@@ -87,7 +90,7 @@ spec:
         - name: spot
           value: "false"
         - name: tags
-          value: "konflux=true,ci=true,component=rhel-ai-disk-image,product=rhel-ai,app-code=GITL-005,service-phase=dev,cost-center=722,purpose=helper"
+          value: "$(params.base-tags),purpose=helper"
         - name: version
           value: "43"
       runAfter:
@@ -124,6 +127,8 @@ spec:
           value: "aws-konflux-tests"
         - name: secret-az-credentials
           value: "secret-az-credentials"
+        - name: tags
+          value: "$(params.base-tags)"
       runAfter:
         - create-helper-vm-aws
       when:
