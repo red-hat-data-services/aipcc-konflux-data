@@ -42,6 +42,7 @@
           "digest"
         ],
         "matchBaseBranches": [],
+        "minimumReleaseAge": "5 days",
         "platformAutomerge": true,
         "automerge": true
       },
