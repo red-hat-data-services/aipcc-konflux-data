@@ -247,6 +247,8 @@ spec:
           value: $(params.image-expires-after)
         - name: dev-package-managers
           value: "true"
+        - name: ACTIVATION_KEY
+          value: $(params.activation-key)
       runAfter:
         - clone-repository
       taskRef:
