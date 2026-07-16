@@ -127,7 +127,64 @@ spec:
             ${VARIANT_EXTRA_FLAGS}
         }
 
+        dump_container_diagnostics() {
+          # Variant-specific GPU diagnostics
+          if [[ "${VARIANT}" =~ cuda ]]; then
+            ${ssh_cmd} nvidia-smi || true
+            echo "==="
+            ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
+          elif [[ "${VARIANT}" =~ gaudi ]]; then
+            ${ssh_cmd} hl-smi || true
+          elif [[ "${VARIANT}" =~ neuron ]]; then
+            ${ssh_cmd} neuron-ls || true
+          elif [[ "${VARIANT}" =~ rocm ]]; then
+            ${ssh_cmd} amd-smi || true
+            echo "==="
+            ${ssh_cmd} rocminfo || true
+          fi
+
+          echo "==="
+          ${ssh_cmd} ${sudo_cmd} podman inspect ${CONTAINER_NAME} | jq '.[0].State'
+          echo "==="
+          ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 ${CONTAINER_NAME}
+          echo "==="
+          if [ "$(params.start-rhaiis)" == "false" ]; then
+            echo -e "=== journalctl for ${CONTAINER_NAME} service ==="
+            ${ssh_cmd} "sudo journalctl -u ${CONTAINER_NAME}.service --no-pager --lines=200" || true
+            echo "==="
+          fi
+          if [ "$(params.debug)" == "true" ]; then
+            echo -e "\n=== Sleeping for 60 minutes ==="
+            sleep 3600
+          fi
+        }
+
         wait_for_rhaiis() {
+          # When relying on the quadlet service (start-rhaiis=false), the container
+          # may restart a few times before stabilizing. Give it a dedicated settling period.
+          if [ "$(params.start-rhaiis)" == "false" ]; then
+            not_running_count=0
+            for i in $(seq 1 20); do
+              container_state=$(${ssh_cmd} "${sudo_cmd} podman inspect -f '{{.State.Running}}' ${CONTAINER_NAME}" 2>/dev/null || echo "missing")
+              if [[ "${container_state}" == "true" ]]; then
+                echo "Container is running, proceeding to health check"
+                break
+              fi
+
+              not_running_count=$((not_running_count + 1))
+              echo "Container is not running (attempt $not_running_count)..."
+
+              if [ $not_running_count -ge 4 ]; then
+                echo "Container failed to stay running after $not_running_count checks"
+                echo "==="
+                dump_container_diagnostics
+                exit 1
+              fi
+
+              sleep 30
+            done
+          fi
+
           max_attempts=20
           attempt=1
           while [ $attempt -lt $max_attempts ]; do
@@ -136,31 +193,7 @@ spec:
             if [[ "${container_state}" == "false" ]]; then
               echo "Container is not running!"
               echo "==="
-
-              # Variant-specific GPU diagnostics
-              if [[ "${VARIANT}" =~ cuda ]]; then
-                ${ssh_cmd} nvidia-smi || true
-                echo "==="
-                ${ssh_cmd} "nvidia-smi --query-gpu=memory.free --format=csv" || true
-              elif [[ "${VARIANT}" =~ gaudi ]]; then
-                ${ssh_cmd} hl-smi || true
-              elif [[ "${VARIANT}" =~ neuron ]]; then
-                ${ssh_cmd} neuron-ls || true
-              elif [[ "${VARIANT}" =~ rocm ]]; then
-                ${ssh_cmd} amd-smi || true
-                echo "==="
-                ${ssh_cmd} rocminfo || true
-              fi
-
-              echo "==="
-              ${ssh_cmd} ${sudo_cmd} podman inspect ${CONTAINER_NAME} | jq '.[0].State'
-              echo "==="
-              ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 ${CONTAINER_NAME}
-              echo "==="
-              if [ "$(params.debug)" == "true" ]; then
-                echo -e "\n=== Sleeping for 60 minutes ==="
-                sleep 3600
-              fi
+              dump_container_diagnostics
               exit 1
             fi
 
@@ -200,6 +233,10 @@ spec:
             echo "Container failed to become ready within $(($max_attempts * 30)) seconds"
             echo -e "\n=== Podman logs ==="
             ${ssh_cmd} ${sudo_cmd} podman logs ${CONTAINER_NAME}
+            if [ "$(params.start-rhaiis)" == "false" ]; then
+              echo -e "\n=== journalctl for ${CONTAINER_NAME} service ==="
+              ${ssh_cmd} "sudo journalctl -u ${CONTAINER_NAME}.service --no-pager --lines=200" || true
+            fi
             exit 1
           fi
         }

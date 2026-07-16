@@ -155,6 +155,8 @@ spec:
           values: ["azure"]
     - name: configure-vm
       params:
+        - name: container-name
+          value: "$(params.container-name)"
         - name: host-access-secret-name
           value: "mapt-$(context.pipelineRun.name)"
         - name: pull-secret-name
@@ -246,7 +248,7 @@ spec:
             podman images
 
             echo -e "\n=== RHAIIS quadlet status ==="
-            sudo systemctl status rhaiis
+            sudo systemctl status $(params.container-name)
         - name: wait-for-connection
           value: "true"
       runAfter:

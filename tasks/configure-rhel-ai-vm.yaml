@@ -4,6 +4,9 @@ metadata:
   name: configure-rhel-ai-vm
 spec:
   params:
+    - name: container-name
+      default: "rhaii"
+      description: Name of the RHAIIS container to configure (rhaii for 3.4+, rhaiis for earlier versions)
     - name: host-access-secret-name
     - name: model-name
       description: Name of the model to test
@@ -98,7 +101,7 @@ spec:
         ${ssh_cmd} "loginctl show-user $USERNAME | grep Linger"
 
         echo -e "\n=== Creating quadlet configuration ==="
-        config_file="/etc/containers/systemd/rhaiis.container.d/install.conf"
+        config_file="/etc/containers/systemd/$(params.container-name).container.d/install.conf"
         ${ssh_cmd} sudo cp ${config_file}.example ${config_file}
         ${ssh_cmd} "sudo sed -i 's|\(HUGGING_FACE_HUB_TOKEN=\)[^ ]*|\1${HUGGING_FACE_HUB_TOKEN}|' ${config_file}"
         ${ssh_cmd} "sudo sed -i 's|\(--model \)[^ ]*|\1$(params.model-name)|' ${config_file}"
@@ -110,8 +113,8 @@ spec:
         echo -e "\n=== Reloading systemd ==="
         ${ssh_cmd} sudo systemctl daemon-reload
 
-        echo -e "\n=== Starting rhaiis service==="
-        ${ssh_cmd} sudo systemctl start rhaiis
+        echo -e "\n=== Starting service $(params.container-name) ==="
+        ${ssh_cmd} sudo systemctl start $(params.container-name)
   volumes:
     - name: auth-file
       secret:
