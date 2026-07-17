@@ -44,9 +44,16 @@ spec:
         #!/bin/bash
         set -e
 
+        EXIT_SSH_SETUP_FAILED=1
+        EXIT_CONTAINER_START_FAILED=2
+        EXIT_CONTAINER_CRASHED=3
+        EXIT_HEALTH_CHECK_TIMEOUT=4
+        EXIT_INFERENCE_FAILED=5
+
         INFERENCE_SERVER_IMAGE="$(params.inference-server-image)"
         VARIANT="$(params.variant)"
         CONTAINER_NAME="$(params.container-name)"
+        echo "Exit codes: 1=ssh-setup 2=container-start 3=container-crashed 4=health-timeout 5=inference-failed"
         echo -e "\n=== Using inference server image: ${INFERENCE_SERVER_IMAGE} ==="
         echo -e "=== Variant: ${VARIANT} ==="
 
@@ -178,14 +185,14 @@ spec:
                 echo "Container failed to stay running after $not_running_count checks"
                 echo "==="
                 dump_container_diagnostics
-                exit 1
+                exit $EXIT_CONTAINER_CRASHED
               fi
 
               sleep 30
             done
           fi
 
-          max_attempts=20
+          max_attempts=30
           attempt=1
           while [ $attempt -lt $max_attempts ]; do
             echo -e "\n=== Waiting for RHAIIS container to be ready $attempt/$max_attempts ==="
@@ -194,7 +201,7 @@ spec:
               echo "Container is not running!"
               echo "==="
               dump_container_diagnostics
-              exit 1
+              exit $EXIT_CONTAINER_CRASHED
             fi
 
             if ${ssh_cmd} "curl --no-progress-meter -f http://localhost:8000/health > /dev/null 2>&1"; then
@@ -237,7 +244,7 @@ spec:
               echo -e "\n=== journalctl for ${CONTAINER_NAME} service ==="
               ${ssh_cmd} "sudo journalctl -u ${CONTAINER_NAME}.service --no-pager --lines=200" || true
             fi
-            exit 1
+            exit $EXIT_HEALTH_CHECK_TIMEOUT
           fi
         }
 
@@ -368,18 +375,18 @@ spec:
           if [ "$(params.start-rhaiis)" == "true" ]; then
             if ! start_rhaiis "${model}" "${MODEL_PATH_IN_CONTAINER}"; then
               echo -e "\n✗ Failed to start RHAIIS container for model ${model}"
-              exit 1
+              exit $EXIT_CONTAINER_START_FAILED
             fi
           fi
 
           if ! wait_for_rhaiis; then
             echo -e "\n✗ RHAIIS container failed to become ready"
-            exit 2
+            exit $EXIT_HEALTH_CHECK_TIMEOUT
           fi
 
           if ! test_inference "${model}"; then
             echo -e "\n✗ Failed to test inference for model ${model}"
-            exit 3
+            exit $EXIT_INFERENCE_FAILED
           fi
         done
 
