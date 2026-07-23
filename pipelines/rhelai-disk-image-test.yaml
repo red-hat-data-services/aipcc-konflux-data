@@ -286,6 +286,8 @@ spec:
     - name: configure-vm
       description: Configure the RHEL AI VM instance
       params:
+        - name: container-name
+          value: "$(params.container-name)"
         - name: host-access-secret-name
           value: "mapt-$(context.pipelineRun.name)"
         - name: model-name
