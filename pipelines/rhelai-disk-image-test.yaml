@@ -13,7 +13,7 @@ spec:
     - name: debug
       default: "false"
     - name: model-name
-      default: "ibm-granite/granite-3.3-8b-instruct"
+      default: "ibm-granite/granite-3.3-2b-instruct"
       description: Name of the model to test
     - name: pull-secret-name
       default: "rhelai-bootc-pull"
