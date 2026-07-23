@@ -134,7 +134,10 @@ spec:
         def get_directory_age(prefix):
             """Get the oldest LastModified timestamp for objects in a directory"""
             cmd = f'aws s3api list-objects-v2 --bucket {bucket} --prefix {prefix} --query "sort_by(Contents, &LastModified)[0].LastModified" --output json'
-            result = run_aws_command(cmd)
+            try:
+                result = run_aws_command(cmd)
+            except RuntimeError:
+                return None
             if result:
                 return datetime.fromisoformat(result.replace('Z', '+00:00'))
             return None
