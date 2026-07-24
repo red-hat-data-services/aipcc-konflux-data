@@ -8,10 +8,17 @@ spec:
       default: "rhaii"
       description: Name of the RHAIIS container to configure (rhaii for 3.4+, rhaiis for earlier versions)
     - name: host-access-secret-name
+    - name: max-model-len
+      default: "1024"
+      description: Maximum model context length. Passed to vLLM --max-model-len.
     - name: model-name
       description: Name of the model to test
     - name: pull-secret-name
+      default: "no-pull-secret"
       description: Name of the secret containing docker config for image authentication
+    - name: tensor-parallel-size
+      default: ""
+      description: Override for tensor parallel size. If empty, auto-detected from GPU count.
     - name: variant
       default: "cuda"
       description: "Variant for image naming, e.g. cuda, rocm"
@@ -87,12 +94,22 @@ spec:
 
         echo -e "\n=== Number of GPUs: ${NUMBER_OF_GPUS} ==="
 
+        TP_SIZE="$(params.tensor-parallel-size)"
+        if [[ -n "${TP_SIZE}" ]]; then
+          echo -e "\n=== Overriding tensor parallel size: ${TP_SIZE} (auto-detected: ${NUMBER_OF_GPUS}) ==="
+          NUMBER_OF_GPUS="${TP_SIZE}"
+        fi
+
         echo -e "\n=== Checking /etc/ostree/auth.json ==="
         ${ssh_cmd} "sudo ls -al /etc/ostree/auth.json || true"
 
-        echo -e "\n=== Copying pull secret ==="
-        scp -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
-        ${ssh_cmd} sudo cp auth.json /etc/ostree/auth.json
+        if [ -f /mnt/auth-file/auth.json ]; then
+          echo -e "\n=== Copying pull secret ==="
+          scp -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null /mnt/auth-file/auth.json ${USERNAME}@${HOST}:auth.json
+          ${ssh_cmd} sudo cp auth.json /etc/ostree/auth.json
+        else
+          echo -e "\n=== Skipping pull secret copy (not provided) ==="
+        fi
 
         # "podman run" process is killed when ssh session is closed which
         # happens randomly, probably because it runs on OpenShift
@@ -106,6 +123,7 @@ spec:
         ${ssh_cmd} "sudo sed -i 's|\(HUGGING_FACE_HUB_TOKEN=\)[^ ]*|\1${HUGGING_FACE_HUB_TOKEN}|' ${config_file}"
         ${ssh_cmd} "sudo sed -i 's|\(--model \)[^ ]*|\1$(params.model-name)|' ${config_file}"
         ${ssh_cmd} "sudo sed -i 's|\(--tensor-parallel-size \)[^ ]*|\1${NUMBER_OF_GPUS}|' ${config_file}"
+        ${ssh_cmd} "sudo sed -i 's|\(--max-model-len \)[^ ]*|\1$(params.max-model-len)|' ${config_file}"
 
         echo -e "\n=== Contents of ${config_file} ==="
         ${ssh_cmd} cat ${config_file} | sed 's|\(HUGGING_FACE_HUB_TOKEN=hf_\)[^ ]*|\1hidden|'
@@ -119,6 +137,7 @@ spec:
     - name: auth-file
       secret:
         secretName: "$(params.pull-secret-name)"
+        optional: true
         items:
           - key: ".dockerconfigjson"
             path: auth.json
