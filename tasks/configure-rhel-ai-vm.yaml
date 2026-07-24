@@ -23,7 +23,7 @@ spec:
       default: "cuda"
       description: "Variant for image naming, e.g. cuda, rocm"
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+    - image: quay.io/konflux-ci/release-service-utils@sha256:aacaec006068dd6e8f66c9e1c4fd2556e8359d06579968c3ef5d1cd8065107bf
       env:
         - name: HOST
           valueFrom:
