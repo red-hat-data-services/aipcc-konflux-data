@@ -101,7 +101,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.1"
+            value: "v0.14.2"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -133,7 +133,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.1"
+            value: "v0.14.2"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel-ai.yaml"
       when:
@@ -165,7 +165,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.1"
+            value: "v0.14.2"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
       when:
