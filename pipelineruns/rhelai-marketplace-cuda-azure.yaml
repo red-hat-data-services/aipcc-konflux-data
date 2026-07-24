@@ -1,0 +1,33 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: rhelai-marketplace-cuda-azure-
+  namespace: rhel-ai-tenant
+spec:
+  params:
+    - name: cloud-provider
+      value: azure
+    - name: debug
+      value: "true"
+    - name: model-name
+      value: ibm-granite/granite-3.3-2b-instruct
+    - name: rhel-ai-version
+      value: "3.4.0"
+    - name: variant
+      value: cuda
+  pipelineRef:
+    name: rhelai-marketplace-test
+  taskRunTemplate:
+    podTemplate:
+      nodeSelector:
+        konflux-ci.dev/workload: konflux-tenants
+      tolerations:
+        - effect: NoSchedule
+          key: konflux-ci.dev/workload
+          operator: Equal
+          value: konflux-tenants
+    serviceAccountName: konflux-integration-runner
+  timeouts:
+    finally: 2h0m0s
+    pipeline: 6h0m0s
+    tasks: 4h0m0s

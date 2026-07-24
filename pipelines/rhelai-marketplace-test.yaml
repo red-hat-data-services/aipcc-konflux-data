@@ -1,0 +1,351 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: rhelai-marketplace-test
+spec:
+  params:
+    - name: architecture
+      default: "x86_64"
+      description: One of x86_64, aarch64
+    - name: cloud-provider
+      description: Cloud provider, one of aws, azure
+    - name: debug
+      default: "false"
+    - name: model-name
+      default: "ibm-granite/granite-3.3-2b-instruct"
+      description: Name of the model to test
+    - name: rhel-ai-version
+      description: RHEL AI version, e.g. 3.4
+    - name: variant
+      default: "cuda"
+      description: Variant, one of cuda, rocm
+  tasks:
+    - name: create-configuration
+      description: Derive VM types and tags from variant, cloud provider, and architecture
+      taskSpec:
+        params:
+          - name: architecture
+          - name: cloud-provider
+          - name: rhel-ai-version
+          - name: variant
+        results:
+          - name: vm-types
+            description: Comma-separated list of VM instance types
+          - name: accelerator
+            description: Accelerator type derived from variant
+          - name: base-tags
+            description: Comma-separated base cloud resource tags for cost tracking
+          - name: short-version
+            description: Short version string (major.minor) for AWS marketplace
+        steps:
+          - name: derive-config
+            image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+            script: |
+              #!/bin/bash
+              set -e
+
+              VARIANT="$(params.variant)"
+              CLOUD_PROVIDER="$(params.cloud-provider)"
+              ARCHITECTURE="$(params.architecture)"
+              ACCELERATOR="${VARIANT%%-*}"
+
+              case "${VARIANT}" in
+                cuda*)
+                  if [[ "${CLOUD_PROVIDER}" == "aws" ]]; then
+                    if [[ "${ARCHITECTURE}" != "x86_64" ]]; then
+                      echo "Architecture ${ARCHITECTURE} not supported for CUDA marketplace on AWS"
+                      exit 1
+                    fi
+                    vm_types="p5.48xlarge,g6e.48xlarge,p4d.24xlarge"
+                  elif [[ "${CLOUD_PROVIDER}" == "azure" ]]; then
+                    if [[ "${ARCHITECTURE}" == "x86_64" ]]; then
+                      vm_types="Standard_NC4as_T4_v3,Standard_NC8as_T4_v3,Standard_NC16as_T4_v3,Standard_NC64as_T4_v3,Standard_NC40ads_H100_v5,Standard_NCC40ads_H100_v5"
+                    else
+                      echo "Architecture ${ARCHITECTURE} not supported for CUDA on Azure"
+                      exit 1
+                    fi
+                  else
+                    echo "Cloud provider ${CLOUD_PROVIDER} not supported for CUDA"
+                    exit 1
+                  fi
+                  ;;
+                rocm*)
+                  if [[ "${CLOUD_PROVIDER}" == "azure" ]]; then
+                    vm_types="Standard_ND96is_MI300X_v5,Standard_ND96isr_MI300X_v5"
+                  elif [[ "${CLOUD_PROVIDER}" == "aws" ]]; then
+                    vm_types="g4ad.xlarge,g4ad.2xlarge,g4ad.4xlarge,g4ad.8xlarge,g4ad.16xlarge"
+                  else
+                    echo "Cloud provider ${CLOUD_PROVIDER} not supported for ROCm"
+                    exit 1
+                  fi
+                  ;;
+                *)
+                  echo "Variant ${VARIANT} not supported for marketplace testing"
+                  exit 1
+                  ;;
+              esac
+
+              base_tags="konflux=true,ci=true,product=rhel-ai,app-code=RHAI-014,service-phase=dev,cost-center=722"
+
+              echo -n "${vm_types}" | tee $(results.vm-types.path)
+              echo
+              echo -n "${ACCELERATOR}" | tee $(results.accelerator.path)
+              echo
+              echo -n "${base_tags}" | tee $(results.base-tags.path)
+              echo
+              SHORT_VERSION=$(echo "$(params.rhel-ai-version)" | grep -oP '^\d+\.\d+')
+              echo -n "${SHORT_VERSION}" | tee $(results.short-version.path)
+      params:
+        - name: architecture
+          value: $(params.architecture)
+        - name: cloud-provider
+          value: $(params.cloud-provider)
+        - name: rhel-ai-version
+          value: $(params.rhel-ai-version)
+        - name: variant
+          value: $(params.variant)
+    - name: create-vm-aws
+      description: Create AWS VM instance from marketplace image
+      params:
+        - name: accelerator
+          value: "$(tasks.create-configuration.results.accelerator)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: debug
+          value: "true"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: marketplace
+          value: "true"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "$(tasks.create-configuration.results.base-tags),pipeline-run-url=$(context.pipelineRun.name)"
+        - name: version
+          value: "$(tasks.create-configuration.results.short-version)"
+      runAfter:
+        - create-configuration
+      when:
+        - input: $(params.cloud-provider)
+          operator: in
+          values: ["aws"]
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.2"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+    - name: create-vm-azure
+      description: Create Azure VM instance from marketplace image
+      params:
+        - name: accelerator
+          value: "$(tasks.create-configuration.results.accelerator)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.vm-types)"
+        - name: debug
+          value: "true"
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: marketplace
+          value: "true"
+        - name: operation
+          value: "create"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+        - name: spot
+          value: "true"
+        - name: spot-increase-rate
+          value: "100"
+        - name: spot-eviction-tolerance
+          value: "medium"
+        - name: tags
+          value: "$(tasks.create-configuration.results.base-tags),pipeline-run-url=$(context.pipelineRun.name)"
+      runAfter:
+        - create-configuration
+      when:
+        - input: $(params.cloud-provider)
+          operator: in
+          values: ["azure"]
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.2"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel-ai.yaml"
+    - name: configure-vm
+      description: Configure the RHEL AI VM instance
+      params:
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: model-name
+          value: "$(params.model-name)"
+        - name: tensor-parallel-size
+          value: "1"
+        - name: variant
+          value: "$(params.variant)"
+      runAfter:
+        - create-vm-aws
+        - create-vm-azure
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/configure-rhel-ai-vm.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: test-image-version
+      description: Verify container images on the VM match the expected RHEL AI version
+      params:
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: expected-version
+          value: "$(params.rhel-ai-version)"
+      runAfter:
+        - configure-vm
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/test-rhaii-image-version.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+    - name: test-inference
+      description: Run inference tests on the configured VM
+      params:
+        - name: container-name
+          value: "rhaii"
+        - name: debug
+          value: "$(params.debug)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: inference-server-image
+          value: ""
+        - name: model-names
+          value:
+            - "$(params.model-name)"
+        - name: start-rhaiis
+          value: "false"
+        - name: use-sudo
+          value: "true"
+        - name: variant
+          value: "$(params.variant)"
+      runAfter:
+        - configure-vm
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/test-inference.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+  finally:
+    - name: delete-vm-aws
+      description: Clean up the AWS VM instance
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.2"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel-ai.yaml"
+      when:
+        - input: $(params.cloud-provider)
+          operator: in
+          values: ["aws"]
+    - name: delete-vm-azure
+      description: Clean up the Azure VM instance
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-az-credentials
+          value: "secret-az-credentials"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.2"
+          - name: pathInRepo
+            value: "tkn/infra-azure-rhel-ai.yaml"
+      when:
+        - input: $(params.cloud-provider)
+          operator: in
+          values: ["azure"]

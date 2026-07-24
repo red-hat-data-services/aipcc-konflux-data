@@ -1,0 +1,85 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: test-rhaii-image-version
+spec:
+  description: |
+    Verifies that all container images on the VM match the expected RHEL AI version.
+  params:
+    - name: host-access-secret-name
+      description: Name of the secret containing SSH credentials (host, username, id_rsa)
+    - name: expected-version
+      description: Expected version string that all images should contain, e.g. 3.4
+    - name: use-sudo
+      default: "true"
+      description: Whether to use sudo for podman commands
+  steps:
+    - name: verify-images
+      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+      volumeMounts:
+        - name: mapt-ssh-key
+          mountPath: /mnt/mapt-ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+
+        cp /mnt/mapt-ssh-key/id_rsa id_rsa
+        chmod 400 id_rsa
+        HOST=$(echo "${HOST}" | tr -d '\n\r')
+        USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
+        ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${USERNAME}@${HOST}"
+
+        SUDO=""
+        if [[ "$(params.use-sudo)" == "true" ]]; then
+          SUDO="sudo"
+        fi
+
+        EXPECTED_VERSION="$(params.expected-version)"
+
+        echo "=== Listing container images on VM ==="
+        images=$(${ssh_cmd} "${SUDO} podman images --format '{{.Repository}}:{{.Tag}}'" | grep -v '<none>' || true)
+        echo "${images}"
+
+        if [[ -z "${images}" ]]; then
+          echo -e "\nERROR: No container images found on the VM"
+          exit 1
+        fi
+
+        echo -e "\n=== Verifying all images contain version ${EXPECTED_VERSION} ==="
+        failed=0
+        while IFS= read -r image; do
+          tag="${image##*:}"
+          if [[ "${tag}" == "${EXPECTED_VERSION}" || "${tag}" == "${EXPECTED_VERSION}-"* ]]; then
+            echo "  OK: ${image}"
+          else
+            echo "  FAIL: ${image} (tag '${tag}' does not match version ${EXPECTED_VERSION})"
+            failed=1
+          fi
+        done <<< "${images}"
+
+        if [[ ${failed} -eq 1 ]]; then
+          echo -e "\nERROR: Not all images match expected version ${EXPECTED_VERSION}"
+          exit 1
+        fi
+
+        echo -e "\nAll images match expected version ${EXPECTED_VERSION}"
+  volumes:
+    - name: mapt-ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        defaultMode: 0400
+        items:
+          - key: id_rsa
+            path: id_rsa
+            mode: 0400
