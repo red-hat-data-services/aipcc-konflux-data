@@ -8,8 +8,8 @@
     {
       "customType": "regex",
       "description": "Update cloud-importer container images in task scripts",
-      "fileMatch": [
-        "tasks/extract-and-upload-cloud-image\\.yaml$"
+      "managerFilePatterns": [
+        "/tasks/extract-and-upload-cloud-image\\.yaml$/"
       ],
       "matchStrings": [
         "(?<depName>quay\\.io/aipcc-cicd/cloud-importer):(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
@@ -20,8 +20,8 @@
     {
       "customType": "regex",
       "description": "Update Tekton git resolver references for GitHub repos (mapt, cloud-importer)",
-      "fileMatch": [
-        "pipelines/.*\\.yaml$"
+      "managerFilePatterns": [
+        "/pipelines/.*\\.yaml$/"
       ],
       "matchStrings": [
         "- name: url\\s+value:\\s*\"https://github\\.com/(?<depName>[^\"]+)\"\\s+- name: revision\\s+value:\\s*\"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\""
