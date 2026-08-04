@@ -1,0 +1,163 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: fetch-image-configs
+spec:
+  description: |
+    Fetches OCI image configs via skopeo and injects them into the source
+    tree as JSON files. Hermetic builds use these configs to restore embedded
+    image metadata (ENV, labels, entrypoint, etc.) without network access.
+
+    When the 'images' param is empty (default), the task passes
+    SOURCE_ARTIFACT and CACHI2_ARTIFACT through unchanged.
+
+    This is a workaround for hermetic builds in RHEL AI since hermeto does not
+    support yet prefetching oci artifacts.
+  params:
+    - name: images
+      type: string
+      description: >
+        JSON array of images to fetch configs for. Each entry has "var"
+        (build arg name), "argfile" (path to argfile in source tree),
+        and "output" (path to write the config JSON). The image ref is
+        resolved from the argfile at runtime, so it stays in sync with
+        the build args.
+        Example: [{"var":"VLLM_IMAGE","argfile":"argfile-cuda.conf","output":".image-configs/vllm.json"}]
+      default: ""
+    - name: SOURCE_ARTIFACT
+      type: string
+      description: OCI reference to the source artifact from prefetch-dependencies
+    - name: CACHI2_ARTIFACT
+      type: string
+      description: OCI reference to the cachi2 artifact (passed through unchanged)
+    - name: ociStorage
+      type: string
+      description: OCI repository for storing the output trusted artifact
+    - name: ociArtifactExpiresAfter
+      type: string
+      description: Expiration for the trusted artifacts created in the OCI repository
+      default: ""
+    - name: pullSecret
+      type: string
+      description: >
+        Name of the Kubernetes secret containing registry credentials for
+        skopeo inspect. Required when images are in private registries.
+        Ignored when 'images' is empty.
+      default: ""
+    - name: taskGitUrl
+      type: string
+      description: Git repo URL for the release-service-catalog stepactions
+      default: "https://github.com/konflux-ci/release-service-catalog"
+    - name: taskGitRevision
+      type: string
+      description: Git revision for the release-service-catalog stepactions
+      default: "production"
+  results:
+    - name: SOURCE_ARTIFACT
+      type: string
+      description: OCI reference to the (possibly modified) source artifact
+    - name: CACHI2_ARTIFACT
+      type: string
+      description: OCI reference to the cachi2 artifact (unchanged)
+  volumes:
+    - name: workdir
+      emptyDir: {}
+    - name: pull-secret
+      secret:
+        secretName: $(params.pullSecret)
+        optional: true
+  stepTemplate:
+    securityContext:
+      runAsUser: 1001
+    volumeMounts:
+      - mountPath: /var/workdir
+        name: workdir
+      - mountPath: /var/run/secrets/pull-secret
+        name: pull-secret
+        readOnly: true
+    env:
+      - name: IMAGE_EXPIRES_AFTER
+        value: $(params.ociArtifactExpiresAfter)
+  steps:
+    - name: use-trusted-artifact
+      ref:
+        resolver: "git"
+        params:
+          - name: url
+            value: $(params.taskGitUrl)
+          - name: revision
+            value: $(params.taskGitRevision)
+          - name: pathInRepo
+            value: stepactions/use-trusted-artifact/use-trusted-artifact.yaml
+      params:
+        - name: workDir
+          value: /var/workdir/source
+        - name: sourceDataArtifact
+          value: $(params.SOURCE_ARTIFACT)
+
+    - name: fetch-and-inject
+      image: quay.io/konflux-ci/release-service-utils@sha256:b42578b8eda9853aaac89353d184358abfff8e117c95ab6981658a0f04bf7d32
+      computeResources:
+        limits:
+          memory: 256Mi
+        requests:
+          memory: 128Mi
+          cpu: 100m
+      env:
+        - name: IMAGES
+          value: $(params.images)
+        - name: CACHI2_ARTIFACT
+          value: $(params.CACHI2_ARTIFACT)
+      script: |
+        #!/usr/bin/env bash
+        set -ex
+
+        echo -n "${CACHI2_ARTIFACT}" > "$(results.CACHI2_ARTIFACT.path)"
+
+        if [[ -z "$IMAGES" || "$IMAGES" == "[]" ]]; then
+          echo "No image configs requested, passthrough"
+          exit 0
+        fi
+
+        SKOPEO_ARGS=()
+        AUTH_FILE="/var/run/secrets/pull-secret/.dockerconfigjson"
+        if [[ -f "$AUTH_FILE" ]]; then
+          SKOPEO_ARGS+=(--authfile "$AUTH_FILE")
+          echo "Using pull secret for registry auth"
+        fi
+
+        cd /var/workdir/source
+        echo "$IMAGES" | jq -c '.[]' | while read -r entry; do
+          var=$(jq -r '.var' <<< "$entry")
+          argfile=$(jq -r '.argfile' <<< "$entry")
+          output=$(jq -r '.output' <<< "$entry")
+
+          ref=$(grep -E "^${var}=" "$argfile" | cut -d= -f2-)
+          if [[ -z "$ref" ]]; then
+            echo "ERROR: ${var} not found in ${argfile}"
+            exit 1
+          fi
+
+          echo "Fetching OCI config: ${var}=${ref} -> ${output}"
+          mkdir -p "$(dirname "$output")"
+          skopeo inspect --config --override-os linux "${SKOPEO_ARGS[@]}" "docker://${ref}" > "$output"
+          echo "  $(wc -c < "$output") bytes written"
+        done
+
+    - name: create-trusted-artifact
+      ref:
+        resolver: "git"
+        params:
+          - name: url
+            value: $(params.taskGitUrl)
+          - name: revision
+            value: $(params.taskGitRevision)
+          - name: pathInRepo
+            value: stepactions/create-trusted-artifact/create-trusted-artifact.yaml
+      params:
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: workDir
+          value: /var/workdir/source
+        - name: sourceDataArtifact
+          value: $(results.SOURCE_ARTIFACT.path)

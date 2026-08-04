@@ -176,6 +176,14 @@ spec:
       description: Run pickle-scan on the built image to detect malicious pickle payloads in AI/ML model files
       name: run-pickle-scan
       type: string
+    - name: image-configs
+      description: >
+        JSON array of OCI image configs to fetch before the build.
+        Each entry: {"ref":"<image-ref>","output":"<path-in-source>"}.
+        Used by hermetic builds to restore embedded image metadata.
+        Leave empty (default) for projects that don't embed images.
+      type: string
+      default: ""
   results:
     - description: ""
       name: IMAGE_URL
@@ -263,6 +271,41 @@ spec:
           workspace: git-auth
         - name: netrc
           workspace: netrc
+    - name: fetch-image-configs
+      params:
+        - name: images
+          value: $(params.image-configs)
+        - name: pullSecret
+          value: $(params.additional-build-secret)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+        - name: CACHI2_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
+        - name: ociStorage
+          value: $(params.output-image).image-configs
+        - name: ociArtifactExpiresAfter
+          value: $(params.image-expires-after)
+      runAfter:
+        - prefetch-dependencies
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: fetch-image-configs
+          - name: pathInRepo
+            value: tasks/fetch-image-configs.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
     - name: build-container
       timeout: 6h
       matrix:
@@ -301,9 +344,9 @@ spec:
         - name: SQUASH
           value: $(params.squash-build)
         - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+          value: $(tasks.fetch-image-configs.results.SOURCE_ARTIFACT)
         - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
+          value: $(tasks.fetch-image-configs.results.CACHI2_ARTIFACT)
         - name: IMAGE_APPEND_PLATFORM
           value: "true"
         - name: LABELS
@@ -324,7 +367,7 @@ spec:
         - name: OMIT_HISTORY
           value: $(params.omit-history)
       runAfter:
-        - prefetch-dependencies
+        - fetch-image-configs
       taskRef:
         params:
           - name: name
