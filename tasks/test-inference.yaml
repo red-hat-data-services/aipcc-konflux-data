@@ -73,6 +73,11 @@ spec:
           if [[ "${VARIANT}" =~ cpu ]]; then
             echo -e "\n=== Configuring for CPU variant ==="
             # No GPU flags needed
+            # --gpu-memory-utilization controls RAM reservation in vLLM CPU mode
+            # (despite the GPU name). Lower from default 0.92 to 0.8 so the test
+            # works on smaller spot instances (e.g. c5.2xlarge with 16 GiB).
+            # The Granite 2B test model only needs ~4-5 GiB.
+            VARIANT_EXTRA_FLAGS="${VARIANT_EXTRA_FLAGS} --gpu-memory-utilization 0.8"
           elif [[ "${VARIANT}" =~ cuda ]]; then
             echo -e "\n=== Configuring for CUDA variant ==="
             GPU_DEVICE_FLAGS="--device nvidia.com/gpu=all"
