@@ -1,28 +1,28 @@
 kind: Task
 apiVersion: tekton.dev/v1
 metadata:
-  name: fetch-image-configs
+  name: fetch-image-prefetch-configs
 spec:
   description: |
-    Fetches OCI image configs via skopeo and injects them into the source
-    tree as JSON files. Hermetic builds use these configs to restore embedded
-    image metadata (ENV, labels, entrypoint, etc.) without network access.
+    Downloads full OCI images via skopeo and injects them into the source
+    tree as docker-archive tars. Hermetic builds load these images directly
+    via podman load, preserving all metadata without network access.
 
-    When the 'images' param is empty (default), the task passes
+    When the 'image-prefetch-configs' param is empty (default), the task passes
     SOURCE_ARTIFACT and CACHI2_ARTIFACT through unchanged.
 
     This is a workaround for hermetic builds in RHEL AI since hermeto does not
     support yet prefetching oci artifacts.
   params:
-    - name: images
+    - name: image-prefetch-configs
       type: string
       description: >
-        JSON array of images to fetch configs for. Each entry has "var"
-        (build arg name), "argfile" (path to argfile in source tree),
-        and "output" (path to write the config JSON). The image ref is
+        JSON array of images to fetch. Each entry has "var" (build arg
+        name), "argfile" (path to argfile in source tree), and "output"
+        (path to write the docker-archive tar). The image ref is
         resolved from the argfile at runtime, so it stays in sync with
         the build args.
-        Example: [{"var":"VLLM_IMAGE","argfile":"argfile-cuda.conf","output":".image-configs/vllm.json"}]
+        Example: [{"var":"VLLM_IMAGE","argfile":"argfile-cuda.conf","output":".images/vllm.tar"}]
       default: ""
     - name: SOURCE_ARTIFACT
       type: string
@@ -42,7 +42,7 @@ spec:
       description: >
         Name of the Kubernetes secret containing registry credentials for
         skopeo inspect. Required when images are in private registries.
-        Ignored when 'images' is empty.
+        Ignored when 'image-prefetch-configs' is empty.
       default: ""
     - name: taskGitUrl
       type: string
@@ -99,13 +99,15 @@ spec:
       image: quay.io/konflux-ci/release-service-utils@sha256:b42578b8eda9853aaac89353d184358abfff8e117c95ab6981658a0f04bf7d32
       computeResources:
         limits:
-          memory: 256Mi
+          memory: 1Gi
+          ephemeral-storage: 50Gi
         requests:
-          memory: 128Mi
-          cpu: 100m
+          memory: 512Mi
+          cpu: 250m
+          ephemeral-storage: 40Gi
       env:
-        - name: IMAGES
-          value: $(params.images)
+        - name: IMAGE_PREFETCH_CONFIGS
+          value: $(params.image-prefetch-configs)
         - name: CACHI2_ARTIFACT
           value: $(params.CACHI2_ARTIFACT)
       script: |
@@ -114,7 +116,7 @@ spec:
 
         echo -n "${CACHI2_ARTIFACT}" > "$(results.CACHI2_ARTIFACT.path)"
 
-        if [[ -z "$IMAGES" || "$IMAGES" == "[]" ]]; then
+        if [[ -z "$IMAGE_PREFETCH_CONFIGS" || "$IMAGE_PREFETCH_CONFIGS" == "[]" ]]; then
           echo "No image configs requested, passthrough"
           exit 0
         fi
@@ -127,7 +129,7 @@ spec:
         fi
 
         cd /var/workdir/source
-        echo "$IMAGES" | jq -c '.[]' | while read -r entry; do
+        echo "$IMAGE_PREFETCH_CONFIGS" | jq -c '.[]' | while read -r entry; do
           var=$(jq -r '.var' <<< "$entry")
           argfile=$(jq -r '.argfile' <<< "$entry")
           output=$(jq -r '.output' <<< "$entry")
@@ -138,10 +140,10 @@ spec:
             exit 1
           fi
 
-          echo "Fetching OCI config: ${var}=${ref} -> ${output}"
+          echo "Fetching full image: ${var}=${ref} -> ${output}"
           mkdir -p "$(dirname "$output")"
-          skopeo inspect --config --override-os linux "${SKOPEO_ARGS[@]}" "docker://${ref}" > "$output"
-          echo "  $(wc -c < "$output") bytes written"
+          skopeo copy --override-os linux "${SKOPEO_ARGS[@]}" "docker://${ref}" "docker-archive:${output}:${ref}"
+          echo "  $(du -h "$output" | cut -f1) written"
         done
 
     - name: create-trusted-artifact
