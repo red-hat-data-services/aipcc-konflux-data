@@ -271,8 +271,13 @@ spec:
           else
             echo "✗ No inference server image found in snapshot and no fallback image provided"
           fi
+        elif [[ "${COMPONENT}" == "rhaiis-vllm-omni-"* ]]; then
+          # Testing vllm-omni component — separate collection, own inference server
+          inference_server_image="${containerImage}"
+          echo -e "\n === Using vllm-omni container image as inference server ==="
+          echo "${inference_server_image}"
         elif [[ "${COMPONENT}" == rhaiis-* ]]; then
-          # Testing regular rhaiis component (not model-opt)
+          # Testing regular rhaiis component (not model-opt, not vllm-omni)
           inference_server_image="${containerImage}"
           echo -e "\n === Using container image as inference server image ==="
           echo "${inference_server_image}"
