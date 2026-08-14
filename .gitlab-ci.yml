@@ -14,9 +14,18 @@ default:
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
 stages:
+  - test
   - lint
+
+unit-tests:
+  stage: test
+  image: registry.access.redhat.com/ubi9/python-312
+  script:
+    - pip install pyyaml pytest pytest-mock
+    - python3 -m pytest tests/ -v
 
 check-trusted-tasks:
   stage: lint

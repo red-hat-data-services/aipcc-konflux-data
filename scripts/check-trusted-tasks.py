@@ -72,7 +72,8 @@ def collect_konflux_data_refs(repo_path):
 def fetch_trust_store():
     """Fetch the trusted task list from quay.io.
 
-    Returns a dict mapping provenance URI -> list of unexpired (ref, expires_on) tuples.
+    Returns (active, expired) where each is a dict mapping
+    provenance URI -> list of (ref, expires_on) tuples.
     """
     base = f"https://quay.io/v2/{TRUST_REPO}"
 
@@ -89,10 +90,10 @@ def fetch_trust_store():
         data = yaml.safe_load(resp.read().decode())
 
     now = datetime.now(timezone.utc)
-    store = {}
+    active = {}
+    expired = {}
 
     for key, entries in data.get("trusted_tasks", {}).items():
-        unexpired = []
         for entry in entries:
             ref = entry.get("ref", "")
             if not ref:
@@ -101,25 +102,23 @@ def fetch_trust_store():
             if expires_on:
                 expires_dt = datetime.fromisoformat(expires_on)
                 if expires_dt <= now:
-                    continue
-                unexpired.append((ref, expires_dt))
+                    expired.setdefault(key, []).append((ref, expires_dt))
+                else:
+                    active.setdefault(key, []).append((ref, expires_dt))
             else:
-                unexpired.append((ref, None))
-        if unexpired:
-            store[key] = unexpired
+                active.setdefault(key, []).append((ref, None))
 
-    return store
+    return active, expired
 
 
 def check_ref(image_ref, digest, store):
-    """Check if a digest is trusted for the given image ref.
+    """Check if a digest is trusted in the given store.
 
-    Returns (trusted, expires_on) where trusted is bool and
+    Returns (found, expires_on) where found is bool and
     expires_on is a datetime or None.
     """
     provenance_key = f"oci://{image_ref}"
-    entries = store.get(provenance_key, [])
-    for ref, expires in entries:
+    for ref, expires in store.get(provenance_key, []):
         if ref == digest:
             return True, expires
     return False, None
@@ -145,13 +144,13 @@ def main():
         print("No task bundle refs found")
         sys.exit(0)
 
-    store = fetch_trust_store()
+    active, expired_store = fetch_trust_store()
     mismatches = {}
     seen_trusted = set()
 
     for image_ref, digest, filename in refs:
         name = task_name_from_ref(image_ref)
-        trusted, expires = check_ref(image_ref, digest, store)
+        trusted, expires = check_ref(image_ref, digest, active)
         if trusted:
             if name not in seen_trusted:
                 if expires:
@@ -161,11 +160,14 @@ def main():
                     print(f"  ✓  {name}")
                 seen_trusted.add(name)
         else:
-            mismatches.setdefault(name, (digest, []))[1].append(filename)
+            is_expired, _ = check_ref(image_ref, digest, expired_store)
+            existing = mismatches.setdefault(name, (digest, [], is_expired))
+            existing[1].append(filename)
 
     for name in sorted(mismatches):
-        digest, files = mismatches[name]
-        print(f"  ✗  {name}  ({', '.join(files)})")
+        digest, files, is_expired = mismatches[name]
+        reason = "EXPIRED" if is_expired else "UNTRUSTED"
+        print(f"  ✗  {name}  {reason}  ({', '.join(files)})")
         print(f"       {digest}")
 
     if mismatches:
