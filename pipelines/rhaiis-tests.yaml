@@ -42,6 +42,9 @@ spec:
       default:
         - "rhaiis-pull"
       description: List of pull secret names for image authentication
+    - name: rhel-version
+      default: "9.8"
+      description: RHEL version to provision with mapt (9.8 for 3.6+, 9.6 for 3.5 and older)
     - name: SNAPSHOT
       description: |
         Snapshot of the application
@@ -116,7 +119,7 @@ spec:
         - name: tags
           value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=rhel,pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
         - name: version
-          value: "9.6" # RHEL version
+          value: "$(params.rhel-version)"
       runAfter:
         - create-configuration
       taskRef:
@@ -166,7 +169,7 @@ spec:
         - name: tags
           value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=rhel,pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
         - name: version
-          value: "9.6" # RHEL version
+          value: "$(params.rhel-version)"
       runAfter:
         - create-configuration
       taskRef:
