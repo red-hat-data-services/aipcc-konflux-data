@@ -50,6 +50,8 @@ spec:
         Snapshot of the application
         Example:
         {"components":[{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-spyre-ubi9@sha256:2092e4808e9636356f408fc1f86ae2000eef659b87b0bcb01ad95512845990a2","name":"rhaiis-spyre-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.spyre-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-tpu-ubi9@sha256:6ce221fe950283193979ffbc4aea879ea009f2dd6ee0ec402ab15c6d6702ac04","name":"rhaiis-tpu-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.tpu-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-cuda-ubi9@sha256:ad756c01ec99a99cc7d93401c41b8d92ca96fb1ab7c5262919d818f2be4f3768","name":"rhaiis-cuda-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.cuda-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-model-opt-cuda-ubi9@sha256:7dfd1ba91765aa8401e498c2ff651460f4c055d177b65c6b893bd587ba21a0f7","name":"rhaiis-model-opt-cuda-ubi9","source":{"git":{"context":".","dockerfileUrl":"Containerfile.model-opt.cuda-ubi9","revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}},{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-rocm-ubi9@sha256:8624e2a5086cf1303b59154a817f60a3476d6ca48899261a2e477eb9e99ae781","name":"rhaiis-rocm-ubi9","source":{"git":{"revision":"a73cf5e99dcbce3cb34491046918b5103e13247e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}}]}
+    - name: send-slack-notification
+      default: "true"
     - name: spot
       default: "true"
       description: Whether to use spot instances for AWS and Azure
@@ -536,3 +538,46 @@ spec:
         - input: $(tasks.create-configuration.results.cloud-provider)
           operator: in
           values: ["azure"]
+    - name: pipeline-failure-notification
+      when:
+        - input: $(tasks.status)
+          operator: in
+          values: ["Failed"]
+        - input: $(params.send-slack-notification)
+          operator: in
+          values: ["true"]
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/konflux-pipeline-failure-notification.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+      params:
+        - name: prompt
+          value: |
+            PipelineRun $(context.pipelineRun.name) in namespace $(context.pipelineRun.namespace) has failed.
+            Troubleshoot the failure using kubectl to inspect the PipelineRun status, TaskRun conditions, and pod logs.
+            Write a 1-2 sentence root cause summary to /home/claudio/output/output.txt.
+        - name: header
+          value: "RHAIIS Test Pipeline Failed"
+        - name: slack-key-name
+          value: rhel-ai-notification
+        - name: pipeline-name
+          value: $(context.pipelineRun.name)
+        - name: pipeline-namespace
+          value: $(context.pipelineRun.namespace)
+        - name: application-name
+          value: rhaiis
