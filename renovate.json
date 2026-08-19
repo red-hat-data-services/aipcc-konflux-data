@@ -3,7 +3,9 @@
   "extends": [
     "local>redhat/rhel-ai/renovate-config"
   ],
-  "baseBranches": ["main"],
+  "baseBranchPatterns": [
+    "main"
+  ],
   "ignoreTests": true,
   "customManagers": [
     {
