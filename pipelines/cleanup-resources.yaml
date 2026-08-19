@@ -229,7 +229,7 @@ spec:
           - name: url
             value: "https://github.com/mapt-oss/cloud-importer"
           - name: revision
-            value: "v0.0.3"
+            value: "v0.0.4"
           - name: pathInRepo
             value: "tkn/rhelai-azure.yaml"
       when:
