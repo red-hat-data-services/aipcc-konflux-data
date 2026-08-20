@@ -45,6 +45,9 @@ spec:
     - name: fedora-resources
       description: Array of Fedora resource IDs to cleanup
       type: array
+    - name: ocp-snc-resources
+      description: Array of OCP SNC (OpenShift Single Node Cluster) resource IDs to cleanup
+      type: array
     - name: aws-cloud-importer-resources
       description: Array of AWS cloud-importer resource IDs to cleanup
       type: array
@@ -187,6 +190,7 @@ spec:
             rhel_resources = filter_old_resources('mapt/rhel/', 'RHEL', cutoff_date_vms)
             rhel_ai_resources = filter_old_resources('mapt/rhel-ai/', 'RHEL AI', cutoff_date_vms)
             fedora_resources = filter_old_resources('mapt/fedora/', 'Fedora', cutoff_date_vms)
+            ocp_snc_resources = filter_old_resources('mapt/ocp-snc/', 'OCP SNC', cutoff_date_vms)
 
             # Find old cloud-importer resources (AMIs matching name filters)
             cloud_importer_resources = filter_old_resources('cloud-importer/', 'cloud-importer', cutoff_date_amis, name_filters=ami_name_filters)
@@ -196,6 +200,7 @@ spec:
             print(f"RHEL resources to cleanup: {rhel_resources}")
             print(f"RHEL AI resources to cleanup: {rhel_ai_resources}")
             print(f"Fedora resources to cleanup: {fedora_resources}")
+            print(f"OCP SNC resources to cleanup: {ocp_snc_resources}")
             print(f"Cloud importer resources to cleanup: {cloud_importer_resources}")
 
             # Write results to Tekton results files (JSON arrays for array type results)
@@ -207,6 +212,9 @@ spec:
 
             with open('/tekton/results/fedora-resources', 'w') as f:
                 f.write(json.dumps(fedora_resources))
+
+            with open('/tekton/results/ocp-snc-resources', 'w') as f:
+                f.write(json.dumps(ocp_snc_resources))
 
             with open('/tekton/results/aws-cloud-importer-resources', 'w') as f:
                 f.write(json.dumps(cloud_importer_resources))
