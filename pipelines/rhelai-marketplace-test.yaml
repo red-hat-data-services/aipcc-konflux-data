@@ -39,7 +39,7 @@ spec:
             description: Short version string (major.minor) for AWS marketplace
         steps:
           - name: derive-config
-            image: quay.io/konflux-ci/release-service-utils@sha256:2712a94e7790df8b66e6b391687653edea97155107211ac28f1a1d083be56ebe
+            image: quay.io/konflux-ci/release-service-utils@sha256:9db0cc6b09799f41c87d46589dcd2c1ba66edfcaab3b88b99e2fcbc0646424bf
             script: |
               #!/bin/bash
               set -e
@@ -151,7 +151,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.3"
+            value: "v0.14.4"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel-ai.yaml"
     - name: create-vm-azure
@@ -199,7 +199,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.3"
+            value: "v0.14.4"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel-ai.yaml"
     - name: configure-vm
@@ -320,7 +320,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.3"
+            value: "v0.14.4"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel-ai.yaml"
       when:
@@ -342,7 +342,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.3"
+            value: "v0.14.4"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel-ai.yaml"
       when:
