@@ -1,35 +1,29 @@
 #!/usr/bin/env python3
 """
-Unified W8A8 Quantization Test: Size & VRAM Reduction
+W8A8 Quantization Test: Disk Size & Parameter Memory Reduction
 
-Purpose
-Validate that W8A8 quantization improves:
+Validates that W8A8 quantization produces a model with:
+* Smaller disk size
+* Smaller parameter memory footprint (int8 vs bfloat16/float16)
 
-* Disk size smaller
-* VRAM usage reduction
-
-How it works
-
-1. Load the original model
-2. Optionally measure original VRAM usage (GPU only)
-3. Quantize with SmoothQuant + GPTQ (single pass, W8A8)
-4. Verify quantization via dtype inspection
-5. Compare disk size (original vs quantized)
-6. Optionally compare VRAM usage
-7. Assert at least one improvement
+Steps:
+1. Load the original model (CPU), measure parameter memory footprint
+2. Quantize with SmoothQuant + GPTQ (W8A8)
+3. Load quantized model, validate dtypes + measure parameter memory footprint
+4. Compare disk size (original vs quantized)
+5. Compare parameter memory footprint (original vs quantized)
 
 Usage: python llmcompressor_quantization_test.py <model-name> <output-dir>
 
-Exit codes
-
-* 0: quantization succeeded and improvement detected
+Exit codes:
+* 0: quantization succeeded and improvements detected
 * 1: quantization failed or no improvement found
 """
 import os
 import sys
 import shutil
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM
 from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
 from llmcompressor.modifiers.quantization import GPTQModifier
 from llmcompressor import oneshot
@@ -45,7 +39,6 @@ def fail(msg):
 
 
 def dir_size(path):
-    """Return total size (in bytes) of all files under a directory or a single file."""
     if os.path.isfile(path):
         return os.path.getsize(path)
 
@@ -58,71 +51,22 @@ def dir_size(path):
     return total
 
 
-def get_vram_mb():
-    """Get current VRAM usage in MB."""
-    if not torch.cuda.is_available():
-        return 0.0
-    return torch.cuda.memory_allocated() / (1024 ** 2)
+def measure_param_memory(model):
+    """Compute total parameter memory from actual tensor dtypes.
 
-
-def get_peak_vram_mb():
-    """Get peak VRAM usage in MB since last reset."""
-    if not torch.cuda.is_available():
-        return 0.0
-    return torch.cuda.max_memory_allocated() / (1024 ** 2)
-
-
-def reset_vram_stats():
-    """Reset peak VRAM statistics."""
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.empty_cache()
-
-
-def measure_model_vram(model_path, model_name="model"):
+    Returns (total_bytes, dtype_breakdown) where dtype_breakdown is a dict
+    mapping dtype string to {"count": int, "bytes": int}.
     """
-    Load a model onto GPU and measure VRAM consumption.
-
-    Returns:
-        dict: {"current_mb": float, "peak_mb": float} or None if CUDA unavailable
-    """
-    if not torch.cuda.is_available():
-        log(f"Skipping VRAM measurement for {model_name} (CUDA not available)")
-        return None
-
-    log(f"Measuring VRAM for {model_name} at: {model_path}")
-
-    # Reset and clear before measurement
-    reset_vram_stats()
-
-    try:
-        model = AutoModelForCausalLM.from_pretrained(model_path)
-        model = model.to("cuda")
-
-        # Force memory allocation by doing a forward pass
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        inputs = tokenizer("Hello world", return_tensors="pt").to("cuda")
-        with torch.no_grad():
-            _ = model(**inputs)
-
-        # Get VRAM measurements
-        current_vram = get_vram_mb()
-        peak_vram = get_peak_vram_mb()
-
-        log(f"  Current VRAM: {current_vram:.2f} MB")
-        log(f"  Peak VRAM: {peak_vram:.2f} MB")
-
-        # Clean up
-        del model, inputs
-        reset_vram_stats()
-
-        return {
-            "current_mb": current_vram,
-            "peak_mb": peak_vram
-        }
-    except Exception as e:
-        log(f"Warning: Failed to measure VRAM for {model_name}: {e}")
-        return None
+    breakdown = {}
+    total_bytes = 0
+    for _, param in model.named_parameters():
+        dtype_str = str(param.dtype)
+        nbytes = param.numel() * param.element_size()
+        entry = breakdown.setdefault(dtype_str, {"count": 0, "bytes": 0})
+        entry["count"] += param.numel()
+        entry["bytes"] += nbytes
+        total_bytes += nbytes
+    return total_bytes, breakdown
 
 
 def main():
@@ -137,22 +81,11 @@ def main():
     log(f"Requested model: {model_name}")
     log(f"torch={torch.__version__}, cuda={torch.cuda.is_available()}")
 
-    # Check GPU availability
-    has_cuda = torch.cuda.is_available()
-    if has_cuda:
-        device_name = torch.cuda.get_device_name(0)
-        total_vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 2)
-        log(f"GPU: {device_name}")
-        log(f"Total VRAM: {total_vram:.2f} MB")
-    else:
-        log("GPU not available - VRAM tests will be skipped")
-
     # -------------------------------------------------------------------
     # Prepare output directory and verify original model exists
     # -------------------------------------------------------------------
     os.makedirs(output_dir, exist_ok=True)
 
-    # Clean output directory
     for item in os.listdir(output_dir):
         p = os.path.join(output_dir, item)
         try:
@@ -163,33 +96,44 @@ def main():
         except Exception as e:
             fail(f"Failed to delete {p}: {e}")
 
-    # -------------------------------------------------------------------
-    # Verify original model exists at expected location
-    # -------------------------------------------------------------------
     if not os.path.isdir(original_dir):
         fail(f"Original model not found at {original_dir}. "
              f"Model should be pre-downloaded by download-models task.")
 
     log(f"Using original model from: {original_dir}")
 
-    # Original size
     original_size_mb = dir_size(original_dir) / 1e6
-    log(f"Original model size: {original_size_mb:.2f} MB")
+    log(f"Original model size on disk: {original_size_mb:.2f} MB")
 
     if original_size_mb == 0:
         fail("Original model directory is empty")
 
     # -------------------------------------------------------------------
-    # Measure VRAM for original model
+    # Step 1: Load original model and measure parameter memory
     # -------------------------------------------------------------------
     log("=" * 60)
-    log("STEP 1: Measuring VRAM for ORIGINAL model (if GPU available)")
+    log("STEP 1: Measuring parameter memory for ORIGINAL model")
     log("=" * 60)
 
-    original_vram = measure_model_vram(original_dir, "original")
+    try:
+        model_orig = AutoModelForCausalLM.from_pretrained(original_dir)
+    except Exception as e:
+        fail(f"Failed to load original model from {original_dir}: {e}")
+
+    original_mem_bytes, original_dtypes = measure_param_memory(model_orig)
+    original_mem_mb = original_mem_bytes / (1024 ** 2)
+
+    log("Original model dtype distribution:")
+    total_params = sum(d["count"] for d in original_dtypes.values())
+    for dtype, info in original_dtypes.items():
+        pct = 100.0 * info["count"] / total_params if total_params else 0.0
+        log(f"  {dtype}: {info['count']:,} params, {info['bytes'] / (1024**2):.2f} MB ({pct:.1f}%)")
+    log(f"Original parameter memory: {original_mem_mb:.2f} MB")
+
+    del model_orig
 
     # -------------------------------------------------------------------
-    # Perform quantization
+    # Step 2: Quantize model
     # -------------------------------------------------------------------
     log("=" * 60)
     log("STEP 2: Quantizing model (W8A8) - SINGLE PASS")
@@ -219,10 +163,10 @@ def main():
         fail(f"Quantization failed: {e}")
 
     # -------------------------------------------------------------------
-    # Load quantized model and check dtype distribution
+    # Step 3: Load quantized model, validate dtypes + parameter memory
     # -------------------------------------------------------------------
     log("=" * 60)
-    log("STEP 3: Validating quantization (dtype check)")
+    log("STEP 3: Validating quantization (dtype + parameter memory)")
     log("=" * 60)
 
     log("Loading quantized model")
@@ -232,98 +176,70 @@ def main():
     except Exception as e:
         fail(f"Failed to load quantized model from {output_dir}: {e}")
 
-    # Inspect dtype distribution
-    dtypes = {}
-    total_params = 0
+    quant_mem_bytes, quant_dtypes = measure_param_memory(model_q)
+    quant_mem_mb = quant_mem_bytes / (1024 ** 2)
 
-    for _, param in model_q.named_parameters():
-        dtypes.setdefault(str(param.dtype), 0)
-        dtypes[str(param.dtype)] += param.numel()
-        total_params += param.numel()
+    log("Quantized model dtype distribution:")
+    total_params_q = sum(d["count"] for d in quant_dtypes.values())
+    for dtype, info in quant_dtypes.items():
+        pct = 100.0 * info["count"] / total_params_q if total_params_q else 0.0
+        log(f"  {dtype}: {info['count']:,} params, {info['bytes'] / (1024**2):.2f} MB ({pct:.1f}%)")
+    log(f"Quantized parameter memory: {quant_mem_mb:.2f} MB")
 
-    log("Dtype distribution after quantization:")
-    for dtype, count in dtypes.items():
-        pct = 100.0 * count / total_params if total_params else 0.0
-        log(f"  {dtype}: {count:,} params ({pct:.2f}%)")
-
-    # Count integer parameters
     int_params = sum(
-        count for dtype, count in dtypes.items() if "int" in dtype
+        info["count"] for dtype, info in quant_dtypes.items() if "int" in dtype
     )
 
-    # Assert quantization correctness
     if int_params <= 0:
         fail("Quantization failed: no integer parameters detected")
 
     log(f"✔ Integer parameters detected: {int_params:,}")
 
-    # Clean up loaded model
     del model_q
 
     # -------------------------------------------------------------------
-    # Measure disk size reduction
+    # Step 4: Measure disk size reduction
     # -------------------------------------------------------------------
     log("=" * 60)
     log("STEP 4: Measuring DISK SIZE reduction")
     log("=" * 60)
 
-    # Quantized model size
     quant_size_mb = dir_size(output_dir) / 1e6
+    log(f"Quantized model size on disk: {quant_size_mb:.2f} MB")
 
-    log(f"Quantized model size: {quant_size_mb:.2f} MB")
-
-    # Assert quantized model is smaller
     if not quant_size_mb < original_size_mb:
         fail(
-            "Quantized model is NOT smaller — "
+            "Quantized model is NOT smaller on disk — "
             f"original={original_size_mb:.2f} MB, "
             f"quantized={quant_size_mb:.2f} MB"
         )
 
-    # Calculate and show compression ratio
-    size_compression_ratio = original_size_mb / quant_size_mb if quant_size_mb > 0 else 0
-    size_reduction_mb = original_size_mb - quant_size_mb
-    size_reduction_pct = (size_reduction_mb / original_size_mb * 100) if original_size_mb > 0 else 0
+    size_ratio = original_size_mb / quant_size_mb if quant_size_mb > 0 else 0
+    size_reduction_pct = ((original_size_mb - quant_size_mb) / original_size_mb * 100) if original_size_mb > 0 else 0
 
-    log(f"Original model size: {original_size_mb:.2f} MB")
-    log(f"Quantized model size: {quant_size_mb:.2f} MB")
-    log(f"Size reduction: {size_reduction_mb:.2f} MB ({size_reduction_pct:.1f}%)")
-    log(f"Compression ratio: {size_compression_ratio:.2f}x")
+    log(f"Disk size: {original_size_mb:.2f} MB → {quant_size_mb:.2f} MB ({size_ratio:.2f}x smaller)")
     log("✔ Disk size reduction confirmed")
 
     # -------------------------------------------------------------------
-    # Measure VRAM reduction if GPU available
+    # Step 5: Assert parameter memory reduction
     # -------------------------------------------------------------------
     log("=" * 60)
-    log("STEP 5: Measuring VRAM reduction (if GPU available)")
+    log("STEP 5: Measuring PARAMETER MEMORY reduction")
     log("=" * 60)
 
-    quant_vram = measure_model_vram(output_dir, "quantized")
+    if not quant_mem_bytes < original_mem_bytes:
+        fail(
+            "Quantized model parameters are NOT smaller — "
+            f"original={original_mem_mb:.2f} MB, "
+            f"quantized={quant_mem_mb:.2f} MB"
+        )
 
-    # Compare VRAM if both measurements succeeded
-    vram_test_passed = False
-    if original_vram is not None and quant_vram is not None:
-        original_peak = original_vram["peak_mb"]
-        quant_peak = quant_vram["peak_mb"]
+    mem_ratio = original_mem_bytes / quant_mem_bytes if quant_mem_bytes > 0 else 0
+    mem_reduction_pct = ((original_mem_bytes - quant_mem_bytes) / original_mem_bytes * 100) if original_mem_bytes > 0 else 0
 
-        vram_reduction = original_peak - quant_peak
-        vram_reduction_pct = (vram_reduction / original_peak * 100) if original_peak > 0 else 0
-
-        log(f"Original model peak VRAM: {original_peak:.2f} MB")
-        log(f"Quantized model peak VRAM: {quant_peak:.2f} MB")
-        log(f"VRAM reduction: {vram_reduction:.2f} MB ({vram_reduction_pct:.1f}%)")
-
-        # Assert that quantized model uses less VRAM
-        if quant_peak >= original_peak:
-            fail(
-                f"Quantized model does NOT use less VRAM! "
-                f"Original={original_peak:.2f} MB, Quantized={quant_peak:.2f} MB"
-            )
-
-        log("✔ VRAM reduction confirmed")
-        vram_test_passed = True
-    else:
-        log("⚠ VRAM test skipped (GPU not available)")
+    log(f"Parameter memory: {original_mem_mb:.2f} MB → {quant_mem_mb:.2f} MB ({mem_ratio:.2f}x smaller)")
+    log(f"Parameter memory reduction: {mem_reduction_pct:.1f}%")
+    log("✔ Parameter memory reduction confirmed")
 
     # -------------------------------------------------------------------
     # Final summary
@@ -332,11 +248,8 @@ def main():
     log("TEST SUMMARY")
     log("=" * 60)
     log(f"✔ Quantization successful ({int_params:,} int params)")
-    log(f"✔ Disk size: {original_size_mb:.2f} MB → {quant_size_mb:.2f} MB ({size_compression_ratio:.2f}x smaller)")
-    if vram_test_passed:
-        log(f"✔ VRAM usage: {original_peak:.2f} MB → {quant_peak:.2f} MB ({vram_reduction_pct:.1f}% reduction)")
-    else:
-        log("⚠ VRAM test: Skipped (no GPU)")
+    log(f"✔ Disk size: {original_size_mb:.2f} MB → {quant_size_mb:.2f} MB ({size_ratio:.2f}x smaller)")
+    log(f"✔ Param memory: {original_mem_mb:.2f} MB → {quant_mem_mb:.2f} MB ({mem_ratio:.2f}x smaller, {mem_reduction_pct:.1f}% reduction)")
     log("=" * 60)
     log("✔ W8A8 quantization test PASSED!")
     log("=" * 60)
