@@ -1,0 +1,649 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: check-clair-cves
+spec:
+  description: |
+    Reports the CVEs that would be flagged by the Conforma cve.cve_blockers release gate,
+    so they are visible on the snapshot instead of at release time.
+
+    The clair-scan build task publishes two outputs: SCAN_OUTPUT (counts, filtered by a
+    conftest policy) and REPORTS (the complete Clair report, attached to the image as an
+    OCI blob). Only SCAN_OUTPUT is visible in the UI, and its filter drops any CVE whose
+    fix status and RHSA link disagree, so a GHSA/PYSEC finding with an upstream fix stays
+    invisible during the build. Conforma reads REPORTS and sees all of them.
+
+    This task mirrors how Conforma buckets findings (ec-policies policy/release/cve):
+    a vulnerability is "patched" when its fixed_in_version is non-empty, and each bucket
+    has its own severity threshold. The defaults match the stock rule data:
+
+      patched-severities    Critical,High   (restrict_cve_security_levels)
+      unpatched-severities  <empty>         (restrict_unpatched_cve_security_levels)
+
+    Unpatched CVEs do not block by default; stock rule data only warns on them. Red Hat's
+    rhtap-ec-policy does not override either list.
+
+    It is a mirror, not the authority, and it deliberately errs toward over-reporting:
+
+    - cve_leeway grants a grace period measured from a CVE's disclosure date (Red Hat
+      uses 6 days for Critical, 29 for High). No severity list can express that, so a
+      CVE still inside its window is reported here before it starts blocking.
+    - An ECP can override the rule data, in which case set these params to the same
+      lists, or exclude cve.cve_blockers entirely, in which case nothing blocks.
+
+    This task:
+    1. Resolves the component that triggered the ITS and finds its image in the snapshot
+    2. Downloads the image attestation and extracts the REPORTS blob digests
+    3. Pulls each REPORTS blob from the build registry and parses it
+    4. Buckets CVEs the way Conforma does and applies the severity thresholds
+    5. Prints the full table to the task log and emits Konflux-visible task results
+
+    Tekton caps the combined size of a task's results, so the results carry counts only.
+    The CVE identifiers are in the task log.
+
+    The task always exits 0. Pass/fail is communicated through TEST_OUTPUT.result, which
+    is what the integration service and the Konflux UI read.
+  params:
+    - name: SNAPSHOT
+      type: string
+      description: JSON string of the snapshot spec, provided automatically by the ITS.
+    - name: patched-severities
+      type: string
+      default: "Critical,High"
+      description: |
+        Severities to report for CVEs that have a fix, mirroring the Conforma rule data
+        key restrict_cve_security_levels. Comma-separated and case-insensitive; empty
+        reports none. Valid values: Critical, High, Medium, Low, Negligible, Unknown.
+        Conforma's own schema has no Negligible, so it can never block on that level.
+    - name: unpatched-severities
+      type: string
+      default: ""
+      description: |
+        Severities to report for CVEs with no known fix, mirroring the Conforma rule data
+        key restrict_unpatched_cve_security_levels. Same format as patched-severities.
+    - name: cve-leeway
+      type: string
+      default: "Critical=6,High=29"
+      description: |
+        Grace period in days per severity, mirroring the Conforma rule data key
+        cve_leeway. Conforma measures it from a CVE's public disclosure date (the
+        report's "issued" field), not from when the scan ran, and does not enforce a
+        finding until that date passes. The default matches rhtap-ec-policy. A severity
+        with no entry here has no grace period and blocks as soon as it is disclosed.
+    - name: enforce
+      type: string
+      default: "false"
+      description: |
+        If "true", matching CVEs set TEST_OUTPUT.result to FAILURE. If "false", they set
+        it to WARNING. Whether a failure blocks the release is controlled separately by
+        the test.appstudio.openshift.io/optional label on the IntegrationTestScenario.
+    - name: pull-secret-name
+      type: string
+      default: "components-namespace-pull"
+      description: |
+        Dockerconfig secret used to read the image, its attestation, and the REPORTS
+        blobs. Mounted read-only; the task does not need RBAC to read secrets.
+  results:
+    - name: TEST_OUTPUT
+      type: string
+      description: Konflux standardized test output (result, counts, note).
+    - name: CVE_COUNT
+      type: string
+      description: Number of unique CVEs that would be flagged by cve.cve_blockers.
+    - name: CVE_SUMMARY
+      type: string
+      description: Per-severity counts, split by patched/unpatched and by blocking now vs pending.
+    - name: SCANNED_IMAGE
+      type: string
+      description: The image reference that was scanned.
+  volumes:
+    - name: workdir
+      emptyDir: {}
+    - name: pull-secret
+      secret:
+        secretName: $(params.pull-secret-name)
+        # optional so a missing secret degrades to an ERROR result instead of leaving the
+        # pod unschedulable, which would produce no TEST_OUTPUT at all.
+        optional: true
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /workspace
+        name: workdir
+      - mountPath: /auth
+        name: pull-secret
+        readOnly: true
+  steps:
+    - name: fetch-reports
+      image: quay.io/konflux-ci/release-service-utils@sha256:aacaec006068dd6e8f66c9e1c4fd2556e8359d06579968c3ef5d1cd8065107bf
+      computeResources:
+        limits:
+          memory: 1Gi
+        requests:
+          memory: 512Mi
+          cpu: 200m
+      env:
+        - name: DOCKER_CONFIG
+          value: /auth
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: COMPONENT
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['appstudio.openshift.io/component']
+      script: |
+        #!/bin/bash
+        # Failures are recorded in /workspace/error rather than exiting non-zero, so the
+        # report step can always emit a TEST_OUTPUT result.
+        set -uo pipefail
+
+        fail() {
+          echo "$1" > /workspace/error
+          exit 0
+        }
+
+        echo "=== Resolving the component image ==="
+        if [ -z "${SNAPSHOT}" ]; then
+          fail "SNAPSHOT was not provided"
+        fi
+
+        num_components=$(jq '.components | length' <<< "${SNAPSHOT}")
+        echo "Snapshot contains ${num_components} component(s)"
+
+        # In singleComponentMode the snapshot still carries every component, so the
+        # PipelineRun's component label identifies the one that triggered this ITS.
+        if [ -z "${COMPONENT}" ]; then
+          if [ "${num_components}" -eq 1 ]; then
+            COMPONENT=$(jq -r '.components[0].name' <<< "${SNAPSHOT}")
+            echo "No component label set; snapshot has a single component: ${COMPONENT}"
+          else
+            fail "label appstudio.openshift.io/component is not set and the snapshot has ${num_components} components, so the target is ambiguous"
+          fi
+        fi
+        echo "Target component: ${COMPONENT}"
+
+        IMAGE=$(jq -r --arg name "${COMPONENT}" \
+          '.components[] | select(.name == $name) | .containerImage' <<< "${SNAPSHOT}")
+        if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "null" ]; then
+          echo "Available components:"
+          jq -r '.components[].name' <<< "${SNAPSHOT}"
+          fail "component ${COMPONENT} not found in the snapshot"
+        fi
+        echo "Image: ${IMAGE}"
+        echo -n "${IMAGE}" > /workspace/image-ref
+
+        if [ ! -s /auth/config.json ]; then
+          fail "pull secret is missing or has no .dockerconfigjson key"
+        fi
+
+        # Strip the digest, then a tag only if the colon is in the last path segment, so
+        # a registry with a port survives.
+        SOURCE_REPO="${IMAGE%%@*}"
+        case "${SOURCE_REPO##*/}" in
+          *:*) SOURCE_REPO="${SOURCE_REPO%:*}" ;;
+        esac
+
+        echo
+        echo "=== Downloading the attestation ==="
+        # download, not verify-attestation: this task reports on scan data, it does not
+        # make a trust decision. Conforma verifies the attestation at release time.
+        if ! cosign download attestation "${IMAGE}" > /workspace/attestation.jsonl; then
+          fail "could not download the attestation for ${IMAGE}"
+        fi
+
+        echo "=== Extracting REPORTS blob digests ==="
+        # The ? guards keep a predicate without buildConfig.tasks from aborting jq
+        # part-way and leaving a truncated digest list that looks complete.
+        jq -r '
+          .payload | @base64d | fromjson
+          | .predicate.buildConfig.tasks[]?
+          | select(.name == "clair-scan").results[]?
+          | select(.name == "REPORTS").value
+          | fromjson | .[]
+        ' /workspace/attestation.jsonl | sort -u > /workspace/report-digests
+
+        if [ ! -s /workspace/report-digests ]; then
+          fail "no REPORTS blob digests in the attestation; clair-scan may not have run for this build"
+        fi
+        echo "Found $(wc -l < /workspace/report-digests) report blob(s)"
+
+        mkdir -p /workspace/reports
+        n=0
+        while read -r digest; do
+          [ -z "${digest}" ] && continue
+          n=$((n + 1))
+          echo "--- Fetching ${digest} ---"
+          oci_dir="/workspace/oci-${n}"
+          if ! skopeo copy --retry-times 3 \
+              --authfile /auth/config.json \
+              "docker://${SOURCE_REPO}@${digest}" "oci:${oci_dir}:latest" >/dev/null; then
+            fail "failed to fetch REPORTS blob ${digest} from ${SOURCE_REPO}"
+          fi
+
+          # Read the layers out of the OCI layout instead of guessing which blob is the
+          # report: picking the largest file silently yields the config blob when a report
+          # is small, and a config parses as JSON with no findings in it.
+          mdigest=$(jq -r '.manifests[0].digest' "${oci_dir}/index.json")
+          manifest="${oci_dir}/blobs/${mdigest%%:*}/${mdigest#*:}"
+          if [ ! -f "${manifest}" ]; then
+            fail "REPORTS artifact ${digest} has no manifest in its OCI layout"
+          fi
+
+          # Select layers by media type, the same way Conforma does
+          # (ec-policies _cve_scan_reports filters on _report_oci_mime_types), rather
+          # than guessing. Picking the largest blob would silently return the config,
+          # which parses as JSON, has no findings and would look like a clean image.
+          i=0
+          for layer in $(jq -r '.layers[]
+              | select(.mediaType == "application/vnd.redhat.clair-report+json")
+              | .digest' "${manifest}"); do
+            i=$((i + 1))
+            out="/workspace/reports/report-${n}-${i}.json"
+            cp "${oci_dir}/blobs/${layer%%:*}/${layer#*:}" "${out}"
+            # The blob may be stored compressed depending on how oras attached it.
+            if gzip -t "${out}" 2>/dev/null; then
+              mv "${out}" "${out}.gz" && gunzip "${out}.gz"
+            fi
+            echo "Saved $(basename "${out}") ($(stat -c%s "${out}") bytes)"
+          done
+          if [ "${i}" -eq 0 ]; then
+            echo "Layer media types present:"
+            jq -r '.layers[].mediaType' "${manifest}"
+            fail "REPORTS artifact ${digest} has no application/vnd.redhat.clair-report+json layer"
+          fi
+        done < /workspace/report-digests
+
+    - name: report-cves
+      image: quay.io/konflux-ci/release-service-utils@sha256:aacaec006068dd6e8f66c9e1c4fd2556e8359d06579968c3ef5d1cd8065107bf
+      computeResources:
+        limits:
+          # Clair reports for large CUDA images run to tens of MB of JSON, and the parsed
+          # representation is several times the file size.
+          memory: 2Gi
+        requests:
+          memory: 512Mi
+          cpu: 200m
+      env:
+        - name: PATCHED_SEVERITIES
+          value: $(params.patched-severities)
+        - name: UNPATCHED_SEVERITIES
+          value: $(params.unpatched-severities)
+        - name: CVE_LEEWAY
+          value: $(params.cve-leeway)
+        - name: ENFORCE
+          value: $(params.enforce)
+      script: |
+        #!/usr/bin/env python3
+        import glob
+        import json
+        import os
+        import re
+        import urllib.parse
+        from datetime import datetime, timedelta, timezone
+
+        VALID_SEVERITIES = ["Critical", "High", "Medium", "Low", "Negligible", "Unknown"]
+        SEVERITY_ORDER = {s: i for i, s in enumerate(VALID_SEVERITIES)}
+        NOTE_LIMIT = 1800
+        ROW = "%-10s %-9s %-26s %-18s %-24s %-20s %-16s %s"
+
+        RESULT_PATHS = {
+            "TEST_OUTPUT": "$(results.TEST_OUTPUT.path)",
+            "CVE_COUNT": "$(results.CVE_COUNT.path)",
+            "CVE_SUMMARY": "$(results.CVE_SUMMARY.path)",
+            "SCANNED_IMAGE": "$(results.SCANNED_IMAGE.path)",
+        }
+
+
+        class ReportError(Exception):
+            """Raised to emit TEST_OUTPUT.result=ERROR and stop."""
+
+
+        def read_file(path, default=""):
+            try:
+                with open(path) as fh:
+                    return fh.read().strip()
+            except FileNotFoundError:
+                return default
+
+
+        def show_fix(raw):
+            # claircore writes fixed_in_version either as a plain RPM version
+            # ("0:3.1.1-3.el9_6.3") or as a query string from the OSV updater
+            # ("fixed=12.3.0", "fixed=12.3.0&introduced=12.0.0", "lastAffected=5.6.3").
+            # Display only: unpack a fixed= value, otherwise show the raw marker so a
+            # lastAffected= range boundary is not mistaken for a fix. Whether a CVE is
+            # patched is decided by is_patched, which follows Conforma.
+            raw = (raw or "").strip()
+            if not raw:
+                return "-"
+            if re.match(r"^[A-Za-z][A-Za-z0-9_]*=", raw):
+                return (urllib.parse.parse_qs(raw).get("fixed") or [raw])[0]
+            return raw
+
+
+        def parse_leeway():
+            leeway = {}
+            by_lower = {v.lower(): v for v in VALID_SEVERITIES}
+            for item in os.environ["CVE_LEEWAY"].split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                sev, _, days = item.partition("=")
+                sev = sev.strip().lower()
+                if sev not in by_lower or not days.strip().isdigit():
+                    raise ReportError(
+                        "invalid cve-leeway entry %r; expected Severity=days, "
+                        "for example Critical=6,High=29" % item
+                    )
+                leeway[by_lower[sev]] = int(days.strip())
+            return leeway
+
+
+        def blocks_from(vuln, severity, leeway):
+            # Mirrors ec-policies _compute_leeway. Conforma stamps a finding with
+            # effective_on = issued + leeway[severity] and does not enforce it until then.
+            # Both of its fallbacks mean "no grace period": an unparseable or missing
+            # issued date yields no effective_on at all, and a severity missing from the
+            # leeway table falls back to the raw disclosure date.
+            issued = (vuln.get("issued") or "").strip()
+            if not issued:
+                return None
+            try:
+                when = datetime.fromisoformat(issued.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return when + timedelta(days=leeway.get(severity, 0))
+
+
+        def blocks_label(finding, now_ts):
+            when = finding["blocks_from"]
+            if when is None:
+                return "now"
+            if when <= now_ts:
+                return when.strftime("%Y-%m-%d")
+            # Calendar-day difference so the countdown agrees with the date shown.
+            return "%s +%dd" % (when.strftime("%Y-%m-%d"),
+                                (when.date() - now_ts.date()).days)
+
+
+        def is_patched(vuln):
+            # Mirrors ec-policies _is_vuln_patched: any non-empty fixed_in_version counts
+            # as patched, including a lastAffected= marker that is not really a fix. This
+            # follows Conforma rather than being more correct, because the point of the
+            # task is to predict what Conforma will do.
+            return bool((vuln.get("fixed_in_version") or "").strip())
+
+
+        def now():
+            # The integration service validates TEST_OUTPUT.timestamp against a regex that
+            # accepts a 10-digit epoch or RFC 3339 with a Z / +HH:MM offset. strftime("%z")
+            # emits +HHMM without the colon and would be rejected.
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+        def write_results(test_output, cve_count, cve_summary, image):
+            values = {
+                "TEST_OUTPUT": json.dumps(test_output, separators=(",", ":")),
+                "CVE_COUNT": str(cve_count),
+                "CVE_SUMMARY": cve_summary,
+                "SCANNED_IMAGE": image,
+            }
+            for name, path in RESULT_PATHS.items():
+                with open(path, "w") as fh:
+                    fh.write(values[name])
+            print()
+            print("TEST_OUTPUT: " + values["TEST_OUTPUT"])
+
+
+        def report_error(note, image=""):
+            print("ERROR: " + note)
+            write_results(
+                {
+                    "result": "ERROR",
+                    "timestamp": now(),
+                    "successes": 0,
+                    "failures": 0,
+                    "warnings": 0,
+                    "note": note[:NOTE_LIMIT],
+                },
+                0, "", image,
+            )
+
+
+        def parse_severities(env_name, param_name):
+            by_lower = {v.lower(): v for v in VALID_SEVERITIES}
+            tokens = [t.strip().lower() for t in os.environ[env_name].split(",") if t.strip()]
+            unknown = [t for t in tokens if t not in by_lower]
+            if unknown:
+                raise ReportError(
+                    "invalid %s value(s) %s; valid values: %s"
+                    % (param_name, ", ".join(unknown), ", ".join(VALID_SEVERITIES))
+                )
+            return {by_lower[t] for t in tokens}
+
+
+        def load_findings(leeway):
+            # Conforma iterates report.vulnerabilities directly, so do the same rather
+            # than walking package_vulnerabilities, which would miss any vulnerability
+            # that is not linked to a package. package_vulnerabilities is used only to
+            # attach a package name and version for display.
+            findings = {}
+            report_files = sorted(glob.glob("/workspace/reports/report-*.json"))
+            if not report_files:
+                raise ReportError("no Clair report files were fetched")
+
+            for path in report_files:
+                with open(path) as fh:
+                    report = json.load(fh)
+                if not isinstance(report, dict) or "vulnerabilities" not in report:
+                    # Same sanity check Conforma applies before trusting a report; without
+                    # it an unexpected payload would look like an image with no findings.
+                    raise ReportError(
+                        "%s has no vulnerabilities key, so it is not a Clair report"
+                        % os.path.basename(path)
+                    )
+                packages = report.get("packages") or {}
+                owner = {}
+                for pkg_id, vuln_ids in (report.get("package_vulnerabilities") or {}).items():
+                    for vuln_id in vuln_ids or []:
+                        owner.setdefault(vuln_id, pkg_id)
+
+                for vuln_id, vuln in (report.get("vulnerabilities") or {}).items():
+                    pkg = packages.get(owner.get(vuln_id)) or {}
+                    name = vuln.get("name", "unknown")
+                    severity = vuln.get("normalized_severity") or "Unknown"
+                    pkg_name = pkg.get("name", "-")
+                    pkg_version = pkg.get("version", "-")
+                    # One CVE can affect several packages, and the same package repeats
+                    # across report blobs (one per image manifest).
+                    key = (name, pkg_name, pkg_version)
+                    if key in findings:
+                        continue
+                    findings[key] = {
+                        "cve": name,
+                        "package": pkg_name,
+                        "version": pkg_version,
+                        "severity": severity,
+                        "fixed_in": show_fix(vuln.get("fixed_in_version")),
+                        "patched": is_patched(vuln),
+                        "blocks_from": blocks_from(vuln, severity, leeway),
+                        "repository": (vuln.get("repository") or {}).get("name", ""),
+                    }
+            print("Parsed %d report blob(s), %d package/CVE pairs total"
+                  % (len(report_files), len(findings)))
+            return findings
+
+
+        def run():
+            image = read_file("/workspace/image-ref")
+
+            # An earlier step recorded a failure; surface it as TEST_OUTPUT rather than
+            # letting the task die without any result.
+            earlier_error = read_file("/workspace/error")
+            if earlier_error:
+                raise ReportError(earlier_error)
+
+            patched_sevs = parse_severities("PATCHED_SEVERITIES", "patched-severities")
+            unpatched_sevs = parse_severities("UNPATCHED_SEVERITIES", "unpatched-severities")
+            if not patched_sevs and not unpatched_sevs:
+                raise ReportError(
+                    "patched-severities and unpatched-severities are both empty, "
+                    "so nothing would ever be reported"
+                )
+            leeway = parse_leeway()
+            enforce = os.environ["ENFORCE"].strip().lower() == "true"
+            now_ts = datetime.now(timezone.utc)
+
+            def fmt(sevs):
+                return ",".join(s for s in VALID_SEVERITIES if s in sevs) or "none"
+
+            print("Image:                " + image)
+            print("Patched severities:   " + fmt(patched_sevs))
+            print("Unpatched severities: " + fmt(unpatched_sevs))
+            print("Leeway (days):        "
+                  + (", ".join("%s=%d" % (k, leeway[k])
+                               for k in VALID_SEVERITIES if k in leeway) or "none"))
+            print("Enforce:              " + str(enforce))
+            print("Today:                " + now_ts.strftime("%Y-%m-%d"))
+            print()
+
+            findings = load_findings(leeway)
+
+            matched = sorted(
+                (
+                    f for f in findings.values()
+                    if f["severity"] in (patched_sevs if f["patched"] else unpatched_sevs)
+                ),
+                key=lambda f: (SEVERITY_ORDER.get(f["severity"], 99), f["package"], f["cve"]),
+            )
+            unique_cves = list(dict.fromkeys(f["cve"] for f in matched))
+
+            # --- Log the full table ---
+            print()
+            if matched:
+                header = ROW % ("SEVERITY", "STATE", "PACKAGE", "VERSION", "CVE",
+                                "FIXED IN", "BLOCKS FROM", "SOURCE")
+                print(header)
+                print("-" * len(header))
+                for f in matched:
+                    print(ROW % (f["severity"], "patched" if f["patched"] else "unpatched",
+                                 f["package"][:26], f["version"][:18], f["cve"][:24],
+                                 f["fixed_in"][:20], blocks_label(f, now_ts),
+                                 f["repository"]))
+                print()
+                print("BLOCKS FROM is the Conforma effective_on date: the CVE's disclosure")
+                print("date plus the leeway for its severity. A date with +Nd has not been")
+                print("reached yet, so cve.cve_blockers does not fail on it for another N")
+                print("days. Everything else is already blocking.")
+            else:
+                print("No CVEs matched the configured severity thresholds.")
+
+            # --- Summarise ---
+            # Counts are per unique CVE, not per package/CVE pair: one CVE routinely
+            # affects several sub-packages (openssl and openssl-libs, for example). A CVE
+            # reported at several severities is counted at its highest, so the
+            # per-severity numbers always add up to CVE_COUNT.
+            worst = {}
+            for f in matched:
+                rank = SEVERITY_ORDER.get(f["severity"], 99)
+                if f["cve"] not in worst or rank < worst[f["cve"]][0]:
+                    worst[f["cve"]] = (rank, f["severity"])
+            per_severity = {}
+            for _, severity in worst.values():
+                per_severity[severity] = per_severity.get(severity, 0) + 1
+
+            unpatched_cves = {f["cve"] for f in matched if not f["patched"]}
+            patched_cves = {f["cve"] for f in matched if f["patched"]}
+
+            # A CVE is already blocking if any of its findings has reached its
+            # effective_on date; the rest are pending and start blocking later.
+            blocking_now = {
+                f["cve"] for f in matched
+                if f["blocks_from"] is None or f["blocks_from"] <= now_ts
+            }
+            pending = [c for c in unique_cves if c not in blocking_now]
+            last_pending = max(
+                (f["blocks_from"] for f in matched
+                 if f["cve"] in pending and f["blocks_from"] is not None),
+                default=None,
+            )
+
+            summary_parts = [
+                "%s=%d" % (sev, per_severity[sev])
+                for sev in VALID_SEVERITIES if sev in per_severity
+            ] or ["none"]
+            # A CVE can hit several packages and be fixed in only some of them.
+            # Reporting it as simply "patched" would imply a fix is available for the
+            # whole image, so those are counted separately and the buckets are kept
+            # exclusive, letting patched + unpatched + mixed equal the unique total.
+            mixed_cves = patched_cves & unpatched_cves
+            summary_parts.append("patched=%d" % len(patched_cves - mixed_cves))
+            summary_parts.append("unpatched=%d" % len(unpatched_cves - mixed_cves))
+            if mixed_cves:
+                summary_parts.append("mixed=%d" % len(mixed_cves))
+            summary_parts.append("blocking=%d" % len(blocking_now))
+            summary_parts.append("pending=%d" % len(pending))
+            cve_summary = " ".join(summary_parts)
+
+            print()
+            print("Matching unique CVEs: %d (across %d package/CVE pairs)"
+                  % (len(unique_cves), len(matched)))
+            if mixed_cves:
+                print("Fixed in some packages but not others: %d (%s)"
+                      % (len(mixed_cves), ", ".join(sorted(mixed_cves))))
+            print("Blocking now:         %d" % len(blocking_now))
+            print("Still within leeway:  %d%s"
+                  % (len(pending),
+                     "" if last_pending is None
+                     else ", all blocking by " + last_pending.strftime("%Y-%m-%d")))
+            print("Summary: " + cve_summary)
+
+            # --- Emit results ---
+            thresholds = "patched %s, unpatched %s" % (fmt(patched_sevs), fmt(unpatched_sevs))
+            if not unique_cves:
+                test_output = {
+                    "result": "SUCCESS",
+                    "timestamp": now(),
+                    "successes": 1,
+                    "failures": 0,
+                    "warnings": 0,
+                    "note": "No CVEs at the cve.cve_blockers thresholds (%s)." % thresholds,
+                }
+            else:
+                pending_note = ""
+                if pending:
+                    pending_note = (" %d more start blocking later%s." % (
+                        len(pending),
+                        "" if last_pending is None
+                        else ", all by " + last_pending.strftime("%Y-%m-%d")))
+                note = (
+                    "%d CVE(s) at the cve.cve_blockers thresholds (%s) [%s]. %d are "
+                    "blocking now.%s Conforma will flag these at release unless an ECP "
+                    "exception covers them. See the check-clair-cves task log for the "
+                    "CVE identifiers."
+                    % (len(unique_cves), thresholds, cve_summary, len(blocking_now),
+                       pending_note)
+                )
+                # Only CVEs past their leeway would actually fail the gate today; the
+                # rest are reported as warnings even when enforcing.
+                test_output = {
+                    "result": "FAILURE" if (enforce and blocking_now) else "WARNING",
+                    "timestamp": now(),
+                    "successes": 0,
+                    "failures": len(blocking_now) if enforce else 0,
+                    "warnings": (len(pending) if enforce else len(unique_cves)),
+                    "note": note[:NOTE_LIMIT],
+                }
+
+            write_results(test_output, len(unique_cves), cve_summary, image)
+
+
+        # The task must always emit a TEST_OUTPUT, so no exception may escape.
+        try:
+            run()
+        except ReportError as exc:
+            report_error(str(exc), read_file("/workspace/image-ref"))
+        except BaseException as exc:  # noqa: BLE001 - deliberately broad
+            report_error("unexpected error: %r" % (exc,), read_file("/workspace/image-ref"))
