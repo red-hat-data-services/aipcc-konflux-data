@@ -1,0 +1,92 @@
+# Ad-hoc run of the check-clair-cves pipeline against any snapshot, without going
+# through an IntegrationTestScenario. Useful for auditing a component on demand or for
+# trying out different severity and fix-availability filters before changing an ITS.
+#
+# This reproduces by hand what the ITS gets for free. Under an IntegrationTestScenario
+# the integration service fills in SNAPSHOT from the snapshot that triggered the test
+# and sets the appstudio.openshift.io/component label to the component under test, which
+# Tekton propagates from the PipelineRun down to the TaskRun pods. Running standalone,
+# you supply both yourself.
+#
+# No IntegrationTestScenario references this file; it is a convenience entry point.
+#
+# Every <ANGLE_BRACKET> value below is a placeholder, not a default. Replace them all:
+#
+#   1. namespace — the tenant the component belongs to. This repo serves two:
+#      ai-tenant for RHAIIS and the base images, rhel-ai-tenant for RHEL AI bootc.
+#      It matters: the pull secret is namespace-local, so running in the wrong
+#      tenant fails with an authentication error rather than an obvious one.
+#   2. the component label — the component to scan, matching a name in the snapshot.
+#      Only needed when the snapshot has more than one component.
+#   3. SNAPSHOT — normally the spec of a real snapshot, pasted as a single-line
+#      JSON string, which replaces the whole placeholder value:
+#
+#        oc get snapshot <NAME> -n <NAMESPACE> -o jsonpath='{.spec}'
+#
+#      To scan one arbitrary image instead, keep the skeleton below, fill in the
+#      component name and image, and drop the component label. Only name and
+#      containerImage are read; application is ignored.
+#
+#   oc create -f pipelineruns/check-clair-cves-its.yaml
+#   tkn pipelinerun logs -f -n <NAMESPACE> <name>
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: check-clair-cves-its-
+  # Placeholder. ai-tenant (RHAIIS, base images) or rhel-ai-tenant (RHEL AI bootc).
+  namespace: "<NAMESPACE>"
+  labels:
+    # Placeholder. The component whose image should be scanned, matching a component
+    # name in the snapshot below. Only needed when the snapshot has more than one.
+    appstudio.openshift.io/component: "<COMPONENT>"
+spec:
+  params:
+    # Placeholder. Replace the whole value with a real snapshot spec, or fill in the
+    # skeleton to scan a single image.
+    - name: SNAPSHOT
+      value: '{"application":"<APPLICATION>","components":[{"name":"<COMPONENT>","containerImage":"<IMAGE>@sha256:<DIGEST>"}]}'
+
+    # Severities to report for CVEs that have a fix. Mirrors the Conforma rule data
+    # key restrict_cve_security_levels.
+    - name: patched-severities
+      value: "Critical,High"
+
+    # Severities to report for CVEs with no known fix. Empty matches the stock rule
+    # data, where unpatched CVEs warn but do not block.
+    - name: unpatched-severities
+      value: ""
+
+    # Grace period per severity, mirroring the Conforma cve_leeway rule data.
+    - name: cve-leeway
+      value: "Critical=6,High=29"
+
+    # "true" reports findings as TEST_OUTPUT FAILURE, "false" as WARNING.
+    - name: enforce
+      value: "false"
+
+  pipelineRef:
+    resolver: git
+    params:
+      - name: org
+        value: redhat
+      - name: repo
+        value: rhel-ai/konflux-data
+      - name: scmType
+        value: gitlab
+      - name: serverURL
+        value: https://gitlab.com
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: pipelines/check-clair-cves-its.yaml
+      - name: token
+        value: pipelines-as-code-secret
+      - name: tokenKey
+        value: password
+
+  taskRunTemplate:
+    serviceAccountName: konflux-integration-runner
+
+  timeouts:
+    pipeline: 30m0s
