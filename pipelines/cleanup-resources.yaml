@@ -175,6 +175,40 @@ spec:
         - input: $(params.dry-run)
           operator: in
           values: ["false"]
+    - name: cleanup-ocp-snc-resources
+      params:
+        - name: debug
+          value: $(params.debug)
+        - name: force-destroy
+          value: $(params.force-destroy)
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+        - name: secret-ocp-snc-credentials
+          value: $(params.secret-aws-credentials)
+      matrix:
+        params:
+          - name: id
+            value: $(tasks.find-resources.results.ocp-snc-resources[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.3"
+          - name: pathInRepo
+            value: "tkn/infra-aws-ocp-snc.yaml"
+      when:
+        - input: $(tasks.find-resources.results.ocp-snc-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
     - name: cleanup-aws-amis
       params:
         - name: debug
