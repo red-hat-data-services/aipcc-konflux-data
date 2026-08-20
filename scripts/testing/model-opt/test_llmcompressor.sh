@@ -97,5 +97,9 @@ echo
 echo "✓ llmcompressor quantization test PASSED"
 
 echo
+echo "=== Fixing output file permissions for inference container ==="
+run_in_container "find '${CONTAINER_OUT_DIR}' -mindepth 1 -exec chmod a+r {} +"
+
+echo
 echo "=== Quantization artifacts on VM ==="
 ls -lah "${MODEL_OUT_DIR}"
