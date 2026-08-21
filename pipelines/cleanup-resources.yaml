@@ -199,7 +199,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.3"
+            value: "v0.14.4"
           - name: pathInRepo
             value: "tkn/infra-aws-ocp-snc.yaml"
       when:
