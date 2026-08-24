@@ -8,6 +8,10 @@ spec:
       type: string
       description: Container image to inspect
 
+    - name: inference-server-image
+      type: string
+      description: Inference server (vLLM) container image for VRAM comparison
+
     - name: host-access-secret-name
       type: string
       description: Secret containing SSH access details (host, username, id_rsa)
@@ -79,6 +83,7 @@ spec:
         echo "=== Model-opt quantization test ==="
 
         CONTAINER_IMAGE="$(params.container-image)"
+        INFERENCE_SERVER_IMAGE="$(params.inference-server-image)"
 
         HOST=$(echo "${HOST}" | tr -d '\n\r')
         USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
@@ -130,10 +135,101 @@ spec:
         echo -e "\n=== Checking llmcompressor version in container image ==="
         ${ssh_cmd} "podman run --rm '${CONTAINER_IMAGE}' pip show llmcompressor"
 
+        # Resolve remote models path
+        REMOTE_MODELS_REAL="$(${ssh_cmd} 'readlink -f ~/models 2>/dev/null || echo $HOME/models')"
+        echo "Remote models path: ${REMOTE_MODELS_REAL}"
+
+        NUMBER_OF_GPUS=$(${ssh_cmd} "nvidia-smi --list-gpus | wc -l")
+        echo "Number of GPUs: ${NUMBER_OF_GPUS}"
+
+        # --- VRAM comparison helpers ---
+        VRAM_CONTAINER_NAME="vram-test"
+
+        start_vllm() {
+          local model_path=$1
+          local model_name=$2
+
+          ${ssh_cmd} "podman stop -i ${VRAM_CONTAINER_NAME} && podman rm -i ${VRAM_CONTAINER_NAME}" || true
+
+          echo "Starting vLLM with model: ${model_path}"
+          ${ssh_cmd} "podman run -d --name ${VRAM_CONTAINER_NAME} \
+            --device nvidia.com/gpu=all \
+            --security-opt=label=disable \
+            --shm-size=8g \
+            --network=host \
+            --userns=keep-id:uid=1001 \
+            --env HF_HUB_OFFLINE=1 \
+            --env VLLM_NO_USAGE_STATS=1 \
+            --env VLLM_LOGGING_LEVEL=DEBUG \
+            -v '${REMOTE_MODELS_REAL}:/models' \
+            '${INFERENCE_SERVER_IMAGE}' \
+            --tensor-parallel-size ${NUMBER_OF_GPUS} \
+            --model '${model_path}' \
+            --served-model-name '${model_name}' \
+            --max-model-len 1024 \
+            --enforce-eager"
+        }
+
+        wait_for_vllm() {
+          local max_attempts=30
+          local attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            echo "Waiting for vLLM to be ready ($attempt/$max_attempts)..."
+
+            container_state=$(${ssh_cmd} "podman inspect -f '{{.State.Running}}' ${VRAM_CONTAINER_NAME}" 2>/dev/null || echo "false")
+            if [[ "${container_state}" == "false" ]]; then
+              echo "Container crashed!"
+              ${ssh_cmd} "podman logs --tail 50 ${VRAM_CONTAINER_NAME}" || true
+              return 1
+            fi
+
+            if ${ssh_cmd} "curl --no-progress-meter -f http://localhost:8000/health > /dev/null 2>&1"; then
+              echo "vLLM is ready"
+              return 0
+            fi
+
+            attempt=$((attempt + 1))
+            sleep 30
+          done
+
+          echo "Health check timed out after $((max_attempts * 30)) seconds"
+          ${ssh_cmd} "podman logs --tail 50 ${VRAM_CONTAINER_NAME}" || true
+          return 1
+        }
+
+        parse_weights_gib() {
+          local logs="$1"
+          local value
+          # Try "Model loading took X.XX GiB" first (vLLM v1 format)
+          value=$(echo "${logs}" | grep -i "Model loading took" | tail -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          if [ -n "${value}" ]; then
+            echo "${value}"
+            return
+          fi
+          # Fallback: "Loading model weights took X.XX GiB"
+          value=$(echo "${logs}" | grep -i "Loading model weights took" | tail -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          if [ -n "${value}" ]; then
+            echo "${value}"
+            return
+          fi
+          # Fallback: "weights memory: X.XXGiB" from memory profiling line
+          value=$(echo "${logs}" | grep -i "weights memory:" | tail -1 | grep -oE 'weights memory: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+')
+          echo "${value}"
+        }
+
+        parse_kv_cache_tokens() {
+          local logs="$1"
+          echo "${logs}" | grep -i "GPU KV cache size" | tail -1 | sed 's/.*GPU KV cache size: //' | grep -oE '[0-9,]+' | head -1 | tr -d ','
+        }
+
+        stop_vllm() {
+          ${ssh_cmd} "podman stop -t 10 ${VRAM_CONTAINER_NAME} && podman rm ${VRAM_CONTAINER_NAME}" || true
+        }
+
         # Process each model
         for MODEL_ID in "$@"; do
           echo -e "\n===================================================="
-          echo "=== Quantizing model: ${MODEL_ID}"
+          echo "=== Processing model: ${MODEL_ID}"
           echo "===================================================="
 
           MODEL_OUT_DIR="/home/${USERNAME}/models/${MODEL_ID}-quantized"
@@ -141,6 +237,7 @@ spec:
           # Ensure output directory exists on remote host
           ${ssh_cmd} "mkdir -p '${MODEL_OUT_DIR}' && chmod a+rwx '${MODEL_OUT_DIR}'"
 
+          # --- Phase 1: Quantization ---
           echo -e "\n=== Running model-opt environment + quantization test ==="
           ${ssh_cmd} "'${REMOTE_SCRIPT_DIR}/testing/model-opt/test_llmcompressor.sh' \
             '${CONTAINER_IMAGE}' \
@@ -148,6 +245,91 @@ spec:
             '${MODEL_OUT_DIR}'"
 
           echo "✓ Model ${MODEL_ID} quantized successfully"
+
+          # --- Phase 2: VRAM comparison ---
+          echo -e "\n===================================================="
+          echo "=== VRAM comparison for: ${MODEL_ID}"
+          echo "===================================================="
+
+          ORIGINAL_PATH="/models/${MODEL_ID}"
+          QUANTIZED_PATH="/models/${MODEL_ID}-quantized"
+
+          # Serve original model
+          echo -e "\n=== Serving ORIGINAL model ==="
+          start_vllm "${ORIGINAL_PATH}" "${MODEL_ID}"
+
+          if ! wait_for_vllm; then
+            echo "ERROR: Failed to start vLLM with original model"
+            exit 1
+          fi
+
+          LOGS_ORIGINAL=$(${ssh_cmd} "podman logs ${VRAM_CONTAINER_NAME}" 2>&1)
+          echo "${LOGS_ORIGINAL}" | grep -iE "(Loading model weights|Model loading took|GPU KV cache size|weights memory|reserved for KV Cache)" || true
+
+          ORIGINAL_WEIGHTS=$(parse_weights_gib "${LOGS_ORIGINAL}")
+          ORIGINAL_KV_TOKENS=$(parse_kv_cache_tokens "${LOGS_ORIGINAL}")
+
+          if [ -z "${ORIGINAL_WEIGHTS}" ]; then
+            echo "ERROR: Could not parse model weights size from vLLM logs for original model"
+            echo "Full logs:"
+            echo "${LOGS_ORIGINAL}" | tail -100
+            exit 1
+          fi
+
+          echo "Original model weights: ${ORIGINAL_WEIGHTS} GiB"
+          echo "Original KV cache tokens: ${ORIGINAL_KV_TOKENS:-N/A}"
+
+          stop_vllm
+
+          # Serve quantized model
+          echo -e "\n=== Serving QUANTIZED model ==="
+          start_vllm "${QUANTIZED_PATH}" "${MODEL_ID}"
+
+          if ! wait_for_vllm; then
+            echo "ERROR: Failed to start vLLM with quantized model"
+            exit 1
+          fi
+
+          LOGS_QUANTIZED=$(${ssh_cmd} "podman logs ${VRAM_CONTAINER_NAME}" 2>&1)
+          echo "${LOGS_QUANTIZED}" | grep -iE "(Loading model weights|Model loading took|GPU KV cache size|weights memory|reserved for KV Cache)" || true
+
+          QUANTIZED_WEIGHTS=$(parse_weights_gib "${LOGS_QUANTIZED}")
+          QUANTIZED_KV_TOKENS=$(parse_kv_cache_tokens "${LOGS_QUANTIZED}")
+
+          if [ -z "${QUANTIZED_WEIGHTS}" ]; then
+            echo "ERROR: Could not parse model weights size from vLLM logs for quantized model"
+            echo "Full logs:"
+            echo "${LOGS_QUANTIZED}" | tail -100
+            exit 1
+          fi
+
+          echo "Quantized model weights: ${QUANTIZED_WEIGHTS} GiB"
+          echo "Quantized KV cache tokens: ${QUANTIZED_KV_TOKENS:-N/A}"
+
+          stop_vllm
+
+          # Compare
+          echo -e "\n=== Results ==="
+          echo "Model weights:  ${ORIGINAL_WEIGHTS} GiB (original) vs ${QUANTIZED_WEIGHTS} GiB (quantized)"
+          echo "KV cache tokens: ${ORIGINAL_KV_TOKENS:-N/A} (original) vs ${QUANTIZED_KV_TOKENS:-N/A} (quantized)"
+
+          if ! awk "BEGIN { exit (${QUANTIZED_WEIGHTS} < ${ORIGINAL_WEIGHTS}) ? 0 : 1 }"; then
+            echo "FAIL: Quantized model weights (${QUANTIZED_WEIGHTS} GiB) are not smaller than original (${ORIGINAL_WEIGHTS} GiB)"
+            exit 1
+          fi
+          echo "PASS: Quantized model weights are smaller"
+
+          if [ -n "${ORIGINAL_KV_TOKENS}" ] && [ -n "${QUANTIZED_KV_TOKENS}" ]; then
+            if [ "${QUANTIZED_KV_TOKENS}" -le "${ORIGINAL_KV_TOKENS}" ]; then
+              echo "FAIL: Quantized KV cache (${QUANTIZED_KV_TOKENS} tokens) is not larger than original (${ORIGINAL_KV_TOKENS} tokens)"
+              exit 1
+            fi
+            echo "PASS: Quantized model has more KV cache capacity"
+            KV_GAIN=$(( QUANTIZED_KV_TOKENS - ORIGINAL_KV_TOKENS ))
+            echo "KV cache gain: +${KV_GAIN} tokens"
+          fi
+
+          echo -e "\n✓ Model ${MODEL_ID} passed all checks"
         done
 
-        echo -e "\n✓ All models quantized successfully"
+        echo -e "\n✓ All models passed quantization + VRAM comparison"
