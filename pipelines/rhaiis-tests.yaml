@@ -419,6 +419,8 @@ spec:
       params:
         - name: container-image
           value: "$(tasks.create-configuration.results.model-opt-image)"
+        - name: inference-server-image
+          value: "$(tasks.create-configuration.results.inference-server-image)"
         - name: host-access-secret-name
           value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: model-names
@@ -451,7 +453,7 @@ spec:
             value: pipelines-as-code-secret
           - name: tokenKey
             value: password
-      when: # Runs model-opt quantization only when testing model-opt (non-empty model-opt-image)
+      when:
         - input: $(tasks.create-configuration.results.model-opt-image)
           operator: notin
           values: [""]
