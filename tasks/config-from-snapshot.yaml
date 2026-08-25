@@ -53,7 +53,7 @@ spec:
         Konflux console URL prefix. Pipelines append $(context.pipelineRun.name) to get the full URL.
   steps:
     - name: parse-snapshot-components
-      image: quay.io/konflux-ci/release-service-utils@sha256:9db0cc6b09799f41c87d46589dcd2c1ba66edfcaab3b88b99e2fcbc0646424bf
+      image: quay.io/konflux-ci/release-service-utils@sha256:c1e1ac19eb85d2e32bc12cac94d6b68198610b1ad7ca8e1d5460670d687c0bd4
       workingDir: /workspace
       env:
         - name: COMPONENT
