@@ -282,6 +282,117 @@ spec:
           return 0
         }
 
+        # NOTE: the vllm-omni fork's confirmed-validated multimodal/TTS model is
+        # Qwen/Qwen3-Omni-30B-A3B-Instruct. We test against the much lighter
+        # Qwen/Qwen2.5-Omni-3B instead to keep VM cost/time down (fits the
+        # existing single-GPU pool) — this substitution is NOT validated by the
+        # fork's own test matrix. If test_image_to_text/test_tts_speech start
+        # failing, first confirm whether Qwen2.5-Omni-3B is actually supported
+        # before assuming a test regression.
+
+        test_image_to_text() {
+          local model_name=$1
+
+          # Fixed 8x8 red-circle-on-white PNG, built from stdlib only (base64,
+          # struct, zlib) — always the same bytes, never regenerated/varied.
+          # Written as a single expression (no def/for blocks) so it survives
+          # this YAML literal block's indentation rules unchanged; the PNG
+          # container format itself is: signature + IHDR + IDAT(zlib) + IEND.
+          echo -e "\n=== Generating fixed 8x8 red circle PNG (deterministic, stdlib-only) ==="
+          IMAGE_B64=$(${ssh_cmd} "python3 -c 'import base64,struct,zlib;c=lambda t,d: struct.pack(\">I\",len(d))+t+d+struct.pack(\">I\",zlib.crc32(t+d)&0xffffffff);s=8;pix=b\"\".join(b\"\x00\"+b\"\".join(bytes((220,20,20) if (((x-(s-1)/2)**2+(y-(s-1)/2)**2)**0.5)<=(s/2-0.5) else (255,255,255)) for x in range(s)) for y in range(s));png=b\"\x89PNG\r\n\x1a\n\"+c(b\"IHDR\",struct.pack(\">IIBBBBB\",s,s,8,2,0,0,0))+c(b\"IDAT\",zlib.compress(pix,9))+c(b\"IEND\",b\"\");print(base64.b64encode(png).decode())'" 2>/dev/null) || true
+
+          if [ -z "${IMAGE_B64}" ]; then
+            echo "✗ Failed to generate synthetic test image (is python3 available on the VM?)"
+            return 1
+          fi
+
+          echo -e "\n=== Prompting RHAIIS container with image (chat completions) ==="
+          DATA="{\"model\": \"${model_name}\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"Describe this image in one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,${IMAGE_B64}\"}}]}], \"max_tokens\": 20, \"temperature\": 0.0}"
+
+          RESULT=$(${ssh_cmd} "curl --no-progress-meter --max-time 30 -o /tmp/img_response.json -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/chat/completions; cat /tmp/img_response.json") || true
+
+          HTTP_STATUS=$(echo "${RESULT}" | head -n1)
+          BODY=$(echo "${RESULT}" | tail -n +2)
+
+          echo -e "\n=== Response JSON ==="
+          echo "${BODY}" | jq
+
+          echo -e "\n=== Verifying response ==="
+          TEXT=$(echo "${BODY}" | jq -r '.choices[0].message.content' 2>/dev/null)
+          VERIFICATION_FAILED=0
+
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "✗ Verification failed: expected HTTP 200, got '${HTTP_STATUS}'"
+            VERIFICATION_FAILED=1
+          fi
+
+          if [ -z "${TEXT}" ] || [ "${TEXT}" == "null" ]; then
+            echo "✗ Verification failed: response content is empty"
+            VERIFICATION_FAILED=1
+          elif echo "${TEXT}" | grep -i "circle" > /dev/null; then
+            echo "✓ Verification passed: Response contains 'circle'"
+          else
+            echo "✗ Verification failed: Response does not contain 'circle'"
+            echo "Actual response text: ${TEXT}"
+            VERIFICATION_FAILED=1
+          fi
+
+          if [ $VERIFICATION_FAILED -eq 1 ]; then
+            echo "✗ Model ${model_name} failed image-to-text verification"
+            return 1
+          fi
+
+          echo "✓ Model ${model_name} passed image-to-text test"
+          return 0
+        }
+
+        test_tts_speech() {
+          local model_name=$1
+
+          echo -e "\n=== Requesting speech synthesis from RHAIIS container ==="
+          DATA="{\"model\": \"${model_name}\", \"input\": \"Hi\"}"
+
+          RESULT=$(${ssh_cmd} "curl --no-progress-meter --max-time 30 -D /tmp/tts_headers.txt -o /tmp/tts_body.bin -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/audio/speech; grep -i '^content-type:' /tmp/tts_headers.txt | tr -d '\r' | cut -d' ' -f2-; wc -c < /tmp/tts_body.bin") || true
+
+          HTTP_STATUS=$(echo "${RESULT}" | sed -n '1p')
+          CONTENT_TYPE=$(echo "${RESULT}" | sed -n '2p')
+          BYTE_COUNT=$(echo "${RESULT}" | sed -n '3p' | tr -d '[:space:]')
+
+          echo "HTTP status: ${HTTP_STATUS}"
+          echo "Content-Type: ${CONTENT_TYPE}"
+          echo "Body bytes: ${BYTE_COUNT}"
+
+          echo -e "\n=== Verifying response ==="
+          VERIFICATION_FAILED=0
+
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "✗ Verification failed: expected HTTP 200, got '${HTTP_STATUS}'"
+            VERIFICATION_FAILED=1
+          fi
+
+          if echo "${CONTENT_TYPE}" | grep -iq "^audio/"; then
+            echo "✓ Verification passed: Content-Type is '${CONTENT_TYPE}'"
+          else
+            echo "✗ Verification failed: Content-Type '${CONTENT_TYPE}' does not start with 'audio/'"
+            VERIFICATION_FAILED=1
+          fi
+
+          if [ -z "${BYTE_COUNT}" ] || [ "${BYTE_COUNT}" -eq 0 ] 2>/dev/null; then
+            echo "✗ Verification failed: response body is empty"
+            VERIFICATION_FAILED=1
+          else
+            echo "✓ Verification passed: response body is ${BYTE_COUNT} bytes"
+          fi
+
+          if [ $VERIFICATION_FAILED -eq 1 ]; then
+            echo "✗ Model ${model_name} failed TTS speech verification"
+            return 1
+          fi
+
+          echo "✓ Model ${model_name} passed TTS speech test"
+          return 0
+        }
+
         echo -e "\n=== Preparing SSH private key ==="
         cp /mnt/ssh-key/id_rsa id_rsa
         chmod 400 id_rsa
@@ -392,6 +503,18 @@ spec:
           if ! test_inference "${model}"; then
             echo -e "\n✗ Failed to test inference for model ${model}"
             exit $EXIT_INFERENCE_FAILED
+          fi
+
+          if [[ "${model}" =~ [Oo]mni ]]; then
+            if ! test_image_to_text "${model}"; then
+              echo -e "\n✗ Failed image-to-text test for model ${model}"
+              exit $EXIT_INFERENCE_FAILED
+            fi
+
+            if ! test_tts_speech "${model}"; then
+              echo -e "\n✗ Failed TTS speech test for model ${model}"
+              exit $EXIT_INFERENCE_FAILED
+            fi
           fi
         done
 
