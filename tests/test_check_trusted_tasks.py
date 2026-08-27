@@ -1,4 +1,3 @@
-import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,112 +12,23 @@ from importlib import import_module
 ctt = import_module("check-trusted-tasks")
 
 
-# -- task_name_from_ref --
+# -- parse_version --
 
 
 @pytest.mark.parametrize(
-    "image_ref, expected",
+    "version, expected",
     [
-        ("quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.2", "apply-tags"),
-        ("quay.io/konflux-ci/tekton-catalog/task-init:0.4", "init"),
-        ("quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.10", "buildah-remote-oci-ta"),
-        ("task-git-clone:1.0", "git-clone"),
-        ("some-task", "some-task"),
+        ("0.4", (0, 4)),
+        ("0.10", (0, 10)),
+        ("0.7.1", (0, 7, 1)),
+        ("1.0", (1, 0)),
     ],
 )
-def test_task_name_from_ref(image_ref, expected):
-    assert ctt.task_name_from_ref(image_ref) == expected
+def test_parse_version(version, expected):
+    assert ctt.parse_version(version) == expected
 
 
-# -- check_ref --
-
-
-DIGEST_A = "sha256:aaaa"
-DIGEST_B = "sha256:bbbb"
-FUTURE = datetime.now(timezone.utc) + timedelta(days=90)
-
-
-def _make_store(entries):
-    """Build a store dict from (provenance_uri, digest, expires) tuples."""
-    store = {}
-    for uri, digest, expires in entries:
-        store.setdefault(uri, []).append((digest, expires))
-    return store
-
-
-def test_check_ref_trusted_no_expiry():
-    store = _make_store([("oci://img:1.0", DIGEST_A, None)])
-    found, expires = ctt.check_ref("img:1.0", DIGEST_A, store)
-    assert found is True
-    assert expires is None
-
-
-def test_check_ref_trusted_with_expiry():
-    store = _make_store([("oci://img:1.0", DIGEST_A, FUTURE)])
-    found, expires = ctt.check_ref("img:1.0", DIGEST_A, store)
-    assert found is True
-    assert expires == FUTURE
-
-
-def test_check_ref_wrong_digest():
-    store = _make_store([("oci://img:1.0", DIGEST_A, None)])
-    found, expires = ctt.check_ref("img:1.0", DIGEST_B, store)
-    assert found is False
-    assert expires is None
-
-
-def test_check_ref_missing_key():
-    store = _make_store([("oci://other:1.0", DIGEST_A, None)])
-    found, _ = ctt.check_ref("img:1.0", DIGEST_A, store)
-    assert found is False
-
-
-def test_check_ref_empty_store():
-    found, expires = ctt.check_ref("img:1.0", DIGEST_A, {})
-    assert found is False
-    assert expires is None
-
-
-def test_check_ref_finds_in_expired_store():
-    past = datetime.now(timezone.utc) - timedelta(days=10)
-    store = _make_store([("oci://img:1.0", DIGEST_A, past)])
-    found, expires = ctt.check_ref("img:1.0", DIGEST_A, store)
-    assert found is True
-    assert expires == past
-
-
-# -- load_renovate_skips --
-
-
-def test_load_renovate_skips_no_file(tmp_path):
-    assert ctt.load_renovate_skips(str(tmp_path)) == set()
-
-
-def test_load_renovate_skips_parses_disabled_rules(tmp_path):
-    config = {
-        "tekton": {
-            "packageRules": [
-                {
-                    "matchFileNames": ["pipelines/modelcar.yaml", "pipelines/models-oci-copy.yaml"],
-                    "matchPackageNames": ["quay.io/konflux-ci/tekton-catalog/task-apply-tags"],
-                    "enabled": False,
-                },
-                {
-                    "matchUpdateTypes": ["digest"],
-                    "automerge": True,
-                },
-            ]
-        }
-    }
-    (tmp_path / "renovate.json").write_text(json.dumps(config))
-    skips = ctt.load_renovate_skips(str(tmp_path))
-    assert skips == {
-        ("quay.io/konflux-ci/tekton-catalog/task-apply-tags", "modelcar.yaml"),
-        ("quay.io/konflux-ci/tekton-catalog/task-apply-tags", "models-oci-copy.yaml"),
-    }
-
-
-# -- collect_konflux_data_refs --
+# -- collect_pipeline_tasks --
 
 
 PIPELINE_CONTENT = """\
@@ -131,164 +41,194 @@ spec:
     - name: build
       params:
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-buildah:0.2@sha256:11223344
+          value: quay.io/konflux-ci/tekton-catalog/task-buildah:0.10@sha256:11223344
 """
 
 
-def test_collect_refs(tmp_path):
+def test_collect_pipeline_tasks(tmp_path):
     (tmp_path / "pipelines").mkdir()
     (tmp_path / "pipelines" / "test.yaml").write_text(PIPELINE_CONTENT)
-    refs = ctt.collect_konflux_data_refs(str(tmp_path))
-    assert len(refs) == 2
-    image_refs = {r[0] for r in refs}
-    assert "quay.io/konflux-ci/tekton-catalog/task-init:0.4" in image_refs
-    assert "quay.io/konflux-ci/tekton-catalog/task-buildah:0.2" in image_refs
+    tasks = ctt.collect_pipeline_tasks(str(tmp_path))
+    assert len(tasks) == 2
+    names = {(t[0], t[1]) for t in tasks}
+    assert ("init", "0.4") in names
+    assert ("buildah", "0.10") in names
 
 
-def test_collect_refs_respects_skips(tmp_path):
+def test_collect_pipeline_tasks_empty_dir(tmp_path):
     (tmp_path / "pipelines").mkdir()
-    (tmp_path / "pipelines" / "modelcar.yaml").write_text(
-        "    - name: bundle\n"
-        "      value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.2@sha256:aabb\n"
-        "    - name: bundle\n"
-        "      value: quay.io/konflux-ci/tekton-catalog/task-init:0.4@sha256:ccdd\n"
+    assert ctt.collect_pipeline_tasks(str(tmp_path)) == []
+
+
+def test_collect_pipeline_tasks_multiple_files(tmp_path):
+    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "pipelines" / "a.yaml").write_text(
+        "      value: quay.io/konflux-ci/tekton-catalog/task-init:0.4@sha256:aabb\n"
     )
-    config = {
-        "tekton": {
-            "packageRules": [
-                {
-                    "matchFileNames": ["pipelines/modelcar.yaml"],
-                    "matchPackageNames": ["quay.io/konflux-ci/tekton-catalog/task-apply-tags"],
-                    "enabled": False,
-                }
-            ]
+    (tmp_path / "pipelines" / "b.yaml").write_text(
+        "      value: quay.io/konflux-ci/tekton-catalog/task-init:0.4@sha256:aabb\n"
+    )
+    tasks = ctt.collect_pipeline_tasks(str(tmp_path))
+    assert len(tasks) == 2
+    assert tasks[0][2] == "a.yaml"
+    assert tasks[1][2] == "b.yaml"
+
+
+# -- parse_deny_rules --
+
+
+def _make_rules_yaml(deny_entries):
+    """Build rules YAML from list of dicts with pattern, versions, effective_on."""
+    return {
+        "rule_data": {
+            "trusted_task_rules": {
+                "allow": {"defaults": [{"pattern": "oci://quay.io/konflux-ci/tekton-catalog/task-*"}]},
+                "deny": {"defaults": deny_entries},
+            }
         }
     }
-    (tmp_path / "renovate.json").write_text(json.dumps(config))
-    refs = ctt.collect_konflux_data_refs(str(tmp_path))
-    assert len(refs) == 1
-    assert refs[0][0] == "quay.io/konflux-ci/tekton-catalog/task-init:0.4"
 
 
-def test_collect_refs_empty_dir(tmp_path):
-    (tmp_path / "pipelines").mkdir()
-    assert ctt.collect_konflux_data_refs(str(tmp_path)) == []
-
-
-# -- fetch_trust_store --
-
-
-def _make_trust_yaml(entries):
-    """Build trust store YAML data from (key, ref, expires_on_iso|None) tuples."""
-    trusted_tasks = {}
-    for key, ref, expires_on in entries:
-        trusted_tasks.setdefault(key, []).append(
-            {"ref": ref, **({"expires_on": expires_on} if expires_on else {})}
-        )
-    return {"trusted_tasks": trusted_tasks}
-
-
-def _stub_urlopen(trust_data):
-    """Return a side_effect callable simulating two sequential quay.io requests."""
-    manifest = {"layers": [{"digest": "sha256:blobdigest"}]}
-    blob_bytes = yaml.dump(trust_data).encode()
-    call_count = 0
-
-    def side_effect(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        resp = MagicMock()
-        resp.read.return_value = (
-            json.dumps(manifest).encode() if call_count == 1 else blob_bytes
-        )
-        resp.__enter__ = lambda s: s
-        resp.__exit__ = MagicMock(return_value=False)
-        return resp
-
-    return side_effect
-
-
-def test_fetch_trust_store_separates_active_and_expired(mocker):
-    past = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-    future = (datetime.now(timezone.utc) + timedelta(days=90)).isoformat()
-    data = _make_trust_yaml([
-        ("oci://img:1.0", "sha256:active", future),
-        ("oci://img:1.0", "sha256:expired", past),
-        ("oci://img:2.0", "sha256:noexpiry", None),
+def test_parse_deny_rules_basic():
+    data = _make_rules_yaml([
+        {"pattern": "oci://quay.io/konflux-ci/tekton-catalog/task-init", "versions": ["<0.3"]},
     ])
-    mocker.patch("urllib.request.urlopen", side_effect=_stub_urlopen(data))
-
-    active, expired = ctt.fetch_trust_store()
-
-    active_digests = [ref for ref, _ in active["oci://img:1.0"]]
-    assert "sha256:active" in active_digests
-    assert "sha256:expired" not in active_digests
-
-    expired_digests = [ref for ref, _ in expired["oci://img:1.0"]]
-    assert "sha256:expired" in expired_digests
-
-    assert "sha256:noexpiry" in [ref for ref, _ in active["oci://img:2.0"]]
+    rules = ctt.parse_deny_rules(data)
+    assert len(rules) == 1
+    assert rules[0] == ("init", "0.3", None)
 
 
-def test_fetch_trust_store_skips_empty_ref(mocker):
-    data = _make_trust_yaml([("oci://img:1.0", "sha256:good", None)])
-    data["trusted_tasks"]["oci://img:1.0"].append({"ref": ""})
-    mocker.patch("urllib.request.urlopen", side_effect=_stub_urlopen(data))
+def test_parse_deny_rules_with_effective_on():
+    data = _make_rules_yaml([
+        {
+            "pattern": "oci://quay.io/konflux-ci/tekton-catalog/task-buildah",
+            "versions": ["<0.9"],
+            "effective_on": "2026-08-06T00:00:00Z",
+        },
+    ])
+    rules = ctt.parse_deny_rules(data)
+    assert rules[0][0] == "buildah"
+    assert rules[0][1] == "0.9"
+    assert rules[0][2] == datetime(2026, 8, 6, tzinfo=timezone.utc)
 
-    active, _ = ctt.fetch_trust_store()
-    assert len(active["oci://img:1.0"]) == 1
+
+def test_parse_deny_rules_no_versions():
+    data = _make_rules_yaml([
+        {
+            "pattern": "oci://quay.io/konflux-ci/tekton-catalog/task-show-sbom",
+            "effective_on": "2026-09-05T00:00:00Z",
+        },
+    ])
+    rules = ctt.parse_deny_rules(data)
+    assert rules[0][1] is None
 
 
-def test_fetch_trust_store_all_expired_not_in_active(mocker):
-    past = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-    data = _make_trust_yaml([("oci://img:1.0", "sha256:old", past)])
-    mocker.patch("urllib.request.urlopen", side_effect=_stub_urlopen(data))
+def test_parse_deny_rules_empty():
+    data = {"rule_data": {"trusted_task_rules": {"deny": {}}}}
+    assert ctt.parse_deny_rules(data) == []
 
-    active, expired = ctt.fetch_trust_store()
-    assert "oci://img:1.0" not in active
-    assert "oci://img:1.0" in expired
+
+# -- check_task --
+
+
+PAST = datetime.now(timezone.utc) - timedelta(days=10)
+FUTURE = datetime.now(timezone.utc) + timedelta(days=30)
+
+
+def test_check_task_ok_above_minimum():
+    rules = [("init", "0.3", None)]
+    status, detail = ctt.check_task("init", "0.4", rules)
+    assert status == "ok"
+    assert detail is None
+
+
+def test_check_task_denied_below_minimum():
+    rules = [("init", "0.3", None)]
+    status, detail = ctt.check_task("init", "0.2", rules)
+    assert status == "denied"
+    assert "0.2 < 0.3" in detail
+
+
+def test_check_task_denied_effective_in_past():
+    rules = [("buildah", "0.9", PAST)]
+    status, detail = ctt.check_task("buildah", "0.8", rules)
+    assert status == "denied"
+
+
+def test_check_task_warning_effective_in_future():
+    rules = [("buildah", "0.10", FUTURE)]
+    status, detail = ctt.check_task("buildah", "0.9", rules)
+    assert status == "warning"
+    assert "denied in" in detail
+    assert "min 0.10" in detail
+
+
+def test_check_task_denied_all_versions():
+    rules = [("show-sbom", None, PAST)]
+    status, detail = ctt.check_task("show-sbom", "0.1", rules)
+    assert status == "denied"
+    assert "all versions denied" in detail
+
+
+def test_check_task_warning_all_versions_future():
+    rules = [("summary", None, FUTURE)]
+    status, detail = ctt.check_task("summary", "0.1", rules)
+    assert status == "warning"
+    assert "denied in" in detail
+
+
+def test_check_task_no_matching_rules():
+    rules = [("init", "0.3", None)]
+    status, detail = ctt.check_task("buildah", "0.1", rules)
+    assert status == "ok"
+
+
+def test_check_task_empty_rules():
+    status, detail = ctt.check_task("init", "0.4", [])
+    assert status == "ok"
+
+
+def test_check_task_version_at_boundary():
+    rules = [("init", "0.3", None)]
+    status, _ = ctt.check_task("init", "0.3", rules)
+    assert status == "ok"
+
+
+def test_check_task_multiple_rules_picks_effective():
+    rules = [
+        ("init", "0.3", PAST),
+        ("init", "0.4", FUTURE),
+    ]
+    status, detail = ctt.check_task("init", "0.3", rules)
+    assert status == "warning"
+    assert "min 0.4" in detail
 
 
 # -- main --
 
 
-def _pipeline_with_task(tmp_path, ref="task-init:0.4", digest="sha256:aabb"):
+def _pipeline_with_task(tmp_path, name="init", version="0.4", digest="sha256:aabb"):
     (tmp_path / "pipelines").mkdir(exist_ok=True)
     (tmp_path / "pipelines" / "test.yaml").write_text(
-        f"      value: quay.io/konflux-ci/tekton-catalog/{ref}@{digest}\n"
+        f"      value: quay.io/konflux-ci/tekton-catalog/task-{name}:{version}@{digest}\n"
     )
 
 
-def test_main_all_trusted(tmp_path, capsys, mocker):
+def test_main_all_ok(tmp_path, capsys, mocker):
     _pipeline_with_task(tmp_path)
-    active = {"oci://quay.io/konflux-ci/tekton-catalog/task-init:0.4": [("sha256:aabb", None)]}
-    mocker.patch.object(ctt, "fetch_trust_store", return_value=(active, {}))
+    rules = [("init", "0.3", None)]
+    mocker.patch.object(ctt, "fetch_deny_rules", return_value=rules)
 
     sys.argv = ["check-trusted-tasks.py", str(tmp_path)]
     ctt.main()
 
-    assert "All tasks trusted" in capsys.readouterr().out
+    assert "All tasks meet version requirements" in capsys.readouterr().out
 
 
-def test_main_untrusted_exits_1(tmp_path, capsys, mocker):
-    _pipeline_with_task(tmp_path)
-    mocker.patch.object(ctt, "fetch_trust_store", return_value=({}, {}))
-
-    with pytest.raises(SystemExit) as exc_info:
-        sys.argv = ["check-trusted-tasks.py", str(tmp_path)]
-        ctt.main()
-
-    assert exc_info.value.code == 1
-    out = capsys.readouterr().out
-    assert "UNTRUSTED" in out
-    assert "1 untrusted" in out
-
-
-def test_main_expired_shows_expired_label(tmp_path, capsys, mocker):
-    _pipeline_with_task(tmp_path)
-    past = datetime.now(timezone.utc) - timedelta(days=5)
-    expired = {"oci://quay.io/konflux-ci/tekton-catalog/task-init:0.4": [("sha256:aabb", past)]}
-    mocker.patch.object(ctt, "fetch_trust_store", return_value=({}, expired))
+def test_main_denied_exits_1(tmp_path, capsys, mocker):
+    _pipeline_with_task(tmp_path, version="0.2")
+    rules = [("init", "0.3", None)]
+    mocker.patch.object(ctt, "fetch_deny_rules", return_value=rules)
 
     with pytest.raises(SystemExit) as exc_info:
         sys.argv = ["check-trusted-tasks.py", str(tmp_path)]
@@ -296,5 +236,21 @@ def test_main_expired_shows_expired_label(tmp_path, capsys, mocker):
 
     assert exc_info.value.code == 1
     out = capsys.readouterr().out
-    assert "EXPIRED" in out
-    assert "UNTRUSTED" not in out
+    assert "DENIED" in out
+    assert "1 denied" in out
+
+
+def test_main_warning_still_passes(tmp_path, capsys, mocker):
+    _pipeline_with_task(tmp_path, version="0.3")
+    rules = [
+        ("init", "0.3", PAST),
+        ("init", "0.4", FUTURE),
+    ]
+    mocker.patch.object(ctt, "fetch_deny_rules", return_value=rules)
+
+    sys.argv = ["check-trusted-tasks.py", str(tmp_path)]
+    ctt.main()
+
+    out = capsys.readouterr().out
+    assert "denied in" in out
+    assert "All tasks meet version requirements" in out
