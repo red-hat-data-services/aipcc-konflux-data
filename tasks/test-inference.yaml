@@ -158,7 +158,7 @@ spec:
           echo "==="
           ${ssh_cmd} ${sudo_cmd} podman inspect ${CONTAINER_NAME} | jq '.[0].State'
           echo "==="
-          ${ssh_cmd} ${sudo_cmd} podman logs --tail 1000 ${CONTAINER_NAME}
+          ${ssh_cmd} ${sudo_cmd} podman logs --tail 20000 ${CONTAINER_NAME}
           echo "==="
           if [ "$(params.start-rhaiis)" == "false" ]; then
             echo -e "=== journalctl for ${CONTAINER_NAME} service ==="
