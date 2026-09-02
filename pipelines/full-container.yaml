@@ -178,7 +178,7 @@ spec:
     - name: pre-build-script-runner-image
       description: Container image to run the pre-build script in (must be from a trusted registry, pinned to digest)
       type: string
-      default: "registry.access.redhat.com/ubi9/ubi:latest@sha256:85fbaa14b01592a67ece32dbc5b5439be9000e7c1164888a4fe6fd92396e63e3"
+      default: "registry.access.redhat.com/ubi9/ubi@sha256:ae8730de9161f4e98dbe22fef5eba494b0bfe5886be8dc3c4ff687c2e954daf6"
     - name: pre-build-additional-secret
       description: Name of a Kubernetes secret to mount into the pre-build script container
       type: string
