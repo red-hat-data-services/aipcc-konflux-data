@@ -118,6 +118,28 @@ spec:
             # No GPU flags needed
           fi
 
+          # vllm-omni single-GPU deploy config override.
+          # The shipped qwen2_5_omni.yaml pins stage 1 (talker) to devices: "1",
+          # assuming a 2-GPU topology. Our CI VMs have a single GPU. This writes
+          # a custom deploy config that co-locates all 3 stages on device "0"
+          # with rebalanced gpu_memory_utilization budgets:
+          #   Stage 0 (thinker):  0.50
+          #   Stage 1 (talker):   0.20
+          #   Stage 2 (code2wav): 0.15
+          #   Sum: 0.85 — leaves 15% (~3.3 GiB) unallocated for CUDA context / IPC.
+          #
+          # The YAML is base64-encoded to avoid Tekton's YAML parser interpreting
+          # the unindented heredoc content as top-level task keys.
+          OMNI_VOLUME_FLAGS=""
+          OMNI_DEPLOY_CONFIG_FLAGS=""
+          if [[ "${INFERENCE_SERVER_IMAGE}" == *vllm-omni* ]]; then
+            echo -e "\n=== Writing single-GPU vllm-omni deploy config ==="
+            OMNI_DEPLOY_B64="YXN5bmNfY2h1bms6IGZhbHNlCgpzdGFnZXM6CiAgLSBzdGFnZV9pZDogMAogICAgbWF4X251bV9iYXRjaGVkX3Rva2VuczogMzI3NjgKICAgIG1heF9udW1fc2VxczogMQogICAgZ3B1X21lbW9yeV91dGlsaXphdGlvbjogMC41MAogICAgZW5mb3JjZV9lYWdlcjogdHJ1ZQogICAgdHJ1c3RfcmVtb3RlX2NvZGU6IHRydWUKICAgIGVuYWJsZV9wcmVmaXhfY2FjaGluZzogZmFsc2UKICAgIG1tX3Byb2Nlc3Nvcl9jYWNoZV9nYjogMAogICAgZGV2aWNlczogIjAiCiAgICBkZWZhdWx0X3NhbXBsaW5nX3BhcmFtczoKICAgICAgdGVtcGVyYXR1cmU6IDAuMAogICAgICB0b3BfcDogMS4wCiAgICAgIHRvcF9rOiAtMQogICAgICBtYXhfdG9rZW5zOiAyMDQ4CiAgICAgIHNlZWQ6IDQyCiAgICAgIHJlcGV0aXRpb25fcGVuYWx0eTogMS4xCgogIC0gc3RhZ2VfaWQ6IDEKICAgIG1heF9udW1fYmF0Y2hlZF90b2tlbnM6IDMyNzY4CiAgICBtYXhfbnVtX3NlcXM6IDEKICAgIGdwdV9tZW1vcnlfdXRpbGl6YXRpb246IDAuMjAKICAgIGVuZm9yY2VfZWFnZXI6IHRydWUKICAgIHRydXN0X3JlbW90ZV9jb2RlOiB0cnVlCiAgICBlbmFibGVfcHJlZml4X2NhY2hpbmc6IGZhbHNlCiAgICBkZXZpY2VzOiAiMCIKICAgIGRlZmF1bHRfc2FtcGxpbmdfcGFyYW1zOgogICAgICB0ZW1wZXJhdHVyZTogMC45CiAgICAgIHRvcF9wOiAwLjgKICAgICAgdG9wX2s6IDQwCiAgICAgIG1heF90b2tlbnM6IDIwNDgKICAgICAgc2VlZDogNDIKICAgICAgcmVwZXRpdGlvbl9wZW5hbHR5OiAxLjA1CgogIC0gc3RhZ2VfaWQ6IDIKICAgIG1heF9udW1fYmF0Y2hlZF90b2tlbnM6IDMyNzY4CiAgICBtYXhfbnVtX3NlcXM6IDEKICAgIGdwdV9tZW1vcnlfdXRpbGl6YXRpb246IDAuMTUKICAgIGVuZm9yY2VfZWFnZXI6IHRydWUKICAgIHRydXN0X3JlbW90ZV9jb2RlOiB0cnVlCiAgICBlbmFibGVfcHJlZml4X2NhY2hpbmc6IGZhbHNlCiAgICBlbmFibGVfZmxhc2hpbmZlcl9hdXRvdHVuZTogZmFsc2UKICAgIGFzeW5jX3NjaGVkdWxpbmc6IGZhbHNlCiAgICBkZXZpY2VzOiAiMCIKICAgIGRlZmF1bHRfc2FtcGxpbmdfcGFyYW1zOgogICAgICB0ZW1wZXJhdHVyZTogMC4wCiAgICAgIHRvcF9wOiAxLjAKICAgICAgdG9wX2s6IC0xCiAgICAgIG1heF90b2tlbnM6IDIwNDgKICAgICAgc2VlZDogNDIKICAgICAgcmVwZXRpdGlvbl9wZW5hbHR5OiAxLjEK"
+            ${ssh_cmd} "echo '${OMNI_DEPLOY_B64}' | base64 -d > ${REMOTE_HOME}/qwen2_5_omni_single_gpu.yaml"
+            OMNI_VOLUME_FLAGS="-v ${REMOTE_HOME}/qwen2_5_omni_single_gpu.yaml:/tmp/qwen2_5_omni_single_gpu.yaml:ro"
+            OMNI_DEPLOY_CONFIG_FLAGS="--deploy-config /tmp/qwen2_5_omni_single_gpu.yaml"
+          fi
+
           echo -e "\n=== Starting RHAIIS container ==="
           ${ssh_cmd} ${sudo_cmd} podman run -d --name ${CONTAINER_NAME} \
             --log-level=debug \
@@ -131,11 +153,13 @@ spec:
             --env "HF_HUB_OFFLINE=1" \
             --env "VLLM_NO_USAGE_STATS=1" \
             -v "${REMOTE_MODELS_REAL}:/models" \
+            ${OMNI_VOLUME_FLAGS} \
             "${INFERENCE_SERVER_IMAGE}" \
             ${GPU_PARALLEL_FLAGS} \
             --model "${model_path_in_container}" \
             --served-model-name "${model_name}" \
             --max-model-len 1024 \
+            ${OMNI_DEPLOY_CONFIG_FLAGS} \
             ${VARIANT_EXTRA_FLAGS}
         }
 
