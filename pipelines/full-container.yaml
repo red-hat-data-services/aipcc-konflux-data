@@ -66,6 +66,10 @@ spec:
       name: prefetch-input
       type: string
     - default: ""
+      description: Python package index URL to use when prefetching pip dependencies
+      name: pip-index-url
+      type: string
+    - default: ""
       description: Image tag expiration time, time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively.
       name: image-expires-after
     - default: "true"
@@ -221,6 +225,8 @@ spec:
           value: $(params.activation-key)
         - name: enable-package-registry-proxy
           value: $(params.enable-package-registry-proxy)
+        - name: pip-index-url
+          value: $(params.pip-index-url)
       runAfter:
         - clone-repository
       taskRef:
