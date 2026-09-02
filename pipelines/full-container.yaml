@@ -168,6 +168,21 @@ spec:
       type: string
       default: 'false'
       description: When "true", omit the build history (history timestamps, layer metadata, etc.) from the resulting image.
+    - name: pre-build-script
+      description: |
+        Optional script to run before the container build (via run-script-oci-ta).
+        The script's SCRIPT_OUTPUT_ARRAY result is appended to the LABELS param
+        of the build-container task. Leave default for a no-op passthrough.
+      type: string
+      default: 'echo "[]" > "${SCRIPT_OUTPUT_ARRAY}"'
+    - name: pre-build-script-runner-image
+      description: Container image to run the pre-build script in (must be from a trusted registry, pinned to digest)
+      type: string
+      default: "registry.access.redhat.com/ubi9/ubi:latest"
+    - name: pre-build-additional-secret
+      description: Name of a Kubernetes secret to mount into the pre-build script container
+      type: string
+      default: "does-not-exist"
   results:
     - description: ""
       name: IMAGE_URL
@@ -255,6 +270,31 @@ spec:
           workspace: git-auth
         - name: netrc
           workspace: netrc
+    - name: run-pre-build-script
+      params:
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+        - name: SCRIPT
+          value: $(params.pre-build-script)
+        - name: SCRIPT_RUNNER_IMAGE
+          value: $(params.pre-build-script-runner-image)
+        - name: ADDITIONAL_SECRET
+          value: $(params.pre-build-additional-secret)
+        - name: ociStorage
+          value: $(params.output-image).pre-build
+        - name: ociArtifactExpiresAfter
+          value: $(params.image-expires-after)
+      runAfter:
+        - prefetch-dependencies
+      taskRef:
+        params:
+          - name: name
+            value: run-script-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-run-script-oci-ta:0.1@sha256:31d5bd001a5671331db1b5ef176e8c582e734cb60f724df4d73b0b230118d8c9
+          - name: kind
+            value: task
+        resolver: bundles
     - name: build-container
       timeout: 6h
       matrix:
@@ -303,6 +343,7 @@ spec:
           - git.url=$(params.git-url)
           - git.commit=$(params.revision)
           - $(params.labels[*])
+          - $(tasks.run-pre-build-script.results.SCRIPT_OUTPUT_ARRAY[*])
         - name: ACTIVATION_KEY
           value: $(params.activation-key)
         - name: CONTEXTUALIZE_SBOM
@@ -313,8 +354,11 @@ spec:
           value: $(params.rewrite-timestamp)
         - name: OMIT_HISTORY
           value: $(params.omit-history)
+        - name: ADDITIONAL_BASE_IMAGES
+          value:
+            - $(tasks.run-pre-build-script.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
       runAfter:
-        - prefetch-dependencies
+        - run-pre-build-script
       taskRef:
         params:
           - name: name
