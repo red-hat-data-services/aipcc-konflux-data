@@ -1,0 +1,371 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: deploy-and-test-kserve
+spec:
+  params:
+    - name: cluster-access-secret-name
+      description: Name of the k8s Secret containing kubeconfig for the remote cluster
+    - name: debug
+      default: "false"
+      description: Enable debug mode (verbose logs, extended waits on failure)
+    - name: inference-server-image
+      description: RHAIIS container image reference
+    - name: model-name
+      default: "ibm-granite/granite-3.3-2b-instruct"
+      description: Model to serve via vLLM
+    - name: namespace
+      default: "rhaiis-test"
+      description: Namespace to deploy InferenceService in
+    - name: pull-secret-names
+      type: array
+      description: List of pull secret names for image authentication (e.g., rhaiis-cuda-ubi9-image-pull)
+    - name: variant
+      default: "cpu-ubi9"
+      description: RHAIIS variant (e.g., cuda-ubi9, cpu-ubi9, rocm-ubi9)
+  steps:
+    - name: setup-and-verify
+      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      env:
+        - name: CLUSTER_ACCESS_SECRET
+          value: "$(params.cluster-access-secret-name)"
+        - name: NAMESPACE
+          value: "$(params.namespace)"
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Extracting kubeconfig from secret ${CLUSTER_ACCESS_SECRET} ==="
+        kubectl get secret "${CLUSTER_ACCESS_SECRET}" -o jsonpath='{.data.kubeconfig}' | base64 -d > /workspace/kubeconfig
+        export KUBECONFIG=/workspace/kubeconfig
+
+        echo "=== Verifying cluster connectivity ==="
+        kubectl get nodes
+        kubectl version --client=false
+
+        echo "=== Verifying RHOAI operator is installed ==="
+        kubectl get csv -n redhat-ods-operator | grep rhods || {
+          echo "ERROR: RHOAI operator CSV not found"
+          exit 1
+        }
+
+        echo "=== Verifying DataScienceCluster exists ==="
+        kubectl get datasciencecluster || {
+          echo "ERROR: No DataScienceCluster found"
+          exit 1
+        }
+
+        echo "=== Verifying KServe is available ==="
+        kubectl api-resources | grep inferenceservice || {
+          echo "ERROR: InferenceService CRD not found — KServe may not be ready"
+          exit 1
+        }
+
+        echo "=== Scaling down unused RHOAI components to free CPU ==="
+        kubectl scale deployment rhods-dashboard -n redhat-ods-applications --replicas=0 || true
+        kubectl scale deployment odh-notebook-controller-manager -n redhat-ods-applications --replicas=0 || true
+        kubectl scale deployment notebook-controller-deployment -n redhat-ods-applications --replicas=0 || true
+        kubectl scale deployment data-science-pipelines-operator-controller-manager -n redhat-ods-applications --replicas=0 || true
+
+        echo "=== Cleaning up any previous test namespace ==="
+        kubectl delete namespace "${NAMESPACE}" --ignore-not-found --timeout=60s || true
+
+        echo "=== Cluster verified: RHOAI installed, KServe available ==="
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+    - name: wait-for-gpu
+      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      env:
+        - name: VARIANT
+          value: "$(params.variant)"
+      script: |
+        #!/bin/bash
+        set -e
+        export KUBECONFIG=/workspace/kubeconfig
+
+        if [[ ! "${VARIANT}" =~ cuda ]]; then
+          echo "Non-CUDA variant (${VARIANT}), skipping GPU readiness wait"
+          exit 0
+        fi
+
+        echo "=== Waiting for NVIDIA GPU operator to advertise nvidia.com/gpu on node (up to 20m) ==="
+        TIMEOUT=1200
+        INTERVAL=30
+        ELAPSED=0
+        while true; do
+          GPU_COUNT=$(kubectl get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}' 2>/dev/null || echo "")
+          if [[ "${GPU_COUNT}" =~ ^[1-9] ]]; then
+            echo "GPU ready: nvidia.com/gpu=${GPU_COUNT}"
+            kubectl get nodes -o custom-columns='NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
+            exit 0
+          fi
+          if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
+            echo "ERROR: nvidia.com/gpu not available after ${TIMEOUT}s"
+            echo "=== Node allocatable ==="
+            kubectl get nodes -o jsonpath='{.items[0].status.allocatable}' | tr ',' '\n'
+            echo ""
+            echo "=== GPU operator pods ==="
+            kubectl get pods -n nvidia-gpu-operator 2>/dev/null || \
+              kubectl get pods -n gpu-operator-resources 2>/dev/null || \
+              kubectl get pods -A -l app=nvidia-operator-validator 2>/dev/null || true
+            exit 1
+          fi
+          echo "nvidia.com/gpu not yet available (${ELAPSED}s elapsed), retrying in ${INTERVAL}s..."
+          sleep "${INTERVAL}"
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+    - name: create-pull-secret
+      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      args: ["$(params.pull-secret-names[*])"]
+      env:
+        - name: NAMESPACE
+          value: "$(params.namespace)"
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Merging pull secrets from ai-tenant ==="
+        echo '{"auths":{}}' > /workspace/merged-auth.json
+        for secret_name in "$@"; do
+          echo "Fetching pull secret: ${secret_name}"
+          secret_data=$(kubectl get secret "${secret_name}" -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null || \
+                        kubectl get secret "${secret_name}" -o jsonpath='{.data.config\.json}' 2>/dev/null || echo "")
+          if [ -z "${secret_data}" ]; then
+            echo "WARNING: Could not extract data from secret ${secret_name}, skipping"
+            continue
+          fi
+          secret_json=$(echo "${secret_data}" | base64 -d)
+          jq -s '{"auths": (.[0].auths + .[1].auths)}' /workspace/merged-auth.json <(echo "${secret_json}") > /workspace/auth-tmp.json
+          mv /workspace/auth-tmp.json /workspace/merged-auth.json
+        done
+
+        echo "=== Switching to remote cluster ==="
+        export KUBECONFIG=/workspace/kubeconfig
+
+        echo "=== Creating namespace ${NAMESPACE} ==="
+        kubectl create namespace "${NAMESPACE}" 2>/dev/null || echo "Namespace ${NAMESPACE} already exists"
+
+        echo "=== Adding namespace to Service Mesh ==="
+        cat <<EOF | kubectl apply -f -
+        apiVersion: maistra.io/v1
+        kind: ServiceMeshMember
+        metadata:
+          name: default
+          namespace: ${NAMESPACE}
+        spec:
+          controlPlaneRef:
+            namespace: istio-system
+            name: data-science-smcp
+        EOF
+        echo "Waiting for mesh enrollment..."
+        kubectl wait servicemeshmember/default -n "${NAMESPACE}" --for=condition=Ready --timeout=120s
+
+        echo "=== Creating pull secret on remote cluster ==="
+        kubectl create secret docker-registry rhaiis-pull-secret \
+          --from-file=.dockerconfigjson=/workspace/merged-auth.json \
+          -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "=== Patching default service account with pull secret ==="
+        kubectl patch serviceaccount default -n "${NAMESPACE}" \
+          -p '{"imagePullSecrets": [{"name": "rhaiis-pull-secret"}]}' || true
+
+        echo "=== Pull secret configured ==="
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+    - name: deploy-inferenceservice
+      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      env:
+        - name: NAMESPACE
+          value: "$(params.namespace)"
+        - name: INFERENCE_SERVER_IMAGE
+          value: "$(params.inference-server-image)"
+        - name: MODEL_NAME
+          value: "$(params.model-name)"
+        - name: VARIANT
+          value: "$(params.variant)"
+      script: |
+        #!/bin/bash
+        set -e
+        export KUBECONFIG=/workspace/kubeconfig
+
+        ISVC_NAME="rhaiis-smoke-test"
+
+        echo "=== Deploying InferenceService ==="
+        echo "Image: ${INFERENCE_SERVER_IMAGE}"
+        echo "Model: ${MODEL_NAME}"
+        echo "Variant: ${VARIANT}"
+
+        GPU_RESOURCES=""
+        if [[ "${VARIANT}" =~ cuda ]]; then
+          GPU_RESOURCES='nvidia.com/gpu: "1"'
+        fi
+
+        cat <<EOF | kubectl apply -f -
+        apiVersion: serving.kserve.io/v1beta1
+        kind: InferenceService
+        metadata:
+          name: ${ISVC_NAME}
+          namespace: ${NAMESPACE}
+        spec:
+          predictor:
+            annotations:
+              sidecar.istio.io/inject: "false"
+            containers:
+              - name: kserve-container
+                image: ${INFERENCE_SERVER_IMAGE}
+                env:
+                  - name: HF_HUB_OFFLINE
+                    value: "0"
+                  - name: VLLM_CPU_KVCACHE_SPACE
+                    value: "4"
+                  - name: HF_HOME
+                    value: "/tmp/hf-cache"
+                  - name: TRANSFORMERS_CACHE
+                    value: "/tmp/hf-cache"
+                args:
+                  - "--model"
+                  - "${MODEL_NAME}"
+                  - "--served-model-name"
+                  - "${MODEL_NAME}"
+                  - "--max-model-len"
+                  - "512"
+                  - "--enforce-eager"
+                ports:
+                  - containerPort: 8000
+                    protocol: TCP
+                resources:
+                  requests:
+                    cpu: "2"
+                    memory: "16Gi"
+                  limits:
+                    cpu: "4"
+                    memory: "32Gi"
+                    ${GPU_RESOURCES}
+                readinessProbe:
+                  httpGet:
+                    path: /health
+                    port: 8000
+                  initialDelaySeconds: 120
+                  periodSeconds: 10
+                  timeoutSeconds: 5
+                  failureThreshold: 120
+        EOF
+
+        echo "=== InferenceService CR applied ==="
+        kubectl get inferenceservice ${ISVC_NAME} -n ${NAMESPACE}
+
+        echo "=== Waiting for predictor Deployment to appear ==="
+        # kubectl wait cannot be used here: Deployment doesn't exist until KServe creates it post-ISVC apply
+        for i in $(seq 1 30); do
+          DEPLOY=$(kubectl get deployment -n ${NAMESPACE} -l serving.kserve.io/inferenceservice=${ISVC_NAME} -o name 2>/dev/null | head -1)
+          if [ -n "${DEPLOY}" ]; then
+            echo "Found: ${DEPLOY}"
+            kubectl patch ${DEPLOY} -n ${NAMESPACE} --type=merge \
+              -p '{"spec":{"progressDeadlineSeconds":1800}}'
+            echo "=== progressDeadlineSeconds patched to 1800 ==="
+            break
+          fi
+          echo "Waiting for Deployment... (${i}/30)"
+          sleep 10
+        done
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+    - name: wait-and-test
+      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      env:
+        - name: NAMESPACE
+          value: "$(params.namespace)"
+        - name: DEBUG
+          value: "$(params.debug)"
+        - name: MODEL_NAME
+          value: "$(params.model-name)"
+      script: |
+        #!/bin/bash
+        set -e
+        export KUBECONFIG=/workspace/kubeconfig
+
+        ISVC_NAME="rhaiis-smoke-test"
+
+        echo "=== Waiting for InferenceService to be Ready (up to 60m) ==="
+        echo "=== Initial pod state ==="
+        kubectl get pods -n ${NAMESPACE} -o wide || true
+        echo "=== Initial pod events ==="
+        kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp' | tail -20 || true
+
+        # Background monitor: dump pod status every 5min while waiting
+        (while true; do
+          sleep 300
+          echo "--- [monitor] pod state ---"
+          kubectl get pods -n ${NAMESPACE} -o wide 2>/dev/null || true
+          kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || true
+        done) &
+        MONITOR_PID=$!
+
+        if ! kubectl wait inferenceservice/${ISVC_NAME} -n ${NAMESPACE} \
+          --for=condition=Ready --timeout=3600s; then
+          kill $MONITOR_PID 2>/dev/null || true
+          echo "FAILED: InferenceService not ready after 60m"
+          echo "=== Pod status ==="
+          kubectl get pods -n ${NAMESPACE} -o wide
+          echo "=== Pod describe ==="
+          kubectl describe pods -l serving.kserve.io/inferenceservice=${ISVC_NAME} -n ${NAMESPACE} || true
+          echo "=== All namespace events ==="
+          kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp' | tail -40 || true
+          echo "=== vLLM container logs (kserve-container) ==="
+          kubectl logs -l serving.kserve.io/inferenceservice=${ISVC_NAME} -n ${NAMESPACE} -c kserve-container --tail=300 || true
+          echo "=== istio-proxy logs ==="
+          kubectl logs -l serving.kserve.io/inferenceservice=${ISVC_NAME} -n ${NAMESPACE} -c istio-proxy --tail=50 || true
+          echo "=== InferenceService status ==="
+          kubectl get inferenceservice ${ISVC_NAME} -n ${NAMESPACE} -o yaml
+          exit 1
+        fi
+        kill $MONITOR_PID 2>/dev/null || true
+        echo "InferenceService is Ready"
+
+        POD_IP=$(kubectl get pod -l serving.kserve.io/inferenceservice=${ISVC_NAME} -n ${NAMESPACE} \
+          -o jsonpath='{.items[0].status.podIP}')
+        SVC_URL="http://${POD_IP}:8000"
+        echo "=== Running smoke test against ${SVC_URL} (direct pod IP) ==="
+
+        DATA='{"prompt": "What is the capital of France?", "max_tokens": 50, "temperature": 0.0}'
+
+        RESPONSE=$(kubectl run curl-smoke-test --rm -i --restart=Never \
+          --image=registry.access.redhat.com/ubi9/ubi-minimal:latest \
+          --overrides='{"metadata":{"annotations":{"sidecar.istio.io/inject":"false"}}}' \
+          -n ${NAMESPACE} \
+          --command -- \
+          curl --no-progress-meter --max-time 120 -X POST \
+          -H 'Content-Type: application/json' \
+          -d "${DATA}" \
+          "${SVC_URL}/v1/completions" 2>&1 | grep -v '^pod "')
+
+        echo "=== Response ==="
+        echo "${RESPONSE}" | jq . 2>/dev/null || echo "${RESPONSE}"
+
+        TEXT=$(echo "${RESPONSE}" | grep '^{' | jq -r '.choices[0].text' 2>/dev/null || echo "")
+        if echo "${TEXT}" | grep -qi "paris"; then
+          echo "✓ Verification PASSED: Response contains 'Paris'"
+        else
+          echo "✗ Verification FAILED: Response does not contain 'Paris'"
+          echo "Response text: ${TEXT}"
+          exit 1
+        fi
+
+        echo "=== RHAIIS on RHOAI smoke test PASSED ==="
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+  volumes:
+    - name: workspace
+      emptyDir: {}
