@@ -1,12 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "local>redhat/rhel-ai/renovate-config"
-  ],
-  "baseBranchPatterns": [
-    "main"
-  ],
-  "ignoreTests": true,
   "customManagers": [
     {
       "customType": "regex",
@@ -39,17 +32,20 @@
       "pipelines/**",
       "tasks/**"
     ],
+    "schedule": [
+      "at any time"
+    ],
     "packageRules": [
       {
+        "description": "Auto-merge Tekton digest bumps",
         "matchUpdateTypes": [
           "digest"
         ],
-        "matchBaseBranches": [],
         "platformAutomerge": true,
         "automerge": true
       },
       {
-        "description": "Pin apply-tags in modelcar.yaml (block Renovate from updating)",
+        "description": "Pin apply-tags in modelcar.yaml and models-oci-copy.yaml (block Renovate from updating)",
         "matchFileNames": [
           "pipelines/modelcar.yaml",
           "pipelines/models-oci-copy.yaml"
