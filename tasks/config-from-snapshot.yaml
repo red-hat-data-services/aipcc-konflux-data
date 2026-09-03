@@ -51,6 +51,10 @@ spec:
     - name: pipeline-run-url-prefix
       description: >
         Konflux console URL prefix. Pipelines append $(context.pipelineRun.name) to get the full URL.
+    - name: snc-compute-sizes
+      description: SNC-compatible instance types derived from the component variant
+    - name: snc-profile
+      description: Comma-separated mapt SNC profiles derived from the component variant
   steps:
     - name: parse-snapshot-components
       image: quay.io/konflux-ci/release-service-utils@sha256:c1e1ac19eb85d2e32bc12cac94d6b68198610b1ad7ca8e1d5460670d687c0bd4
@@ -130,11 +134,14 @@ spec:
         esac
 
         ret_value=0
+        snc_compute_sizes=""
+        snc_profile="ai"
 
         # TODO update lists based on architecture
         case "${COMPONENT}" in
           *-cuda*)
             variant="cuda-ubi9"
+            snc_profile="ai,nvidia"
 
             if [[ "${cloud_provider}" == "aws" ]] || [[ -z "${cloud_provider}" ]]; then
               # g4dn has 14 GB of GPU memory which is not enough, 12xlarge has 4 GPU, metal has 8 GPU
@@ -149,8 +156,11 @@ spec:
               cloud_provider="aws" # might have been empty
               if [[ "$(params.architecture)" == "x86_64" ]]; then
                 vm_types="g5.xlarge,g5.2xlarge,g5.4xlarge,g6.xlarge,g6.2xlarge,g6.4xlarge,g6e.xlarge,gr6.4xlarge"
+                # The full RHOAI SNC stack needs 32 vCPUs and 128 GiB RAM.
+                snc_compute_sizes="g4dn.8xlarge,g4dn.12xlarge,g4dn.16xlarge,g6.8xlarge,g6.12xlarge,g6.16xlarge,gr6.8xlarge,g6e.8xlarge"
               elif [[ "$(params.architecture)" == "aarch64" ]]; then
                 vm_types="g5g.2xlarge,g5g.4xlarge,g5g.8xlarge,g5g.16xlarge"
+                snc_compute_sizes="g5g.16xlarge,g5g.metal"
               else
                 echo "Architecture $(params.architecture) not supported for CUDA on AWS"
                 ret_value=1
@@ -327,6 +337,7 @@ spec:
         echo -n "${vm_types}" | tee $(results.vm-types.path)
         echo -n "${base_tags}" | tee $(results.base-tags.path)
         echo -n "${pipeline_run_url_prefix}" | tee $(results.pipeline-run-url-prefix.path)
+        echo -n "${snc_compute_sizes}" | tee $(results.snc-compute-sizes.path)
+        echo -n "${snc_profile}" | tee $(results.snc-profile.path)
 
         exit ${ret_value}
-        

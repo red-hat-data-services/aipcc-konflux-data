@@ -1,0 +1,185 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: rhaiis-rhoai-test
+spec:
+  description: |
+    Integration Test Suite pipeline to validate RHAIIS container images
+    deployed as KServe InferenceServices on RHOAI (stable channel).
+
+    Provisions an SNO cluster with RHOAI via mapt, deploys RHAIIS as a
+    KServe InferenceService, and runs a smoke test against the endpoint.
+  params:
+    - name: architecture
+      default: "x86_64"
+      description: Architecture (x86_64 or aarch64)
+    - name: debug
+      default: "false"
+      description: Enable debug mode (verbose logs, extended waits on failure)
+    - name: model-name
+      default: "ibm-granite/granite-3.3-2b-instruct"
+      description: Model to serve for smoke testing
+    - name: ocp-version
+      default: "4.21.14"
+      description: OCP version for the SNO cluster (e.g., 4.19.0, 4.21.14)
+    - name: rhoai-operator-channel
+      default: ""
+      description: RHOAI operator channel override (e.g., rhods-operator=stable-3.x, rhods-operator=stable-3.4). Empty = mapt default (stable = RHOAI 2.25.x)
+    - name: SNAPSHOT
+      description: |
+        Snapshot of the application (automatically provided by Konflux ITS).
+        Example: {"components":[{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-cuda-ubi9@sha256:...","name":"rhaiis-cuda-ubi9","source":{"git":{"revision":"abc123","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}}]}
+    - name: snc-cpus
+      default: "32"
+      description: CPU count for the SNO cluster (minimum 16 for RHOAI, 32 recommended for full KServe serving stack)
+    - name: snc-disk-size
+      default: "1000"
+      description: Disk size in GB for the SNO cluster (minimum 1000 for SNC AMI)
+    - name: snc-memory
+      default: "128"
+      description: Memory in GiB for the SNO cluster
+    - name: spot
+      default: "true"
+      description: Whether to use spot instances
+  results:
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
+    - name: inference-server-image
+      value: $(tasks.create-configuration.results.inference-server-image)
+
+  tasks:
+    - name: create-configuration
+      params:
+        - name: architecture
+          value: $(params.architecture)
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/config-from-snapshot.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+
+    - name: create-snc-cluster
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: profile
+          value: "$(tasks.create-configuration.results.snc-profile)"
+        - name: operator-channel
+          value: "$(params.rhoai-operator-channel)"
+        - name: cpus
+          value: "$(params.snc-cpus)"
+        - name: memory
+          value: "$(params.snc-memory)"
+        - name: disk-size
+          value: "$(params.snc-disk-size)"
+        - name: version
+          value: "$(params.ocp-version)"
+        - name: debug
+          value: "true"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.snc-compute-sizes)"
+        - name: spot
+          value: "$(params.spot)"
+        - name: spot-eviction-tolerance
+          value: "high"
+        - name: spot-increase-rate
+          value: "30"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: secret-ocp-snc-credentials
+          value: "ocp-snc-credentials"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: tags
+          value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=rhaiis-rhoai-test,pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
+      runAfter:
+        - create-configuration
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/redhat-developer/mapt
+          - name: revision
+            value: v0.14.4
+          - name: pathInRepo
+            value: tkn/infra-aws-ocp-snc.yaml
+
+    - name: deploy-and-test-kserve
+      params:
+        - name: cluster-access-secret-name
+          value: "$(tasks.create-snc-cluster.results.cluster-access-secret)"
+        - name: inference-server-image
+          value: "$(tasks.create-configuration.results.inference-server-image)"
+        - name: model-name
+          value: "$(params.model-name)"
+        - name: pull-secret-names
+          value:
+            - "$(tasks.create-configuration.results.component)-image-pull"
+        - name: variant
+          value: "$(tasks.create-configuration.results.variant)"
+        - name: debug
+          value: "$(params.debug)"
+      runAfter:
+        - create-snc-cluster
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: redhat
+          - name: repo
+            value: rhel-ai/konflux-data
+          - name: scmType
+            value: gitlab
+          - name: serverURL
+            value: https://gitlab.com
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/deploy-and-test-kserve.yaml
+          - name: token
+            value: pipelines-as-code-secret
+          - name: tokenKey
+            value: password
+
+  finally:
+    - name: delete-snc-cluster
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: secret-ocp-snc-credentials
+          value: "ocp-snc-credentials"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/redhat-developer/mapt
+          - name: revision
+            value: v0.14.4
+          - name: pathInRepo
+            value: tkn/infra-aws-ocp-snc.yaml
