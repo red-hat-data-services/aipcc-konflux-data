@@ -168,19 +168,19 @@ spec:
       type: string
       default: 'false'
       description: When "true", omit the build history (history timestamps, layer metadata, etc.) from the resulting image.
-    - name: pre-build-script
+    - name: pre-build-labels-script
       description: |
-        Optional script to run before the container build (via run-script-oci-ta).
+        Script to resolve OCI labels at build time (via run-script-oci-ta).
         The script's SCRIPT_OUTPUT_ARRAY result is appended to the LABELS param
         of the build-container task. Leave default for a no-op passthrough.
       type: string
       default: 'echo "[]" > "${SCRIPT_OUTPUT_ARRAY}"'
-    - name: pre-build-script-runner-image
-      description: Container image to run the pre-build script in (must be from a trusted registry, pinned to digest)
+    - name: pre-build-labels-runner-image
+      description: Container image to run the pre-build labels script in (must be from a trusted registry, pinned to digest)
       type: string
       default: "registry.access.redhat.com/ubi9/ubi@sha256:ae8730de9161f4e98dbe22fef5eba494b0bfe5886be8dc3c4ff687c2e954daf6"
-    - name: pre-build-additional-secret
-      description: Name of a Kubernetes secret to mount into the pre-build script container
+    - name: pre-build-labels-secret
+      description: Name of a Kubernetes secret to mount into the pre-build labels container
       type: string
       default: "does-not-exist"
   results:
@@ -270,16 +270,16 @@ spec:
           workspace: git-auth
         - name: netrc
           workspace: netrc
-    - name: run-pre-build-script
+    - name: run-pre-build-labels
       params:
         - name: SOURCE_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
         - name: SCRIPT
-          value: $(params.pre-build-script)
+          value: $(params.pre-build-labels-script)
         - name: SCRIPT_RUNNER_IMAGE
-          value: $(params.pre-build-script-runner-image)
+          value: $(params.pre-build-labels-runner-image)
         - name: ADDITIONAL_SECRET
-          value: $(params.pre-build-additional-secret)
+          value: $(params.pre-build-labels-secret)
         - name: ociStorage
           value: $(params.output-image).pre-build
         - name: ociArtifactExpiresAfter
@@ -343,7 +343,7 @@ spec:
           - git.url=$(params.git-url)
           - git.commit=$(params.revision)
           - $(params.labels[*])
-          - $(tasks.run-pre-build-script.results.SCRIPT_OUTPUT_ARRAY[*])
+          - $(tasks.run-pre-build-labels.results.SCRIPT_OUTPUT_ARRAY[*])
         - name: ACTIVATION_KEY
           value: $(params.activation-key)
         - name: CONTEXTUALIZE_SBOM
@@ -356,9 +356,9 @@ spec:
           value: $(params.omit-history)
         - name: ADDITIONAL_BASE_IMAGES
           value:
-            - $(tasks.run-pre-build-script.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
+            - $(tasks.run-pre-build-labels.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
       runAfter:
-        - run-pre-build-script
+        - run-pre-build-labels
       taskRef:
         params:
           - name: name
