@@ -28,9 +28,9 @@
   ],
   "tekton": {
     "enabled": true,
-    "includePaths": [
-      "pipelines/**",
-      "tasks/**"
+    "managerFilePatterns": [
+      "/^pipelines/.+\\.ya?ml$/",
+      "/^tasks/.+\\.ya?ml$/"
     ],
     "schedule": [
       "at any time"
