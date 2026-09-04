@@ -274,6 +274,14 @@ spec:
       params:
         - name: SOURCE_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+        # Disable the symlink check: this task only computes OCI labels and its
+        # SCRIPT_ARTIFACT output is never consumed downstream (build-container
+        # reads the SOURCE_ARTIFACT from prefetch-dependencies, not from here).
+        # The source tree was already validated by git-clone's enableSymlinkCheck.
+        # Products with legitimate out-of-tree symlinks (e.g. bootc's systemd
+        # *.wants/ unit symlinks into /usr/lib) would otherwise fail this no-op.
+        - name: enableSymlinkCheck
+          value: "false"
         - name: SCRIPT
           value: $(params.pre-build-labels-script)
         - name: SCRIPT_RUNNER_IMAGE
