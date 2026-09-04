@@ -168,6 +168,10 @@ spec:
       type: string
       default: 'false'
       description: When "true", omit the build history (history timestamps, layer metadata, etc.) from the resulting image.
+    - default: "false"
+      description: Run pickle-scan on the built image to detect malicious pickle payloads in AI/ML model files
+      name: run-pickle-scan
+      type: string
   results:
     - description: ""
       name: IMAGE_URL
@@ -496,6 +500,30 @@ spec:
           - name: kind
             value: task
         resolver: bundles
+    - name: pickle-scan
+      params:
+        - name: image-digest
+          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+        - name: image-url
+          value: $(tasks.build-image-index.results.IMAGE_URL)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+      runAfter:
+        - build-image-index
+      taskRef:
+        params:
+          - name: name
+            value: pickle-scan-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-pickle-scan-oci-ta:0.1@sha256:931e67bd6ded9ead8a973ed6452225523530e116c3ef49ce30a12f1d190db8b7
+          - name: kind
+            value: task
+        resolver: bundles
+      when:
+        - input: $(params.run-pickle-scan)
+          operator: in
+          values:
+            - "true"
     - name: rpms-signature-scan
       params:
         - name: image-digest
