@@ -59,15 +59,17 @@ spec:
       default: "claudio-adc"
       description: Secret holding GCP Vertex AI credentials
 
+    # Deprecated compatibility parameters. The referenced StepActions are now
+    # public, so these values are intentionally unused.
     - name: git-resolver-token-secret
       type: string
       default: "pipelines-as-code-secret"
-      description: Secret name containing the token for the git resolver
+      description: Deprecated. Retained for callers that still provide the old GitLab resolver token.
 
     - name: git-resolver-token-key
       type: string
       default: "password"
-      description: Key within the git resolver token secret
+      description: Deprecated. Retained for callers that still provide the old GitLab resolver token key.
 
     - name: application-name
       type: string
@@ -110,22 +112,12 @@ spec:
       ref:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: stepactions/claudio-run.yaml
-          - name: token
-            value: $(params.git-resolver-token-secret)
-          - name: tokenKey
-            value: $(params.git-resolver-token-key)
       params:
         - name: prompt
           value: $(params.prompt)
@@ -191,22 +183,12 @@ spec:
       ref:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: stepactions/slack-blockkit-notification.yaml
-          - name: token
-            value: $(params.git-resolver-token-secret)
-          - name: tokenKey
-            value: $(params.git-resolver-token-key)
       params:
         - name: message
           value: $(steps.build-message.results.message)
