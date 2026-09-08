@@ -59,18 +59,6 @@ spec:
       default: "claudio-adc"
       description: Secret holding GCP Vertex AI credentials
 
-    # Deprecated compatibility parameters. The referenced StepActions are now
-    # public, so these values are intentionally unused.
-    - name: git-resolver-token-secret
-      type: string
-      default: "pipelines-as-code-secret"
-      description: Deprecated. Retained for callers that still provide the old GitLab resolver token.
-
-    - name: git-resolver-token-key
-      type: string
-      default: "password"
-      description: Deprecated. Retained for callers that still provide the old GitLab resolver token key.
-
     - name: application-name
       type: string
       default: ""

@@ -24,7 +24,7 @@ spec:
 
     - name: git-url
       type: string
-      default: "https://gitlab.com/redhat/rhel-ai/konflux-data.git"
+      default: "https://github.com/red-hat-data-services/aipcc-konflux-data.git"
       description: Git repository URL to clone
 
     - name: git-revision

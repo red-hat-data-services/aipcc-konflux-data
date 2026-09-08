@@ -74,22 +74,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/config-from-snapshot.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: create-vm-aws
       params:
         - name: arch
@@ -202,22 +192,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-vm-cuda.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       when:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
@@ -233,22 +213,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-vm-cpu.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       when:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
@@ -264,22 +234,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-vm-neuron.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       when:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
@@ -295,22 +255,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-vm-gaudi.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       when:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
@@ -330,22 +280,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-vm-rocm.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       when:
         - input: $(tasks.create-configuration.results.variant)
           operator: in
@@ -370,22 +310,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/pull-image.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: download-models
       params:
         - name: model-names
@@ -401,22 +331,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/download-model.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: test-model-opt-quantization
       params:
         - name: container-image
@@ -428,7 +348,7 @@ spec:
         - name: model-names
           value: ["$(params.model-names[*])"]
         - name: git-url
-          value: "https://gitlab.com/redhat/rhel-ai/konflux-data.git"
+          value: "https://github.com/red-hat-data-services/aipcc-konflux-data.git"
         - name: git-revision
           value: "main"
         - name: git-token-secret-name
@@ -439,22 +359,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/test-model-opt-quantization.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       when:
         - input: $(tasks.create-configuration.results.model-opt-image)
           operator: notin
@@ -480,22 +390,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/test-inference.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
   finally:
     - name: delete-vm-aws
       params:
@@ -551,22 +451,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/konflux-pipeline-failure-notification.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
       params:
         - name: prompt
           value: |

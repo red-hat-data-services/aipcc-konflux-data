@@ -40,22 +40,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/config-from-snapshot.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: create-vm-aws
       params:
         - name: accelerator
@@ -171,22 +161,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-rhel-ai-vm.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: bootc-switch
       params:
         - name: host-access-secret-name
@@ -209,22 +189,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/execute-script-on-vm.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: after-switch
       params:
         - name: host-access-secret-name
@@ -256,22 +226,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/execute-script-on-vm.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: test-inference
       params:
         - name: container-name
@@ -295,22 +255,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/test-inference.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
   finally:
     - name: delete-vm-aws
       params:
