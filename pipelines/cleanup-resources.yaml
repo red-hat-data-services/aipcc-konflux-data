@@ -63,22 +63,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/find-resources-to-prune.yaml
-          - name: token
-            value: gitlab-konflux-data-ro
-          - name: tokenKey
-            value: password
     - name: cleanup-rhel-resources
       params:
         - name: debug
@@ -285,22 +275,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/konflux-pipeline-failure-notification.yaml
-          - name: token
-            value: gitlab-konflux-data-ro
-          - name: tokenKey
-            value: password
       params:
         - name: prompt
           value: |
@@ -315,5 +295,3 @@ spec:
           value: $(context.pipelineRun.name)
         - name: pipeline-namespace
           value: $(context.pipelineRun.namespace)
-        - name: git-resolver-token-secret
-          value: gitlab-konflux-data-ro
