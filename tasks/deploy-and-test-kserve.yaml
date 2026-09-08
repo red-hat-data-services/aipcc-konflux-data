@@ -25,7 +25,7 @@ spec:
       description: RHAIIS variant (e.g., cuda-ubi9, cpu-ubi9, rocm-ubi9)
   steps:
     - name: setup-and-verify
-      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
       env:
         - name: CLUSTER_ACCESS_SECRET
           value: "$(params.cluster-access-secret-name)"
@@ -76,7 +76,7 @@ spec:
           mountPath: /workspace
 
     - name: wait-for-gpu
-      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
       env:
         - name: VARIANT
           value: "$(params.variant)"
@@ -121,7 +121,7 @@ spec:
           mountPath: /workspace
 
     - name: create-pull-secret
-      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
       args: ["$(params.pull-secret-names[*])"]
       env:
         - name: NAMESPACE
@@ -181,7 +181,7 @@ spec:
           mountPath: /workspace
 
     - name: deploy-inferenceservice
-      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
       env:
         - name: NAMESPACE
           value: "$(params.namespace)"
@@ -281,7 +281,7 @@ spec:
           mountPath: /workspace
 
     - name: wait-and-test
-      image: quay.io/konflux-ci/release-service-utils@sha256:8fc84c960f0321ab06a98bfc92b23fb6cde9c0ab3fd1a70da8533be44643a903
+      image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
       env:
         - name: NAMESPACE
           value: "$(params.namespace)"
