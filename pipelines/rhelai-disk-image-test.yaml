@@ -41,22 +41,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/config-from-snapshot.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: check-cloud-image-exists
       description: Check if cloud image already exists for this git commit
       params:
@@ -79,22 +69,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/check-cloud-image-exists.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: create-helper-vm-aws
       description: Create AWS helper VM instance for extracting and uploading disk image
       params:
@@ -173,22 +153,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/extract-and-upload-cloud-image.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: create-vm-aws
       description: Create AWS VM instance using the uploaded image
       params:
@@ -302,22 +272,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/configure-rhel-ai-vm.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
     - name: test-inference
       description: Run inference tests on the configured VM
       params:
@@ -342,22 +302,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/test-inference.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
   finally:
     - name: delete-vm-aws
       description: Clean up the AWS VM instance

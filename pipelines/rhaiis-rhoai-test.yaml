@@ -57,22 +57,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/config-from-snapshot.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
 
     - name: create-snc-cluster
       params:
@@ -146,22 +136,12 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/deploy-and-test-kserve.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password
 
   finally:
     - name: delete-snc-cluster
