@@ -4,7 +4,8 @@ metadata:
   name: cleanup-resources
 spec:
   description: |
-    Cleanup pipeline that finds and destroys old mapt resources, AWS AMIs, and Azure images.
+    Cleanup pipeline that finds and destroys old mapt resources, AWS AMIs, Azure images,
+    and unassociated mapt-owned Elastic IPs.
     Uses matrix feature to parallelize cleanup of multiple resources.
   params:
     - name: image-name-filters
@@ -18,6 +19,9 @@ spec:
     - name: dry-run
       description: If "true", only log actions without executing cleanup
       default: "false"
+    - name: ttl-hours-eips
+      description: Minimum age in hours for an unassociated Elastic IP to be pruned
+      default: "24"
     - name: force-destroy
       description: If "true", force the destruction of resources even if there is a lock
       default: "false"
@@ -50,6 +54,8 @@ spec:
             - $(params.image-name-filters[*])
         - name: dry-run
           value: $(params.dry-run)
+        - name: ttl-hours-eips
+          value: $(params.ttl-hours-eips)
         - name: secret-aws-credentials
           value: $(params.secret-aws-credentials)
         - name: secret-az-credentials
@@ -258,6 +264,35 @@ spec:
             value: "tkn/rhelai-azure.yaml"
       when:
         - input: $(tasks.find-resources.results.azure-cloud-importer-resources)
+          operator: notin
+          values: ["[]"]
+        - input: $(params.dry-run)
+          operator: in
+          values: ["false"]
+    - name: release-unassociated-eips
+      description: Release old, unassociated Elastic IPs tagged as mapt-owned resources
+      params:
+        - name: dry-run
+          value: $(params.dry-run)
+        - name: secret-aws-credentials
+          value: $(params.secret-aws-credentials)
+      matrix:
+        params:
+          - name: eip-ref
+            value: $(tasks.find-resources.results.unassociated-eips[*])
+      runAfter:
+        - find-resources
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/release-unassociated-eip.yaml
+      when:
+        - input: $(tasks.find-resources.results.unassociated-eips)
           operator: notin
           values: ["[]"]
         - input: $(params.dry-run)

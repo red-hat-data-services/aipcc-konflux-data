@@ -1,0 +1,79 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: release-unassociated-eip
+spec:
+  description: Releases an old, mapt-owned AWS Elastic IP after confirming it is still unassociated.
+  params:
+    - name: eip-ref
+      description: AWS region and Elastic IP allocation ID in region|allocation-id format
+      type: string
+    - name: dry-run
+      description: If "true", log the release without executing it
+      type: string
+      default: "false"
+    - name: secret-aws-credentials
+      description: Name of the secret containing AWS credentials
+      type: string
+      default: "aws-creds"
+  steps:
+    - name: release-eip
+      image: quay.io/aipcc-cicd/cloud-importer:v0.0.4
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: secret-key
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: $(params.secret-aws-credentials)
+              key: region
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        eip_ref="$(params.eip-ref)"
+        dry_run="$(params.dry-run)"
+
+        region="${eip_ref%%|*}"
+        allocation_id="${eip_ref#*|}"
+        if [[ -z "${region}" || "${region}" == "${eip_ref}" || -z "${allocation_id}" || "${allocation_id}" == "${eip_ref}" ]]; then
+          echo "Invalid EIP reference: ${eip_ref}"
+          exit 1
+        fi
+
+        origin_tag="$(aws ec2 describe-addresses \
+          --region "${region}" \
+          --allocation-ids "${allocation_id}" \
+          --query 'Addresses[0].Tags[?Key==`origin`].Value | [0]' \
+          --output text)"
+        if [[ "${origin_tag}" != "mapt" ]]; then
+          echo "Keeping ${allocation_id}: it is not tagged origin=mapt."
+          exit 0
+        fi
+
+        association_id="$(aws ec2 describe-addresses \
+          --region "${region}" \
+          --allocation-ids "${allocation_id}" \
+          --query 'Addresses[0].AssociationId' \
+          --output text)"
+
+        if [[ "${association_id}" != "None" && -n "${association_id}" ]]; then
+          echo "Keeping ${allocation_id}: it is associated with ${association_id}."
+          exit 0
+        fi
+
+        if [[ "${dry_run}" == "true" ]]; then
+          echo "Dry run: would release unassociated mapt Elastic IP ${allocation_id}."
+          exit 0
+        fi
+
+        echo "Releasing unassociated mapt Elastic IP ${allocation_id}."
+        aws ec2 release-address --region "${region}" --allocation-id "${allocation_id}"

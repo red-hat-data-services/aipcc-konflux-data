@@ -5,7 +5,8 @@ metadata:
 spec:
   description: |
     Scans S3 bucket for old mapt and cloud-importer resources, and Azure Blob
-    Storage for old Azure cloud-importer images.
+    Storage for old Azure cloud-importer images. Finds unassociated Elastic IPs
+    created by mapt for release.
     Outputs lists of resources that need cleanup via infra-aws and cloud-importer tasks.
   params:
     - name: image-name-filters
@@ -17,6 +18,10 @@ spec:
     - name: dry-run
       description: If "true", only log actions without executing cleanup
       default: "false"
+      type: string
+    - name: ttl-hours-eips
+      description: Minimum age in hours for an unassociated Elastic IP to be pruned
+      default: "24"
       type: string
     - name: secret-aws-credentials
       description: Name of the secret containing AWS credentials (access-key, secret-key, region, bucket)
@@ -54,6 +59,9 @@ spec:
     - name: azure-cloud-importer-resources
       description: Array of Azure cloud-importer resource IDs to cleanup
       type: array
+    - name: unassociated-eips
+      description: Array of region|allocation-id values for unassociated, mapt-owned AWS Elastic IPs to release
+      type: array
   steps:
     - name: check-s3-bucket
       image: quay.io/aipcc-cicd/cloud-importer:v0.0.4
@@ -84,6 +92,8 @@ spec:
           value: $(params.ttl-hours-amis)
         - name: TTL_HOURS_VMS
           value: $(params.ttl-hours-vms)
+        - name: TTL_HOURS_EIPS
+          value: $(params.ttl-hours-eips)
       args:
         - $(params.image-name-filters[*])
       script: |
@@ -100,6 +110,7 @@ spec:
         bucket = os.environ['AWS_BUCKET']
         ttl_hours_amis = int(os.environ['TTL_HOURS_AMIS'])
         ttl_hours_vms = int(os.environ['TTL_HOURS_VMS'])
+        ttl_hours_eips = int(os.environ['TTL_HOURS_EIPS'])
 
         cutoff_date_vms = datetime.now(timezone.utc) - timedelta(hours=ttl_hours_vms)
         cutoff_date_amis = datetime.now(timezone.utc) - timedelta(hours=ttl_hours_amis)
@@ -111,6 +122,7 @@ spec:
         print(f"Cutoff date for VMs: {cutoff_date_vms.isoformat()}")
         print(f"TTL for AMIs: {ttl_hours_amis} hours ({ttl_hours_amis / 24:.1f} days)")
         print(f"Cutoff date for AMIs: {cutoff_date_amis.isoformat()}")
+        print(f"TTL for EIPs: {ttl_hours_eips} hours ({ttl_hours_eips / 24:.1f} days)")
         print(f"Dry run mode: {dry_run}")
         print("=" * 50)
 
@@ -184,6 +196,90 @@ spec:
 
             return old_resources
 
+        def find_unassociated_eips():
+            """Find old, unassociated Elastic IPs tagged as mapt-owned resources."""
+            regions_cmd = (
+                "aws ec2 describe-regions --all-regions "
+                "--query 'Regions[].{name:RegionName,status:OptInStatus}' "
+                "--output json"
+            )
+            region_details = run_aws_command(regions_cmd) or []
+            regions = [
+                region['name']
+                for region in region_details
+                if region.get('status') in ('opt-in-not-required', 'opted-in')
+            ]
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours_eips)
+            eips_to_release = []
+
+            print(f"\n=== Scanning unassociated mapt Elastic IPs in {len(regions)} regions ===")
+            for region in regions:
+                cmd = (
+                    f"aws ec2 describe-addresses --region {region} "
+                    "--filters Name=tag:origin,Values=mapt "
+                    "--query 'Addresses[].{AllocationId:AllocationId,AssociationId:AssociationId}' "
+                    "--output json"
+                )
+                addresses = run_aws_command(cmd) or []
+                for address in addresses:
+                    allocation_id = address['AllocationId']
+                    association_id = address.get('AssociationId')
+                    allocation_details = find_eip_allocation_details(region, allocation_id)
+                    eip_ref = f"{region}|{allocation_id}"
+                    if allocation_details is None:
+                        print(f"  SKIP {eip_ref}: allocation time is unknown")
+                        continue
+
+                    allocation_time, allocation_username = allocation_details
+                    age_hours = (datetime.now(timezone.utc) - allocation_time).total_seconds() / 3600
+                    if allocation_time <= cutoff:
+                        if association_id:
+                            print(
+                                f"  KEEP {eip_ref}: associated with {association_id}; "
+                                f"age: {age_hours:.1f} hours; allocated by {allocation_username} "
+                                f"at {allocation_time.isoformat()}"
+                            )
+                        else:
+                            print(f"  MARK FOR CLEANUP: {eip_ref} (age: {age_hours:.1f} hours, allocated by {allocation_username} at {allocation_time.isoformat()})")
+                            eips_to_release.append(eip_ref)
+                    elif association_id:
+                        print(f"  KEEP {eip_ref}: associated with {association_id}; allocated by {allocation_username} at {allocation_time.isoformat()}, newer than {ttl_hours_eips} hours")
+                    else:
+                        print(f"  SKIP {eip_ref}: allocated by {allocation_username} at {allocation_time.isoformat()}, newer than {ttl_hours_eips} hours")
+
+            if not eips_to_release:
+                print("No old, unassociated mapt Elastic IPs found")
+            return eips_to_release
+
+        def find_eip_allocation_details(region, allocation_id):
+            """Find an EIP's allocation time and username in CloudTrail."""
+            cmd = (
+                f"aws cloudtrail lookup-events --region {region} "
+                f"--lookup-attributes AttributeKey=ResourceName,AttributeValue={allocation_id} "
+                "--max-results 50 --output json"
+            )
+            try:
+                event_data = run_aws_command(cmd) or {}
+            except RuntimeError as error:
+                print(f"  SKIP {region}|{allocation_id}: CloudTrail lookup failed: {error}")
+                return None
+
+            allocation_events = [
+                event for event in event_data.get('Events', [])
+                if event.get('EventName') == 'AllocateAddress'
+                and event.get('EventSource') == 'ec2.amazonaws.com'
+            ]
+            if not allocation_events:
+                return None
+
+            event_time = allocation_events[0].get('EventTime')
+            if not event_time:
+                return None
+            return (
+                datetime.fromisoformat(event_time.replace('Z', '+00:00')),
+                allocation_events[0].get('Username', 'unknown'),
+            )
+
         # Main execution
         try:
             # Find old MAPT resources (VMs)
@@ -195,6 +291,10 @@ spec:
             # Find old cloud-importer resources (AMIs matching name filters)
             cloud_importer_resources = filter_old_resources('cloud-importer/', 'cloud-importer', cutoff_date_amis, name_filters=ami_name_filters)
 
+            # Find unassociated Elastic IPs belonging to mapt. Untagged EIPs are
+            # intentionally ignored so the pruner cannot release unrelated IPs.
+            unassociated_eips = find_unassociated_eips()
+
             # Write results for pipeline to use
             print(f"\n=== Results ===")
             print(f"RHEL resources to cleanup: {rhel_resources}")
@@ -202,6 +302,7 @@ spec:
             print(f"Fedora resources to cleanup: {fedora_resources}")
             print(f"OCP SNC resources to cleanup: {ocp_snc_resources}")
             print(f"Cloud importer resources to cleanup: {cloud_importer_resources}")
+            print(f"Unassociated mapt EIPs to cleanup: {unassociated_eips}")
 
             # Write results to Tekton results files (JSON arrays for array type results)
             with open('/tekton/results/rhel-resources', 'w') as f:
@@ -218,6 +319,9 @@ spec:
 
             with open('/tekton/results/aws-cloud-importer-resources', 'w') as f:
                 f.write(json.dumps(cloud_importer_resources))
+
+            with open('/tekton/results/unassociated-eips', 'w') as f:
+                f.write(json.dumps(unassociated_eips))
 
             print("\n=== Task completed successfully ===")
 
