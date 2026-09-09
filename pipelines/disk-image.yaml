@@ -202,14 +202,18 @@ spec:
       runAfter:
         - prefetch-dependencies
       taskRef:
-        resolver: bundles
+        # TEST ONLY (AIPCC-1307): use the revised build-vm-image task from the
+        # in-review fix branch via git resolver, instead of the released bundle,
+        # to verify disk-image artifacts carry architecture/os in their manifest
+        # config. Revert to the bundles resolver before merging.
+        resolver: git
         params:
-          - name: name
-            value: build-vm-image
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.3@sha256:8cd55e191cfde051f3e6d4082f64e9a24f91bcd47e1a44a68f68c321176a860b
-          - name: kind
-            value: task
+          - name: url
+            value: "https://github.com/Victoremepunto/build-definitions"
+          - name: revision
+            value: "aipcc-1307-diskimage-platform-config"
+          - name: pathInRepo
+            value: "task/build-vm-image/0.3/build-vm-image.yaml"
     - name: build-image-index
       timeout: "3h0m00s"
       params:
