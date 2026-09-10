@@ -211,7 +211,7 @@ spec:
           - name: url
             value: "https://github.com/Victoremepunto/build-definitions"
           - name: revision
-            value: "aipcc-1307-diskimage-platform-config"
+            value: "aipcc-1307-test-combined"
           - name: pathInRepo
             value: "task/build-vm-image/0.3/build-vm-image.yaml"
     - name: build-image-index
