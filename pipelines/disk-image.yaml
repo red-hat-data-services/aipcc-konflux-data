@@ -253,8 +253,10 @@ spec:
         params:
           - name: url
             value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          # TEST ONLY (AIPCC-1307): resolve the patch task from this test branch
+          # since it is not on main yet. Revert to `main` before merging.
           - name: revision
-            value: main
+            value: aipcc-1307-test-diskimage-platform-patch
           - name: pathInRepo
             value: tasks/patch-image-index-platforms.yaml
     - name: sast-shell-check
