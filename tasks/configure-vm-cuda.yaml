@@ -12,7 +12,7 @@ spec:
       description: NVIDIA driver version to install, 570 for CUDA 12.8
   steps:
     - name: configure-vm
-      image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
+      image: quay.io/konflux-ci/release-service-utils@sha256:c28eae8db6a90b727f591f8b28f9b7f2f331ec7d504a30c1f69052623a362a66
       env:
         - name: HOST
           valueFrom:
