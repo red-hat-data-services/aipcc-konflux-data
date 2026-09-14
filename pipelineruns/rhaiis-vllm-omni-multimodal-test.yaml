@@ -1,0 +1,65 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: rhaiis-vllm-omni-multimodal-test-
+  namespace: ai-tenant
+  labels:
+    appstudio.openshift.io/component: rhaiis-vllm-omni-cuda-ubi9-3-6-fast1
+    appstudio.openshift.io/application: rhaiis-3-6-fast1
+spec:
+  params:
+    # Required: JSON snapshot describing the built vllm-omni image to test.
+    # Get the digest from the containers-repo PR build
+    # (quay.io/redhat-user-workloads/ai-tenant/rhaiis/rhaiis-vllm-omni-cuda-ubi9:on-pr-<revision>)
+    # or from a local push to a scratch quay repo.
+    - name: SNAPSHOT
+      value: |
+        {"components":[{"containerImage":"quay.io/redhat-user-workloads/ai-tenant/rhaiis-3-6-fast1/rhaiis-vllm-omni-cuda-ubi9-3-6-fast1@sha256:39dd7f54f3d3dd81f1ddd7a8399ad997c3dabf1c83f162776d468c224bc0e67d","name":"rhaiis-vllm-omni-cuda-ubi9-3-6-fast1","source":{"git":{"context":".","dockerfileUrl":"Containerfile.vllm-omni.cuda-ubi9","revision":"f137c63a23265127f4b76c66acd500e3acb1af6e","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}}]}
+
+    - name: architecture
+      value: "x86_64"
+
+    - name: cuda-compat-version
+      value: "13-0"
+
+    - name: nvidia-driver-version
+      value: "580"
+
+    - name: model-names
+      value:
+        - "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+    - name: pull-secret-names
+      value:
+        - "rhaiis-3-6-fast1-pull"
+
+    - name: debug
+      value: "false"
+
+  pipelineRef:
+    resolver: git
+    params:
+      - name: org
+        value: redhat
+      - name: repo
+        value: rhel-ai/konflux-data
+      - name: scmType
+        value: gitlab
+      - name: serverURL
+        value: https://gitlab.com
+      - name: revision
+        value: AIPCC-29355-vllm-omni-multimodal-its
+      - name: pathInRepo
+        value: pipelines/rhaiis-tests.yaml
+      - name: token
+        value: pipelines-as-code-secret
+      - name: tokenKey
+        value: password
+
+  taskRunTemplate:
+    serviceAccountName: konflux-integration-runner
+
+  timeouts:
+    pipeline: 3h0m0s
+    tasks: 2h0m0s
+    finally: 1h0m0s
