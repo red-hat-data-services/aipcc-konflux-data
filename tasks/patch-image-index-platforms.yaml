@@ -1,0 +1,158 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: patch-image-index-platforms
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: image-build, disk-image
+spec:
+  description: |
+    Patch an OCI image index to add platform (architecture/os) metadata
+    to each entry. OCI disk-image artifact manifests carry an empty config
+    (application/vnd.oci.empty.v1+json), so build-image-index cannot infer
+    the platform automatically and leaves each index entry's platform null.
+    This task recreates the index with explicit --arch/--os flags derived
+    from the per-platform image tags appended by build-vm-image (with
+    IMAGE_APPEND_PLATFORM=true), and re-attaches the SBOM from the original
+    index to the patched one.
+
+    Based on the rhel-bootc-xks patch-image-index-platforms task authored by
+    Tomáš Hozza (thozza@redhat.com), whose design (platform on the image index
+    rather than the artifact config) this follows. See
+    AIPCC-1307 for background. Once the upstream fix lands in
+    build-image-index (setting platform natively), this task can be removed.
+  params:
+    - name: IMAGE
+      type: string
+      description: |
+        Fully qualified image reference (repo:tag) for the image index
+        to patch. The patched index is pushed to the same tag.
+    - name: OLD_IMAGE_DIGEST
+      type: string
+      description: |
+        Digest of the original index produced by build-image-index.
+        Used to locate and re-attach the SBOM.
+    - name: FAIL_ON_SBOM_ERROR
+      type: string
+      description: |
+        Fail the task if the SBOM cannot be re-attached to the
+        patched index. Set to "true" to enforce SBOM presence.
+      default: "false"
+    - name: IMAGES
+      type: array
+      description: |
+        Per-platform IMAGE_REFERENCEs from build-vm-image. Each entry
+        has the format repo:BASE_TAG-SANITIZED_PLATFORM@sha256:digest.
+        The architecture is extracted from the tag suffix.
+  results:
+    - name: IMAGE_URL
+      description: Image repository and tag where the patched index was pushed
+    - name: IMAGE_DIGEST
+      description: Digest of the patched image index
+    - name: IMAGE_REF
+      description: Image reference (IMAGE_URL@IMAGE_DIGEST)
+  volumes:
+    - name: trusted-ca
+      configMap:
+        name: trusted-ca
+        items:
+          - key: ca-bundle.crt
+            path: ca-bundle.crt
+        optional: true
+  steps:
+    - name: patch
+      image: quay.io/konflux-ci/konflux-build-cli:latest@sha256:83ce69687db5c44e991351d1ca93940b0056032268fa1952ee8db37ed3b8f73e
+      args: ["$(params.IMAGES[*])"]
+      computeResources:
+        limits:
+          memory: 512Mi
+        requests:
+          cpu: 100m
+          memory: 256Mi
+      securityContext:
+        capabilities:
+          add: ["SETFCAP"]
+        runAsUser: 0
+      volumeMounts:
+        - mountPath: /mnt/trusted-ca
+          name: trusted-ca
+          readOnly: true
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        chown root:root /var/lib/containers
+        sed -i 's/^\s*short-name-mode\s*=\s*.*/short-name-mode = "disabled"/' /etc/containers/registries.conf
+
+        echo "[$(date --utc -Ins)] Update CA trust"
+
+        ca_bundle=/mnt/trusted-ca/ca-bundle.crt
+        if [ -f "$ca_bundle" ]; then
+          echo "INFO: Using mounted CA bundle: $ca_bundle"
+          cp -vf "$ca_bundle" /etc/pki/ca-trust/source/anchors
+          update-ca-trust
+        fi
+
+        IMAGE="$(params.IMAGE)"
+        BASE_TAG="${IMAGE##*:}"
+        # Create a new manifest list with correct platform entries
+        buildah manifest create patched-index
+
+        for ref in "$@"; do
+          echo "[$(date --utc -Ins)] Processing image reference: $ref"
+          # IMAGE_REFERENCE format: repo:BASE_TAG-SANITIZED_PLATFORM@sha256:digest
+          digest="${ref##*@}"
+          tag_with_repo="${ref%%@*}"
+          tag="${tag_with_repo##*:}"
+          repo="${tag_with_repo%:*}"
+
+          # Extract architecture from the tag suffix.
+          # build-vm-image with IMAGE_APPEND_PLATFORM=true appends
+          # -SANITIZED_PLATFORM to the tag where PLATFORM is the
+          # multi-platform-controller host type, e.g. "linux-root/amd64"
+          # sanitized to "-linux-root-amd64". The OCI architecture is
+          # the last segment (after the final hyphen).
+          platform_suffix="${tag#"${BASE_TAG}"-}"
+          arch="${platform_suffix##*-}"
+
+          if [[ ! "$arch" =~ ^(amd64|arm64|ppc64le|s390x|riscv64)$ ]]; then
+            echo "Error: unrecognized architecture '$arch' for image '$ref'" >&2
+            echo "  (base tag: '$BASE_TAG', tag: '$tag')" >&2
+            exit 1
+          fi
+
+          echo "[$(date --utc -Ins)] Adding ${repo}@${digest} with platform linux/${arch}"
+          buildah manifest add \
+            --arch "${arch}" --os linux \
+            patched-index "docker://${repo}@${digest}"
+        done
+
+        echo "[$(date --utc -Ins)] Pushing patched index to ${IMAGE}"
+        buildah manifest push --all \
+          --digestfile /tmp/new-digest \
+          patched-index "docker://${IMAGE}"
+
+        NEW_DIGEST="$(cat /tmp/new-digest)"
+        echo -n "${IMAGE}" > "$(results.IMAGE_URL.path)"
+        echo -n "${NEW_DIGEST}" > "$(results.IMAGE_DIGEST.path)"
+        echo -n "${IMAGE}@${NEW_DIGEST}" > "$(results.IMAGE_REF.path)"
+        echo "[$(date --utc -Ins)] Patched image index pushed: ${IMAGE}@${NEW_DIGEST}"
+
+        # Re-attach the SBOM from the old index to the new one.
+        # cosign stores attached SBOMs at a deterministic tag:
+        #   sha256:<hex> -> sha256-<hex>.sbom
+        OLD_DIGEST="$(params.OLD_IMAGE_DIGEST)"
+        OLD_SBOM_TAG="${OLD_DIGEST/:/-}.sbom"
+        NEW_SBOM_TAG="${NEW_DIGEST/:/-}.sbom"
+        REPO="${IMAGE%:*}"
+
+        echo "[$(date --utc -Ins)] Re-attaching SBOM: ${REPO}:${OLD_SBOM_TAG} -> ${REPO}:${NEW_SBOM_TAG}"
+        if skopeo copy "docker://${REPO}:${OLD_SBOM_TAG}" "docker://${REPO}:${NEW_SBOM_TAG}"; then
+          echo "[$(date --utc -Ins)] SBOM re-attached successfully"
+        else
+          if [[ "$(params.FAIL_ON_SBOM_ERROR)" == "true" ]]; then
+            echo "[$(date --utc -Ins)] Error: could not re-attach SBOM" >&2
+            exit 1
+          fi
+          echo "[$(date --utc -Ins)] Warning: could not re-attach SBOM (may not exist yet)" >&2
+        fi
