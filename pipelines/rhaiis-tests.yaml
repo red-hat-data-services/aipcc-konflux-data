@@ -382,6 +382,8 @@ spec:
           value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: model-names
           value: ["$(params.model-names[*])"]
+        - name: skip-text-completion
+          value: "$(tasks.create-configuration.results.is-vllm-omni)"
       runAfter:
         - pull-images
         - download-models
