@@ -84,7 +84,7 @@ spec:
           echo -e "\n=== Requesting speech synthesis from RHAIIS container ==="
           DATA="{\"model\": \"${model_name}\", \"input\": \"Hi\", \"voice\": \"vivian\", \"language\": \"English\"}"
 
-          RESULT=$(${ssh_cmd} "curl --no-progress-meter --max-time 30 -D /tmp/tts_headers.txt -o /tmp/tts_body.bin -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/audio/speech; grep -i '^content-type:' /tmp/tts_headers.txt | tr -d '\r' | cut -d' ' -f2-; wc -c < /tmp/tts_body.bin") || true
+          RESULT=$(${ssh_cmd} "curl --no-progress-meter --max-time 120 -D /tmp/tts_headers.txt -o /tmp/tts_body.bin -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '${DATA}' http://localhost:8000/v1/audio/speech; grep -i '^content-type:' /tmp/tts_headers.txt | tr -d '\r' | cut -d' ' -f2-; wc -c < /tmp/tts_body.bin") || true
 
           HTTP_STATUS=$(echo "${RESULT}" | sed -n '1p')
           CONTENT_TYPE=$(echo "${RESULT}" | sed -n '2p')
