@@ -1,0 +1,51 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: rhaiis-cuda-ubi9-3-6-fast1-test-
+  namespace: ai-tenant
+  labels:
+    appstudio.openshift.io/component: rhaiis-cuda-ubi9-3-6-fast1
+    appstudio.openshift.io/application: rhaiis-3-6-fast1
+spec:
+  params:
+    - name: SNAPSHOT
+      value: |
+        {"components":[{"containerImage":"image-rbac-proxy.apps.stone-prod-p02.hjvn.p1.openshiftapps.com/redhat-user-workloads/ai-tenant/rhaiis-3-6-fast1/rhaiis-cuda-ubi9-3-6-fast1@sha256:5f1fb3f23bee2031abffd2216fac5e6458836facc06dc97029aac9a03120195f","name":"rhaiis-cuda-ubi9-3-6-fast1","source":{"git":{"context":".","dockerfileUrl":"Containerfile.cuda-ubi9","revision":"09fe05330536bf79bfbfbe7c7a8e9f8961022d88","url":"https://gitlab.com/redhat/rhel-ai/rhaiis/containers"}}}]}
+
+    - name: architecture
+      value: "x86_64"
+
+    - name: cuda-compat-version
+      value: "13-0"
+
+    - name: nvidia-driver-version
+      value: "580"
+
+    - name: model-names
+      value:
+        - "ibm-granite/granite-3.3-2b-instruct"
+
+    - name: pull-secret-names
+      value:
+        - "rhaiis-3-6-fast1-pull"
+
+    - name: debug
+      value: "false"
+
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/red-hat-data-services/aipcc-konflux-data
+      - name: revision
+        value: AIPCC-29355-vllm-omni-multimodal-its-validation
+      - name: pathInRepo
+        value: pipelines/rhaiis-tests.yaml
+
+  taskRunTemplate:
+    serviceAccountName: konflux-integration-runner
+
+  timeouts:
+    pipeline: 3h0m0s
+    tasks: 2h0m0s
+    finally: 1h0m0s

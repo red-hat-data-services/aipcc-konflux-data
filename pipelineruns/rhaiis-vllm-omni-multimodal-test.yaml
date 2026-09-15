@@ -42,7 +42,7 @@ spec:
       - name: url
         value: https://github.com/red-hat-data-services/aipcc-konflux-data.git
       - name: revision
-        value: AIPCC-29355-vllm-omni-multimodal-its
+        value: AIPCC-29355-vllm-omni-multimodal-its-validation
       - name: pathInRepo
         value: pipelines/rhaiis-tests.yaml
 
