@@ -1,0 +1,160 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: rhaiis-post-publication-finalization
+spec:
+  description: Copy Clair reports and notify downstream consumers after RHAIIS publication.
+  params:
+    - name: release
+      type: string
+    - name: releasePlan
+      type: string
+    - name: snapshot
+      type: string
+    - name: target-repo
+      type: string
+  tasks:
+    - name: copy-clair-scan-results
+      params:
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: target-repo
+          value: $(params.target-repo)
+      taskSpec:
+        params:
+          - name: snapshot
+            type: string
+          - name: target-repo
+            type: string
+        steps:
+          - name: copy-results
+            env:
+              - name: SNAPSHOT
+                value: $(params.snapshot)
+              - name: TARGET_REPO
+                value: $(params.target-repo)
+            image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
+            script: |
+              #!/bin/bash
+              echo -e "\nFetching Snapshot Spec"
+              SNAPSHOT=$(get-resource "snapshot" "${SNAPSHOT}" "{.spec}")
+              echo "$SNAPSHOT"
+              IMAGE=$(echo "$SNAPSHOT" | jq -r ".components[0].containerImage")
+              SOURCE_REPO="${IMAGE%%@*}"
+              CLAIR_REPORT_SHAS=$(
+                cosign download attestation ${IMAGE} | jq -r '
+                  .payload | @base64d | fromjson |
+                  .predicate.buildConfig.tasks[] |
+                  select(.name=="clair-scan").results[] |
+                  select(.name=="REPORTS").value |
+                  fromjson |
+                  .[]
+                '
+              )
+              for SHA in ${CLAIR_REPORT_SHAS}; do
+                skopeo copy docker://"$SOURCE_REPO"@${SHA} docker://"$TARGET_REPO"@${SHA}
+              done
+    - name: notify-release
+      params:
+        - name: release
+          value: $(params.release)
+      taskSpec:
+        params:
+          - name: release
+            type: string
+        steps:
+          - name: post-release-images
+            image: quay.io/konflux-ci/release-service-utils@sha256:c1e1ac19eb85d2e32bc12cac94d6b68198610b1ad7ca8e1d5460670d687c0bd4
+            env:
+              - name: RELEASE
+                value: $(params.release)
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              WEBHOOK_URL="https://n8n.apps.modelsibm.ibmmodel.rh-ods.com/webhook/quay-push"
+              artifacts=$(get-resource "release" "${RELEASE}" "{.status.artifacts}")
+              payloads_file=$(mktemp)
+              payload_file=$(mktemp)
+              trap 'rm -f "${payloads_file}" "${payload_file}"' EXIT
+
+              jq -c -n \
+                --argjson artifacts "${artifacts}" '
+                [
+                  $artifacts.images[]? as $released
+                  | $released.urls[]?
+                  | sub("@.*$"; "")
+                  | try capture("^(?<docker_url>quay\\.io/aipcc/.+):(?<tag>[^/:@]+)$")
+                  | . as $released_url
+                  | {
+                      docker_url: $released_url.docker_url,
+                      repository: ($released_url.docker_url | sub("^[^/]+/"; "")),
+                      updated_tags: [$released_url.tag]
+                    }
+                ]
+                | group_by(.docker_url)
+                | map({
+                    repository: .[0].repository,
+                    docker_url: .[0].docker_url,
+                    updated_tags: ([.[].updated_tags[]] | unique)
+                  })
+                ' > "${payloads_file}"
+
+              if [ "$(jq 'length' "${payloads_file}")" -eq 0 ]; then
+                echo "Release contains no tagged aipcc Quay image URLs" >&2
+                exit 1
+              fi
+
+              while IFS= read -r payload; do
+                printf '%s\n' "${payload}" > "${payload_file}"
+                curl \
+                  --request POST \
+                  --fail-with-body \
+                  --silent \
+                  --show-error \
+                  --connect-timeout 10 \
+                  --max-time 60 \
+                  --header "Content-Type: application/json" \
+                  --data-binary "@${payload_file}" \
+                  "${WEBHOOK_URL}"
+              done < <(jq -c '.[]' "${payloads_file}")
+  finally:
+    - name: report-task-statuses
+      params:
+        - name: clair-copy-status
+          value: $(tasks.copy-clair-scan-results.status)
+        - name: notification-status
+          value: $(tasks.notify-release.status)
+        - name: release
+          value: $(params.release)
+        - name: pipeline-run-name
+          value: $(context.pipelineRun.name)
+      taskSpec:
+        params:
+          - name: clair-copy-status
+            type: string
+          - name: notification-status
+            type: string
+          - name: release
+            type: string
+          - name: pipeline-run-name
+            type: string
+        steps:
+          - name: report
+            image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
+            env:
+              - name: CLAIR_COPY_STATUS
+                value: $(params.clair-copy-status)
+              - name: NOTIFICATION_STATUS
+                value: $(params.notification-status)
+              - name: RELEASE
+                value: $(params.release)
+              - name: PIPELINE_RUN_NAME
+                value: $(params.pipeline-run-name)
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              echo "copy-clair-scan-results=${CLAIR_COPY_STATUS}"
+              echo "notify-release=${NOTIFICATION_STATUS}"
+              echo "release=${RELEASE}"
+              echo "pipeline-run=${PIPELINE_RUN_NAME}"
