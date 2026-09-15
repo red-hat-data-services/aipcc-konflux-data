@@ -1,0 +1,125 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: copy-clair-scan-results
+spec:
+  description: Copy Clair report OCI artifacts for the released component to its Quay repository.
+  params:
+    - name: release
+      type: string
+    - name: snapshot
+      type: string
+    - name: target-repo
+      type: string
+      default: ""
+      description: Optional. If set, used as the target repo (backward compat with llama-stack).
+  volumes:
+    - name: pull-creds
+      secret:
+        secretName: components-namespace-pull
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: push-creds
+      secret:
+        secretName: quay-aipcc-finalpipeline-push
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+  steps:
+    - name: copy-results
+      image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f
+      env:
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: RELEASE
+          value: $(params.release)
+        - name: TARGET_REPO
+          value: $(params.target-repo)
+      volumeMounts:
+        - name: pull-creds
+          mountPath: /creds/pull
+          readOnly: true
+        - name: push-creds
+          mountPath: /creds/push
+          readOnly: true
+      script: |
+        #!/bin/bash
+        set -eo pipefail
+
+        echo -e "\nFetching Snapshot spec"
+        SNAPSHOT_DATA=$(get-resource "snapshot" "${SNAPSHOT}" "{.spec}")
+
+        if [ -n "$TARGET_REPO" ]; then
+          # Legacy mode: static target-repo (backward compat with llama-stack)
+          echo "Using static target-repo: $TARGET_REPO"
+          IMAGE=$(echo "$SNAPSHOT_DATA" | jq -r ".components[0].containerImage")
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+            echo "ERROR: No component image found in snapshot"
+            exit 1
+          fi
+        else
+          # Auto-derive mode: read Release CR artifacts to find the released component
+          echo -e "\nFetching Release artifacts"
+          RELEASE_ARTIFACTS=$(get-resource "release" "${RELEASE}" "{.status.artifacts}")
+
+          if [ "$RELEASE_ARTIFACTS" = "{}" ] || [ -z "$RELEASE_ARTIFACTS" ]; then
+            echo "ERROR: No artifacts found in Release CR status"
+            exit 1
+          fi
+
+          COMPONENT_NAME=$(echo "$RELEASE_ARTIFACTS" | jq -r '.images[0].name')
+          if [ -z "$COMPONENT_NAME" ] || [ "$COMPONENT_NAME" = "null" ]; then
+            echo "ERROR: No component name in release artifacts"
+            exit 1
+          fi
+          echo "Released component: $COMPONENT_NAME"
+
+          TARGET_REPO=$(echo "$RELEASE_ARTIFACTS" | jq -r '.images[0].urls[0]' | cut -d: -f1)
+          if [ -z "$TARGET_REPO" ] || [ "$TARGET_REPO" = "null" ]; then
+            echo "ERROR: Could not derive target repo from release artifacts"
+            exit 1
+          fi
+          echo "Derived target repo: $TARGET_REPO"
+
+          # Match component name against snapshot to find source image
+          IMAGE=$(echo "$SNAPSHOT_DATA" | jq -r --arg name "$COMPONENT_NAME" \
+            '.components[] | select(.name == $name) | .containerImage')
+          if [ -z "$IMAGE" ]; then
+            echo "ERROR: Component '$COMPONENT_NAME' not found in snapshot"
+            echo "Available components:"
+            echo "$SNAPSHOT_DATA" | jq -r '.components[].name'
+            exit 1
+          fi
+        fi
+
+        SOURCE_REPO="${IMAGE%%@*}"
+        echo -e "\nSource image: $IMAGE"
+        echo "Source repo: $SOURCE_REPO"
+        echo "Target repo: $TARGET_REPO"
+
+        echo -e "\nDownloading attestation to find REPORTS digests"
+        CLAIR_REPORT_SHAS=$(
+          DOCKER_CONFIG=/creds/pull cosign download attestation "${IMAGE}" | jq -r '
+            .payload | @base64d | fromjson |
+            .predicate.buildConfig.tasks[] |
+            select(.name=="clair-scan").results[] |
+            select(.name=="REPORTS").value |
+            fromjson |
+            .[]
+          '
+        )
+
+        if [ -z "$CLAIR_REPORT_SHAS" ]; then
+          echo "ERROR: No REPORTS blob found in attestation for image $IMAGE"
+          exit 1
+        fi
+
+        echo -e "\nCopying REPORTS blobs to target repo"
+        for SHA in ${CLAIR_REPORT_SHAS}; do
+          echo "Copying $SHA"
+          skopeo copy --src-authfile /creds/pull/config.json --dest-authfile /creds/push/config.json \
+            "docker://${SOURCE_REPO}@${SHA}" "docker://${TARGET_REPO}@${SHA}"
+        done
+
+        echo -e "\nDone. All REPORTS blobs copied successfully."

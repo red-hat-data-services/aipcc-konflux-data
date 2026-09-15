@@ -12,34 +12,23 @@ spec:
       type: string
     - name: target-repo
       type: string
+      default: ""
+      description: Optional. If set, used as the target repo (backward compat with llama-stack).
   tasks:
     - name: copy-clair-scan-results-task
-      taskSpec:
-        steps:
-         - name: copy-results
-           env:
-            - name: SNAPSHOT
-              value: $(params.snapshot)
-            - name: TARGET_REPO
-              value: $(params.target-repo)
-           image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
-           script: |
-              #!/bin/bash
-              echo -e "\nFetching Snapshot Spec"
-              SNAPSHOT=$(get-resource "snapshot" "${SNAPSHOT}" "{.spec}")
-              echo "$SNAPSHOT"
-              IMAGE=$(echo "$SNAPSHOT" | jq -r ".components[0].containerImage")
-              SOURCE_REPO="${IMAGE%%@*}"
-              CLAIR_REPORT_SHAS=$(
-                cosign download attestation ${IMAGE} | jq -r '
-                  .payload | @base64d | fromjson |
-                  .predicate.buildConfig.tasks[] |
-                  select(.name=="clair-scan").results[] |
-                  select(.name=="REPORTS").value |
-                  fromjson |
-                  .[]
-                '
-              )
-              for SHA in ${CLAIR_REPORT_SHAS}; do
-                skopeo copy docker://"$SOURCE_REPO"@${SHA} docker://"$TARGET_REPO"@${SHA}
-              done
+      params:
+        - name: release
+          value: $(params.release)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: target-repo
+          value: $(params.target-repo)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/copy-clair-scan-results.yaml
