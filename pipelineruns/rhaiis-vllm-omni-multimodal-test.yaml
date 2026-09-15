@@ -39,22 +39,12 @@ spec:
   pipelineRef:
     resolver: git
     params:
-      - name: org
-        value: redhat
-      - name: repo
-        value: rhel-ai/konflux-data
-      - name: scmType
-        value: gitlab
-      - name: serverURL
-        value: https://gitlab.com
+      - name: url
+        value: https://github.com/red-hat-data-services/aipcc-konflux-data.git
       - name: revision
         value: AIPCC-29355-vllm-omni-multimodal-its
       - name: pathInRepo
         value: pipelines/rhaiis-tests.yaml
-      - name: token
-        value: pipelines-as-code-secret
-      - name: tokenKey
-        value: password
 
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
