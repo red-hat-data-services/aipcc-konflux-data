@@ -23,6 +23,9 @@ spec:
     - name: use-sudo
       default: "false"
       description: Use sudo to execute podman commands (set to true when testing RHEL AI)
+    - name: skip-text-completion
+      default: "false"
+      description: Skip the text-completion check for models tested by a specialized task
   steps:
     - image: quay.io/konflux-ci/release-service-utils@sha256:d84bb7da0988c3cbce65ed714beddda4694b9e3201af56a135ac5843a05abe1e
       args: ["$(params.model-names[*])"]
@@ -389,7 +392,9 @@ spec:
             exit $EXIT_HEALTH_CHECK_TIMEOUT
           fi
 
-          if ! test_inference "${model}"; then
+          if [ "$(params.skip-text-completion)" == "true" ]; then
+            echo "Skipping text-completion test for ${model}; a specialized test task handles this model"
+          elif ! test_inference "${model}"; then
             echo -e "\n✗ Failed to test inference for model ${model}"
             exit $EXIT_INFERENCE_FAILED
           fi
