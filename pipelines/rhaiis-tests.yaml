@@ -77,7 +77,7 @@ spec:
           - name: url
             value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
-            value: AIPCC-29355-vllm-omni-multimodal-its
+            value: main
           - name: pathInRepo
             value: tasks/config-from-snapshot.yaml
     - name: create-vm-aws
@@ -394,7 +394,7 @@ spec:
           - name: url
             value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
-            value: AIPCC-29355-vllm-omni-multimodal-its
+            value: main
           - name: pathInRepo
             value: tasks/test-inference.yaml
     - name: test-vllm-omni-multimodal-inference
@@ -419,7 +419,7 @@ spec:
           - name: url
             value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
-            value: AIPCC-29355-vllm-omni-multimodal-its
+            value: main
           - name: pathInRepo
             value: tasks/test-vllm-omni-multimodal-inference.yaml
   finally:
