@@ -201,15 +201,18 @@ spec:
           value: $(params.activation-key)
       runAfter:
         - prefetch-dependencies
+      # TEST ONLY (AIPCC-1307): use the revised build-vm-image task (emits the
+      # PLATFORM result) from the in-review fix branch via git resolver, instead
+      # of the released bundle. Revert to the bundles resolver before merging.
       taskRef:
-        resolver: bundles
+        resolver: git
         params:
-          - name: name
-            value: build-vm-image
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.3@sha256:8cd55e191cfde051f3e6d4082f64e9a24f91bcd47e1a44a68f68c321176a860b
-          - name: kind
-            value: task
+          - name: url
+            value: https://github.com/Victoremepunto/build-definitions
+          - name: revision
+            value: aipcc-1307-build-vm-image-platform-result
+          - name: pathInRepo
+            value: task/build-vm-image/0.3/build-vm-image.yaml
     - name: build-image-index
       timeout: "3h0m00s"
       params:
@@ -220,17 +223,29 @@ spec:
         - name: IMAGES
           value:
           - $(tasks.build-vm-image.results.IMAGE_REFERENCE[*])
+        # TEST ONLY (AIPCC-1307): explicit per-child platform mapping. Each
+        # build-vm-image matrix leg emits its own combined "<ref>=linux/<arch>"
+        # entry via the IMAGE_PLATFORM_MAP result (joined in-task, since Tekton
+        # cannot zip two separately-aggregated matrix result arrays). The whole
+        # aggregate is fanned in here with no ordering assumptions required.
+        - name: IMAGE_PLATFORM_MAP
+          value:
+          - $(tasks.build-vm-image.results.IMAGE_PLATFORM_MAP[*])
       runAfter:
         - build-vm-image
+      # TEST ONLY (AIPCC-1307): use the revised build-image-index task
+      # (accepts IMAGE_PLATFORM_MAP, runs a rebuilt CLI image with the
+      # unmerged --image-platform-map fix) from the in-review fix branch via
+      # git resolver. Revert to the bundles resolver before merging.
       taskRef:
+        resolver: git
         params:
-          - name: name
-            value: build-image-index
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.3.1@sha256:290c9ec319423ff9ae7b2cb78fa859e1d333abcdd2ef6c001533377812020071
-          - name: kind
-            value: task
-        resolver: bundles
+          - name: url
+            value: https://github.com/Victoremepunto/container-build-catalog
+          - name: revision
+            value: aipcc-1307-test-iso-cli-v2
+          - name: pathInRepo
+            value: task/build-image-index/build-image-index.yaml
     - name: sast-shell-check
       params:
         - name: image-digest
