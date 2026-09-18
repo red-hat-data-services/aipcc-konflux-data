@@ -201,15 +201,20 @@ spec:
           value: $(params.activation-key)
       runAfter:
         - prefetch-dependencies
+      # TEST ONLY: use the in-review build-vm-image fix from
+      # konflux-ci/build-definitions#3847 (echo -n for IMAGE_DIGEST, fixes
+      # trailing-newline breaking Conforma's sbom.found exact-match) via git
+      # resolver, instead of the released 0.3 bundle. Revert to the bundles
+      # resolver before merging.
       taskRef:
-        resolver: bundles
+        resolver: git
         params:
-          - name: name
-            value: build-vm-image
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.3@sha256:8cd55e191cfde051f3e6d4082f64e9a24f91bcd47e1a44a68f68c321176a860b
-          - name: kind
-            value: task
+          - name: url
+            value: https://github.com/Victoremepunto/build-definitions
+          - name: revision
+            value: fix-build-vm-image-image-digest-newline
+          - name: pathInRepo
+            value: task/build-vm-image/0.3/build-vm-image.yaml
     - name: build-image-index
       timeout: "3h0m00s"
       params:
