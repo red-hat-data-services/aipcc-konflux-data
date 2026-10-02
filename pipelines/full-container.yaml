@@ -126,9 +126,13 @@ spec:
       default:
         - linux-d160-m4xlarge/amd64
     - name: build-image-index
-      description: Add built image into an OCI image index
+      description: Add built image into an image index
       type: string
       default: "true"
+    - name: buildah-format
+      description: The manifest format to use for built images
+      type: string
+      default: docker
     - name: snyk-project-name
       description: Snyk project name
       type: string
@@ -275,6 +279,8 @@ spec:
           value: $(params.path-context)
         - name: HERMETIC
           value: $(params.hermetic)
+        - name: BUILDAH_FORMAT
+          value: $(params.buildah-format)
         - name: PREFETCH_INPUT
           value: $(params.prefetch-input)
         - name: IMAGE_EXPIRES_AFTER
@@ -334,6 +340,8 @@ spec:
           value: $(params.output-image)
         - name: ALWAYS_BUILD_INDEX
           value: $(params.build-image-index)
+        - name: BUILDAH_FORMAT
+          value: $(params.buildah-format)
         - name: IMAGES
           value:
           - $(tasks.build-container.results.IMAGE_REF[*])
