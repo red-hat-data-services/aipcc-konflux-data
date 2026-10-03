@@ -39,7 +39,7 @@ spec:
             description: Short version string (major.minor) for AWS marketplace
         steps:
           - name: derive-config
-            image: quay.io/konflux-ci/release-service-utils@sha256:36c4b4f4d377b3fffeb7bf0185ff104e1631297f4ce4faac115f9f4f855cefea
+            image: quay.io/konflux-ci/release-service-utils@sha256:3a7ee726c51bb59f0f161e39623071fb78ff1d18312a55ce022927e3123c2acf
             script: |
               #!/bin/bash
               set -e
