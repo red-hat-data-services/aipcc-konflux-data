@@ -159,32 +159,22 @@ This repository contains:
 ### 8. Tekton Git Resolver References
 
 #### Required
-- Git resolver references to this repo must use the standard format:
+- Git resolver references to this repo must use its canonical GitHub URL:
   ```yaml
   resolver: git
   params:
-    - name: org
-      value: redhat
-    - name: repo
-      value: rhel-ai/konflux-data
-    - name: scmType
-      value: gitlab
-    - name: serverURL
-      value: https://gitlab.com
+    - name: url
+      value: https://github.com/red-hat-data-services/aipcc-konflux-data
     - name: revision
       value: main
     - name: pathInRepo
       value: tasks/{task-name}.yaml
-    - name: token
-      value: pipelines-as-code-secret
-    - name: tokenKey
-      value: password
   ```
-- External repo references (e.g., mapt) must use `url` instead of `org`/`repo` and the appropriate `pathInRepo`
-- The `token` and `tokenKey` params must be present for private repo access
+- External repo references (e.g., mapt) also use `url` and the appropriate `pathInRepo`.
+- Add `token` and `tokenKey` only when the target Git repository requires authentication.
 
 #### Anti-patterns
-- Mixing `org`/`repo` style with `url` style for the same repository
+- Using the old GitLab mirror URL for this repository
 - Missing `token`/`tokenKey` for private repositories
 - Using `revision: main` for external repos without pinning (acceptable for this repo since it's self-referencing, but external repos should ideally be pinned)
 

@@ -89,19 +89,9 @@ spec:
       taskRef:
         resolver: git
         params:
-          - name: org
-            value: redhat
-          - name: repo
-            value: rhel-ai/konflux-data
-          - name: scmType
-            value: gitlab
-          - name: serverURL
-            value: https://gitlab.com
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
           - name: revision
             value: main
           - name: pathInRepo
             value: tasks/check-clair-cves.yaml
-          - name: token
-            value: pipelines-as-code-secret
-          - name: tokenKey
-            value: password

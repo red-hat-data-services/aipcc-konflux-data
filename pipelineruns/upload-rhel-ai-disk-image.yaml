@@ -9,6 +9,10 @@ spec:
     - name: container-image
       value: "quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc-3-2/bootc-cuda-aws-disk-image-3-2@sha256:b1c8752fbe49c574f46bade651bd00a3c1c5de48bb16c44a6563bf35a31f2002"
 
+    # Architecture of the helper VM used to pull the disk-image artifact
+    - name: helper-vm-architecture
+      value: "x86_64"
+
     # Pull secret name - this will be used to pull the container image, unique per Konflux application
     - name: pull-secret-name
       value: "rhelai-bootc-3-2-pull"
@@ -32,22 +36,12 @@ spec:
   pipelineRef:
     resolver: git
     params:
-      - name: org
-        value: redhat
-      - name: repo
-        value: rhel-ai/konflux-data
-      - name: scmType
-        value: gitlab
-      - name: serverURL
-        value: https://gitlab.com
+      - name: url
+        value: https://github.com/red-hat-data-services/aipcc-konflux-data
       - name: revision
         value: main
       - name: pathInRepo
         value: pipelines/upload-rhel-ai-disk-image.yaml
-      - name: token
-        value: pipelines-as-code-secret
-      - name: tokenKey
-        value: password
 
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
