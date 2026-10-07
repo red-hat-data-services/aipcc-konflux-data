@@ -208,14 +208,14 @@ spec:
       runAfter:
         - prefetch-dependencies
       taskRef:
-        resolver: bundles
+        resolver: git
         params:
-          - name: name
-            value: build-vm-image
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-vm-image:0.3@sha256:88376f410c4c864c1526c0cea22667e3f15edea6ba72d612bbb17b81178db9c1
-          - name: kind
-            value: task
+          - name: url
+            value: https://github.com/rishupk/build-definitions.git
+          - name: revision
+            value: 463d81ff68e4ed4f3bb46310443164ae9303907b
+          - name: pathInRepo
+            value: task/build-vm-image/0.3/build-vm-image.yaml
     - name: build-image-index
       timeout: "3h0m00s"
       params:

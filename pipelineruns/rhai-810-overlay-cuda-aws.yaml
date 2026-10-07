@@ -1,0 +1,57 @@
+# Manual pre-merge RHAI-810 test using the fork task and bootc !718 source commit.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: rhai-810-cuda-aws-overlay-
+  namespace: rhel-ai-tenant
+  labels:
+    appstudio.openshift.io/application: rhelai-bootc
+    appstudio.openshift.io/component: bootc-cuda-aws-disk-image
+    pipelines.appstudio.openshift.io/type: build
+    rhai-810-test: rootfs-overlay
+spec:
+  timeouts:
+    pipeline: "6h0m0s"
+    tasks: "4h0m0s"
+    finally: "1h0m0s"
+  params:
+    - name: git-url
+      value: https://gitlab.com/redhat/rhel-ai/containers/bootc.git
+    - name: revision
+      value: 46f419554093ef11c70d34842ef847774f6a084d
+    - name: output-image
+      value: quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc/bootc-cuda-aws-disk-image:rhai-810-overlay-test-463d81ff-46f41955
+    - name: image-expires-after
+      value: 5d
+    - name: image-type
+      value: ami
+    - name: config-toml
+      value: ai-lab-recipes/training/cloud/aws/config.toml
+    - name: config-toml-overlay
+      value: config/rootfs-minimum.toml
+    - name: bib-file
+      value: bib-cuda-aws.yaml
+    - name: build-platforms
+      value:
+        - linux-root/amd64
+    - name: activation-key
+      value: rhel-ai-activation-key
+    - name: snyk-org
+      value: 01db29d0-f8e7-4709-9725-442d48ddfba6
+    - name: snyk-project-name
+      value: ai-red-hat-enterprise-linux-ai
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/red-hat-data-services/aipcc-konflux-data.git
+      - name: revision
+        value: RHAI-810-cloud-rootfs-overlay-test
+      - name: pathInRepo
+        value: pipelines/disk-image.yaml
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-bootc-cuda-aws-disk-image
+  workspaces:
+    - name: git-auth
+      secret:
+        secretName: rhai-810-bootc-git-auth
