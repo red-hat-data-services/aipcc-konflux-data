@@ -47,6 +47,10 @@ spec:
       default: ""
       type: string
       name: config-toml
+    - description: Optional filesystem-only TOML overlay for the base config
+      default: ""
+      type: string
+      name: config-toml-overlay
     - description: path to bib yaml file
       default: "bib.yaml"
       name: bib-file
@@ -193,6 +197,8 @@ spec:
           value: $(params.output-image)
         - name: CONFIG_TOML_FILE
           value: $(params.config-toml)
+        - name: CONFIG_TOML_OVERLAY_FILE
+          value: $(params.config-toml-overlay)
         - name: BIB_CONFIG_FILE
           value: $(params.bib-file)
         - name: IMAGE_APPEND_PLATFORM
