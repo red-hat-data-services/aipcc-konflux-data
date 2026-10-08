@@ -1,0 +1,307 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: clair-scan-diff
+spec:
+  description: |
+    Fresh same-database Clair scan diff between the previous released image
+    and the candidate image of a component.
+
+    The build-time clair-scan task runs with the scanner database embedded in
+    the konflux-ci/clair-in-ci image, which can lag behind the current Clair
+    data by weeks. Diffing the build-time REPORTS of two builds therefore
+    measures database drift as much as it measures image changes, and a CVE
+    absent from a candidate REPORTS is not evidence of a fix.
+
+    This task removes that ambiguity: it resolves the image of the latest
+    Released prod release for the component and the candidate image from the
+    release snapshot, then scans both with the same pinned scanner database,
+    so the diff only reflects the image bytes.
+
+    Multi-arch images are scanned per architecture: every linux child
+    manifest of the image index is scanned and the CVE lists are unioned, so
+    a CVE counts as fixed only when it is gone from all architectures, and a
+    new CVE is reported when it appears on any of them.
+
+    Evidence semantics:
+    - fixed_in_candidate: CVE names present in the baseline scan and absent
+      from the candidate scan. Valid fix evidence for this scan pair only.
+    - new_in_candidate: CVE names present only in the candidate scan.
+
+    The full result JSON is written to the snapshot as annotations
+    (fresh-scan.aipcc.redhat.com/summary and .../result) and the raw reports
+    are printed to the task log between ===REPORT markers. Tekton caps the
+    combined size of a task's results, so the task results carry counts and
+    references only.
+
+    This is evidence collection only: it is not an Enterprise Contract
+    evaluation and not release approval.
+
+    Required service account: list/get releases and snapshots, and patch
+    snapshots (the konflux-releaser-bot-actions cluster role covers this).
+    Image pulls use the components-namespace-pull secret mounted as a volume.
+  params:
+    - name: release
+      type: string
+      description: Release name (automatically provided by the finalPipeline).
+    - name: releasePlan
+      type: string
+      description: ReleasePlan name (automatically provided by the finalPipeline).
+    - name: snapshot
+      type: string
+      description: Snapshot name (automatically provided by the finalPipeline).
+    - name: scanner-image
+      type: string
+      description: >
+        Fully digest-pinned scanner image with an embedded matcher database
+        (clair-in-ci-db-hermetic). Pinning is deliberate: both sides of the
+        diff must be scanned with the same database, and the digest makes the
+        evidence explicit. Bump it per release cycle to a recent nightly.
+    - name: prod-release-plan
+      type: string
+      default: ""
+      description: >
+        ReleasePlan used to find the previous released image. Defaults to the
+        stage ReleasePlan name with "-stage-" replaced by "-prod-".
+  results:
+    - name: baseline-release
+      description: Name of the previous Released prod release used as baseline.
+    - name: baseline-image
+      description: Baseline image reference scanned.
+    - name: candidate-image
+      description: Candidate image reference scanned.
+    - name: baseline-cve-count
+      description: Number of unique CVEs found in the baseline scan (all arches).
+    - name: candidate-cve-count
+      description: Number of unique CVEs found in the candidate scan (all arches).
+    - name: fixed-cve-count
+      description: Number of CVEs fixed in the candidate (baseline only).
+    - name: new-cve-count
+      description: Number of new CVEs in the candidate (candidate only).
+  volumes:
+    - name: components-namespace-pull
+      secret:
+        secretName: components-namespace-pull
+  steps:
+    - name: resolve
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: RELEASE
+          value: $(params.release)
+        - name: RELEASE_PLAN
+          value: $(params.releasePlan)
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: PROD_RELEASE_PLAN_PARAM
+          value: $(params.prod-release-plan)
+      volumeMounts:
+        - name: components-namespace-pull
+          mountPath: /mnt/components-namespace-pull
+          readOnly: true
+      workingDir: /tekton/home
+      script: |
+        #!/bin/bash
+        set -eo pipefail
+        NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+        # clair-action cannot scan an image index directly (it resolves to a
+        # single platform and fails on indexes without that child). Expand
+        # index refs to their linux child manifests so every architecture is
+        # scanned; plain manifests pass through unchanged.
+        mkdir -p /tmp/auth
+        cp /mnt/components-namespace-pull/.dockerconfigjson /tmp/auth/config.json
+        export DOCKER_CONFIG=/tmp/auth
+        resolve_platform_refs() {
+          local ref="$1" raw
+          raw=$(skopeo inspect --raw "docker://${ref}" 2>/dev/null || true)
+          if printf '%s' "${raw}" | jq -e 'has("manifests")' >/dev/null 2>&1; then
+            printf '%s' "${raw}" | jq -r \
+              '[.manifests[] | select(.platform.os=="linux") | .digest] | unique | .[]' \
+              | sed "s|^|${ref%%@*}@|"
+          else
+            printf '%s\n' "${ref}"
+          fi
+        }
+
+        echo "=== resolving component from release ${RELEASE}"
+        COMPONENT=$(kubectl get release "${RELEASE}" -o json \
+          | jq -r '.metadata.labels["appstudio.openshift.io/component"]')
+        if [ -z "${COMPONENT}" ] || [ "${COMPONENT}" = "null" ]; then
+          echo "ERROR: release ${RELEASE} has no appstudio.openshift.io/component label" >&2
+          exit 1
+        fi
+        echo "component: ${COMPONENT}"
+
+        PROD_RELEASE_PLAN="${PROD_RELEASE_PLAN_PARAM}"
+        if [ -z "${PROD_RELEASE_PLAN}" ]; then
+          PROD_RELEASE_PLAN=$(printf '%s' "${RELEASE_PLAN}" | sed 's/-stage-/-prod-/')
+        fi
+        echo "=== prod release plan: ${PROD_RELEASE_PLAN}"
+
+        echo "=== candidate: snapshot ${SNAPSHOT}"
+        # Snapshots can carry stale sibling entries from earlier builds of
+        # other components; match by component name.
+        CANDIDATE_REF=$(get-resource "snapshot" "${NS}/${SNAPSHOT}" "{.spec}" \
+          | jq -r --arg name "${COMPONENT}" '.components[] | select(.name == $name) | .containerImage')
+        if [ -z "${CANDIDATE_REF}" ] || [ "${CANDIDATE_REF}" = "null" ]; then
+          echo "ERROR: component ${COMPONENT} not found in snapshot ${SNAPSHOT}" >&2
+          get-resource "snapshot" "${NS}/${SNAPSHOT}" "{.spec}" | jq -r '.components[].name' >&2
+          exit 1
+        fi
+        echo "candidate: ${CANDIDATE_REF}"
+
+        echo "=== previous Released prod release for ${COMPONENT}"
+        PREV=$(kubectl get releases \
+          -l "appstudio.openshift.io/component=${COMPONENT},release.appstudio.openshift.io/releasePlan=${PROD_RELEASE_PLAN}" \
+          -o json | jq -r '[.items[]
+            | select(.status.conditions[]? | .type == "Released" and .status == "True")]
+            | sort_by(.metadata.creationTimestamp) | last')
+        if [ -z "${PREV}" ] || [ "${PREV}" = "null" ]; then
+          echo "ERROR: no Released prod release found for ${COMPONENT} on plan ${PROD_RELEASE_PLAN}" >&2
+          exit 1
+        fi
+        PREV_RELEASE=$(echo "${PREV}" | jq -r '.metadata.name')
+        PREV_TIME=$(echo "${PREV}" | jq -r '.metadata.creationTimestamp')
+        PREV_SNAPSHOT=$(echo "${PREV}" | jq -r '.spec.snapshot')
+        echo "previous prod release: ${PREV_RELEASE} (${PREV_TIME}), snapshot ${PREV_SNAPSHOT}"
+
+        BASELINE_REF=$(get-resource "snapshot" "${NS}/${PREV_SNAPSHOT}" "{.spec}" \
+          | jq -r --arg name "${COMPONENT}" '.components[] | select(.name == $name) | .containerImage')
+        if [ -z "${BASELINE_REF}" ] || [ "${BASELINE_REF}" = "null" ]; then
+          echo "ERROR: component ${COMPONENT} not found in previous snapshot ${PREV_SNAPSHOT}" >&2
+          exit 1
+        fi
+        echo "baseline: ${BASELINE_REF}"
+
+        mapfile -t SCAN_CANDIDATE_REFS < <(resolve_platform_refs "${CANDIDATE_REF}")
+        mapfile -t SCAN_BASELINE_REFS < <(resolve_platform_refs "${BASELINE_REF}")
+        echo "candidate scan refs (${#SCAN_CANDIDATE_REFS[@]}): ${SCAN_CANDIDATE_REFS[*]}"
+        echo "baseline scan refs (${#SCAN_BASELINE_REFS[@]}): ${SCAN_BASELINE_REFS[*]}"
+
+        printf '%s' "${PREV_RELEASE}" > "$(results.baseline-release.path)"
+        printf '%s' "${BASELINE_REF}" > "$(results.baseline-image.path)"
+        printf '%s' "${CANDIDATE_REF}" > "$(results.candidate-image.path)"
+
+        {
+          echo "COMPONENT='${COMPONENT}'"
+          echo "CANDIDATE_REF='${CANDIDATE_REF}'"
+          echo "BASELINE_REF='${BASELINE_REF}'"
+          printf 'SCAN_CANDIDATE_REFS=('
+          printf "'%s' " "${SCAN_CANDIDATE_REFS[@]}"
+          echo ')'
+          printf 'SCAN_BASELINE_REFS=('
+          printf "'%s' " "${SCAN_BASELINE_REFS[@]}"
+          echo ')'
+          echo "PREV_RELEASE='${PREV_RELEASE}'"
+          echo "PREV_SNAPSHOT='${PREV_SNAPSHOT}'"
+        } > refs.env
+    - name: scan
+      image: $(params.scanner-image)
+      imagePullPolicy: Always
+      computeResources:
+        requests:
+          memory: 8Gi
+          cpu: "1"
+        limits:
+          memory: 8Gi
+          cpu: "2"
+      env:
+        - name: SCANNER_IMAGE
+          value: $(params.scanner-image)
+      volumeMounts:
+        - name: components-namespace-pull
+          mountPath: /mnt/components-namespace-pull
+          readOnly: true
+      workingDir: /tekton/home
+      script: |
+        #!/usr/bin/env bash
+        set -o errexit
+        set -o nounset
+        set -o pipefail
+        # shellcheck disable=SC1091
+        . ./refs.env
+
+        # clair-action does not read the DOCKER_CONFIG env var; it needs
+        # --docker-config-dir pointing at a docker config directory.
+        mkdir -p /tmp/auth
+        cp /mnt/components-namespace-pull/.dockerconfigjson /tmp/auth/config.json
+
+        scan_side() {
+          local side="$1"
+          shift
+          local i=0
+          for ref in "$@"; do
+            echo "=== scanning ${side} manifest: ${ref}"
+            clair-action report --image-ref="${ref}" --db-path=/tmp/matcher.db \
+              --docker-config-dir=/tmp/auth --format=clair > "clair-${side}-${i}.json"
+            i=$((i + 1))
+          done
+          # Union of unique CVE names across all architecture manifests.
+          jq -s 'map([.vulnerabilities[]? | select((.name // "")
+                     | test("^CVE-[0-9]{4}-[0-9]{4,7}$")) | .name] | unique)
+                 | add | unique' clair-${side}-*.json > "${side}-cves.json"
+        }
+
+        scan_side baseline "${SCAN_BASELINE_REFS[@]}"
+        scan_side candidate "${SCAN_CANDIDATE_REFS[@]}"
+
+        jq -n --slurpfile b baseline-cves.json --slurpfile c candidate-cves.json \
+          --arg component "${COMPONENT}" \
+          --arg baseline_ref "${BASELINE_REF}" \
+          --arg prev_release "${PREV_RELEASE}" \
+          --arg prev_snapshot "${PREV_SNAPSHOT}" \
+          --arg candidate_ref "${CANDIDATE_REF}" \
+          --arg scanner "${SCANNER_IMAGE}" \
+          --arg baseline_refs "${SCAN_BASELINE_REFS[*]}" \
+          --arg candidate_refs "${SCAN_CANDIDATE_REFS[*]}" \
+          '{
+            component: $component,
+            evidence: "fresh same-DB clair scan; not ECP, not release approval",
+            scanner_image: $scanner,
+            baseline: {release: $prev_release, snapshot: $prev_snapshot, image: $baseline_ref,
+                       scanned_manifests: ($baseline_refs | split(" ") | map(select(. != ""))),
+                       cves: $b[0]},
+            candidate: {image: $candidate_ref,
+                        scanned_manifests: ($candidate_refs | split(" ") | map(select(. != ""))),
+                        cves: $c[0]}
+          }
+          | .fixed_in_candidate = (.baseline.cves - .candidate.cves)
+          | .new_in_candidate = (.candidate.cves - .baseline.cves)' > fresh-scan-result.json
+
+        jq -r '(.baseline.cves|length)' fresh-scan-result.json > "$(results.baseline-cve-count.path)"
+        jq -r '(.candidate.cves|length)' fresh-scan-result.json > "$(results.candidate-cve-count.path)"
+        jq -r '(.fixed_in_candidate|length)' fresh-scan-result.json > "$(results.fixed-cve-count.path)"
+        jq -r '(.new_in_candidate|length)' fresh-scan-result.json > "$(results.new-cve-count.path)"
+
+        jq '{component, baseline_cves: (.baseline.cves|length), candidate_cves: (.candidate.cves|length),
+             fixed_in_candidate, new_in_candidate}' fresh-scan-result.json
+
+        echo "===REPORTS-BEGIN==="
+        for f in clair-baseline-*.json clair-candidate-*.json; do
+          echo "===REPORT ${f} BEGIN==="
+          cat "${f}"
+          echo
+          echo "===REPORT ${f} END==="
+        done
+        echo "===REPORTS-END==="
+    - name: annotate
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+      workingDir: /tekton/home
+      script: |
+        #!/bin/bash
+        set -eo pipefail
+        NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+        RESULT_JSON=$(jq -c . fresh-scan-result.json)
+        SUMMARY=$(jq -c '{component, baseline_cves: (.baseline.cves|length), candidate_cves: (.candidate.cves|length), fixed_in_candidate, new_in_candidate}' fresh-scan-result.json)
+        kubectl patch snapshot "${SNAPSHOT}" -n "${NS}" --type merge -p "$(jq -n \
+          --arg result "$RESULT_JSON" --arg summary "$SUMMARY" \
+          '{metadata: {annotations: {
+            "fresh-scan.aipcc.redhat.com/summary": $summary,
+            "fresh-scan.aipcc.redhat.com/result": $result}}}')"
+        echo "=== annotated snapshot ${SNAPSHOT}"
+        kubectl get snapshot "${SNAPSHOT}" -n "${NS}" \
+          -o jsonpath='{.metadata.annotations.fresh-scan\.aipcc\.redhat\.com/summary}'
+        echo
