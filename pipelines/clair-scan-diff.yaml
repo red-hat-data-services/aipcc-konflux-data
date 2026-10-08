@@ -1,0 +1,99 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: clair-scan-diff
+spec:
+  description: |
+    Fresh same-database Clair scan diff between the previous released image
+    and the candidate image about to ship.
+
+    Meant to run as a finalPipeline on stage ReleasePlans, after the release
+    has completed: it resolves the component's latest Released prod release,
+    scans its image and the candidate image with the same digest-pinned
+    scanner database, annotates the snapshot with the fixed/new CVE lists,
+    and logs the raw reports.
+
+    Why not diff the build-time REPORTS: the Konflux build scanner runs with
+    a database that can be weeks old, so a cross-build REPORTS diff measures
+    database drift as much as image changes, and a CVE missing from a
+    candidate REPORTS is not evidence of a fix. Scanning both sides with the
+    same current database isolates the image changes.
+
+    Evidence collection only: this is not an Enterprise Contract evaluation
+    and not release approval. Scan failures never gate the release.
+
+    Required wiring on the ReleasePlan (konflux-release-data):
+    - finalPipeline.pipelineRef resolving this file, useEmptyDir: true
+    - serviceAccountName covering list/get releases and snapshots and patch
+      snapshots (konflux-releaser-bot-actions), e.g. aipcc-releaser-bot-sa
+    - params: release, releasePlan and snapshot are provided automatically;
+      scanner-image must be pinned to a recent clair-in-ci-db-hermetic digest
+      and bumped per release cycle.
+
+  params:
+    - name: release
+      type: string
+      description: Release name (automatically provided by the finalPipeline).
+    - name: releasePlan
+      type: string
+      description: ReleasePlan name (automatically provided by the finalPipeline).
+    - name: snapshot
+      type: string
+      description: Snapshot name (automatically provided by the finalPipeline).
+    - name: scanner-image
+      type: string
+      description: >
+        Fully digest-pinned scanner image with an embedded matcher database
+        (clair-in-ci-db-hermetic). Both sides of the diff are scanned with
+        this same database.
+    - name: prod-release-plan
+      type: string
+      default: ""
+      description: >
+        ReleasePlan used to find the previous released image. Defaults to the
+        stage ReleasePlan name with "-stage-" replaced by "-prod-".
+  results:
+    - name: baseline-release
+      description: Name of the previous Released prod release used as baseline.
+      value: $(tasks.clair-scan-diff.results.baseline-release)
+    - name: baseline-image
+      description: Baseline image reference scanned.
+      value: $(tasks.clair-scan-diff.results.baseline-image)
+    - name: candidate-image
+      description: Candidate image reference scanned.
+      value: $(tasks.clair-scan-diff.results.candidate-image)
+    - name: baseline-cve-count
+      description: Number of unique CVEs found in the baseline scan.
+      value: $(tasks.clair-scan-diff.results.baseline-cve-count)
+    - name: candidate-cve-count
+      description: Number of unique CVEs found in the candidate scan.
+      value: $(tasks.clair-scan-diff.results.candidate-cve-count)
+    - name: fixed-cve-count
+      description: Number of CVEs fixed in the candidate (baseline only).
+      value: $(tasks.clair-scan-diff.results.fixed-cve-count)
+    - name: new-cve-count
+      description: Number of new CVEs in the candidate (candidate only).
+      value: $(tasks.clair-scan-diff.results.new-cve-count)
+  tasks:
+    - name: clair-scan-diff
+      timeout: 1h
+      params:
+        - name: release
+          value: $(params.release)
+        - name: releasePlan
+          value: $(params.releasePlan)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: scanner-image
+          value: $(params.scanner-image)
+        - name: prod-release-plan
+          value: $(params.prod-release-plan)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/clair-scan-diff.yaml
