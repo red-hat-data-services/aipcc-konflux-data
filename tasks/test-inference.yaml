@@ -24,7 +24,7 @@ spec:
       default: "false"
       description: Use sudo to execute podman commands (set to true when testing RHEL AI)
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:36c4b4f4d377b3fffeb7bf0185ff104e1631297f4ce4faac115f9f4f855cefea
+    - image: quay.io/konflux-ci/release-service-utils@sha256:4634591068d17a86f9ddb5c5bd5ae2f2cad50a270a0f1d8b24f19a63183b4c53
       args: ["$(params.model-names[*])"]
       env:
         - name: HOST
