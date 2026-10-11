@@ -34,6 +34,8 @@ spec:
       description: Full git commit digest from the snapshot
     - name: inference-server-image
       description: Full reference to the inference server image, always populated for rhaiis
+    - name: is-vllm-omni
+      description: "\"true\" if testing the rhaiis-vllm-omni component, \"false\" otherwise"
     - name: mapt-architecture
       description: Architecture string usable in mapt (aarch64 -> arm64)
     - name: model-opt-image
@@ -259,6 +261,7 @@ spec:
         # Determine model-opt-image and inference-server-image (only for rhaiis)
         model_opt_image=""
         inference_server_image=""
+        is_vllm_omni="false"
 
         if [[ "${COMPONENT}" == "rhaiis-model-opt-"* ]]; then
           # Testing model-opt component
@@ -283,6 +286,7 @@ spec:
           fi
         elif [[ "${COMPONENT}" == "rhaiis-vllm-omni-"* ]]; then
           # Testing vllm-omni component — separate collection, own inference server
+          is_vllm_omni="true"
           inference_server_image="${containerImage}"
           echo -e "\n === Using vllm-omni container image as inference server ==="
           echo "${inference_server_image}"
@@ -330,6 +334,7 @@ spec:
         echo -n "${gitDigest}" | tee $(results.git-digest.path)
         echo -n "${EVENT_TYPE}" | tee $(results.event-type.path)
         echo -n "${inference_server_image}" | tee $(results.inference-server-image.path)
+        echo -n "${is_vllm_omni}" | tee $(results.is-vllm-omni.path)
         echo -n "${mapt_architecture}" | tee $(results.mapt-architecture.path)
         echo -n "${model_opt_image}" | tee $(results.model-opt-image.path)
         echo -n "${productImage}" | tee $(results.product-image.path)
