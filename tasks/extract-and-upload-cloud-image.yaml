@@ -35,7 +35,7 @@ spec:
         Comma-separated tags. If empty, fallback defaults are used.
         image-name is appended automatically.
   steps:
-    - image: quay.io/konflux-ci/release-service-utils@sha256:36c4b4f4d377b3fffeb7bf0185ff104e1631297f4ce4faac115f9f4f855cefea
+    - image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
       env:
         - name: CLOUD_PROVIDER
           value: $(params.cloud-provider)
