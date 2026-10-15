@@ -79,7 +79,7 @@ spec:
       description: Create AWS helper VM instance for extracting and uploading disk image
       params:
         - name: arch
-          value: "arm64"
+          value: "$(tasks.create-configuration.results.mapt-architecture)"
         - name: cpus
           value: "2"
         - name: debug
