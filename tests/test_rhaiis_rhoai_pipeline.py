@@ -12,7 +12,9 @@ CONFIG_TASK = ROOT / "tasks" / "config-from-snapshot.yaml"
 PIPELINE = ROOT / "pipelines" / "rhaiis-rhoai-test.yaml"
 
 
-def _run_configuration(tmp_path, component, architecture="x86_64"):
+def _run_configuration(
+    tmp_path, component, architecture="x86_64", snapshot_component=None
+):
     task = yaml.safe_load(CONFIG_TASK.read_text())
     result_names = {result["name"] for result in task["spec"]["results"]}
     assert {"snc-compute-sizes", "snc-profile"} <= result_names
@@ -27,7 +29,8 @@ def _run_configuration(tmp_path, component, architecture="x86_64"):
 
     snapshot = (
         '{"components":[{"name":"%s","containerImage":"example.invalid/image@sha256:abc",'
-        '"source":{"git":{"revision":"deadbeef"}}}]}' % component
+        '"source":{"git":{"revision":"deadbeef"}}}]}'
+        % (snapshot_component or component)
     )
     jq = tmp_path / "jq"
     jq.write_text(
@@ -44,6 +47,7 @@ else:
     selectors = {{
         ".name": ("name",),
         ".containerImage": ("containerImage",),
+        ".containerImage // empty": ("containerImage",),
         ".source.git.revision": ("source", "git", "revision"),
     }}
     for key in selectors[selector]:
@@ -55,7 +59,7 @@ else:
     env = {
         **os.environ,
         "APPLICATION": "rhaiis",
-        "COMPONENT": component,
+        "PIPELINE_COMPONENT": component,
         "CONSOLE_URL": "https://konflux.example.test",
         "EVENT_TYPE": "manual",
         "INFERENCE_SERVER_FALLBACK_IMAGE": "",
@@ -103,6 +107,15 @@ def test_configuration_selects_snc_hardware_for_accelerator(
     tmp_path, component, architecture, expected
 ):
     assert _run_configuration(tmp_path, component, architecture) == expected
+
+
+def test_configuration_fails_when_component_is_absent_from_snapshot(tmp_path):
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_configuration(
+            tmp_path,
+            "rhaiis-cuda-ubi9",
+            snapshot_component="rhaiis-cpu-ubi9",
+        )
 
 
 def test_pipeline_consumes_automatic_snc_configuration():
