@@ -10,6 +10,7 @@ spec:
     - name: container-image
       description: Full reference to the OCI artifact containing the disk image
     - name: image-architecture
+      default: "x86_64"
       description: Image architecture in the OCI index; accepts x86_64/aarch64 aliases or Skopeo-native architecture names
     - name: debug
       default: "false"

@@ -12,7 +12,7 @@ def test_skopeo_copy_selects_artifact_platform_explicitly():
     params = {param["name"]: param for param in task["spec"]["params"]}
     script = task["spec"]["steps"][0]["script"]
 
-    assert "image-architecture" in params
+    assert params["image-architecture"]["default"] == "x86_64"
     assert "x86_64|amd64" in script and "SKOPEO_ARCH=amd64" in script
     assert "aarch64|arm64" in script and "SKOPEO_ARCH=arm64" in script
     assert "SKOPEO_ARCH=${IMAGE_ARCHITECTURE}" in script
