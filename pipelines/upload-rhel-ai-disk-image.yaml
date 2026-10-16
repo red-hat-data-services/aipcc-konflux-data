@@ -16,7 +16,10 @@ spec:
         quay.io/redhat-user-workloads/rhel-ai-tenant/rhelai-bootc-3-2/bootc-cuda-aws-disk-image-3-2@sha256:b1c8752fbe49c574f46bade651bd00a3c1c5de48bb16c44a6563bf35a31f2002
     - name: helper-vm-architecture
       default: "x86_64"
-      description: Architecture for the helper VM that pulls the disk-image artifact (x86_64 or arm64). Defaults to x86_64; use arm64 only when the artifact has an arm64 manifest.
+      description: Architecture of the helper VM (x86_64 or arm64), independent of the artifact platform selected by Skopeo
+    - name: image-architecture
+      default: "x86_64"
+      description: Architecture of the disk-image artifact in its OCI index (x86_64/aarch64 or a Skopeo-native name)
     - name: pull-secret-name
       description: Name of the pull secret to use for pulling the container image
       default: "rhelai-bootc-3-2-pull"
@@ -108,6 +111,8 @@ spec:
           value: "$(params.cloud-provider)"
         - name: container-image
           value: "$(params.container-image)"
+        - name: image-architecture
+          value: "$(params.image-architecture)"
         - name: debug
           value: "$(params.debug)"
         - name: host-access-secret-name
