@@ -7,6 +7,9 @@ spec:
     - name: architecture
       default: "x86_64"
       description: Architecture, e.g. x86_64, aarch64
+    - name: component
+      default: ""
+      description: Component from the ITS definition; release application suffix is added automatically
     - name: inference-server-fallback-image
       default: ""
       description: >
@@ -25,7 +28,7 @@ spec:
     - name: cloud-provider
       description: Cloud provider, e.g. aws, ibm, gcp, azure
     - name: component
-      description: Component name from the appstudio.openshift.io/component label
+      description: Component selected from SNAPSHOT using the ITS component parameter or PipelineRun label
     - name: container-image
       description: Full reference to the container image to test, including the registry and the sha digest
     - name: event-type
@@ -60,10 +63,12 @@ spec:
       image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
       workingDir: /workspace
       env:
-        - name: COMPONENT
+        - name: PIPELINE_COMPONENT
           valueFrom:
             fieldRef:
               fieldPath: metadata.labels['appstudio.openshift.io/component']
+        - name: TARGET_COMPONENT
+          value: $(params.component)
         - name: EVENT_TYPE
           valueFrom:
             fieldRef:
@@ -86,8 +91,24 @@ spec:
         #!/bin/bash
         set -e
 
+        # BEGIN target component selection
+        if [[ -n "${TARGET_COMPONENT}" ]]; then
+          COMPONENT="${TARGET_COMPONENT}"
+          if [[ "${APPLICATION}" == "rhelai-bootc-"* ]]; then
+            application_suffix="${APPLICATION#rhelai-bootc-}"
+            if [[ -n "${application_suffix}" && "${COMPONENT}" != *-"${application_suffix}" ]]; then
+              COMPONENT="${COMPONENT}-${application_suffix}"
+            fi
+          fi
+          echo "Selecting ITS component from SNAPSHOT: ${COMPONENT}"
+        else
+          COMPONENT="${PIPELINE_COMPONENT}"
+          echo "No explicit target component configured; using PipelineRun component label: ${COMPONENT}"
+        fi
+        # END target component selection
+
         if [ -z "${COMPONENT}" ]; then
-          echo "ERROR: COMPONENT is empty. Ensure the PipelineRun has the label appstudio.openshift.io/component set."
+          echo "ERROR: Component is empty. Set the component parameter or ensure the PipelineRun has the label appstudio.openshift.io/component."
           exit 1
         fi
 

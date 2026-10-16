@@ -55,7 +55,7 @@ else:
     env = {
         **os.environ,
         "APPLICATION": "rhaiis",
-        "COMPONENT": component,
+        "PIPELINE_COMPONENT": component,
         "CONSOLE_URL": "https://konflux.example.test",
         "EVENT_TYPE": "manual",
         "INFERENCE_SERVER_FALLBACK_IMAGE": "",
