@@ -114,6 +114,7 @@ spec:
 
         snapshotComponents=$(jq -c '.components[]' <<< "${SNAPSHOT}")
         productImage=${COMPONENT%-*-*}
+        component_found=false
 
         while read componentEntry
         do
@@ -124,16 +125,22 @@ spec:
             continue
           fi
 
-          containerImage=$(echo "${componentEntry}" | jq -r '.containerImage')
+          containerImage=$(echo "${componentEntry}" | jq -r '.containerImage // empty')
           gitDigest=$(echo "${componentEntry}" | jq -r '.source.git.revision')
+          component_found=true
 
           echo -e "\n === Found image for ${componentName} in the snapshot ==="
           echo ${containerImage}
           break
         done < <(echo "$snapshotComponents")
 
-        if [ -z "${componentName}" ]; then
+        if [[ "${component_found}" != "true" ]]; then
           echo "Component ${COMPONENT} not found in the snapshot!"
+          exit 1
+        fi
+
+        if [[ -z "${containerImage}" ]]; then
+          echo "Component ${COMPONENT} has no container image in the snapshot!"
           exit 1
         fi
 

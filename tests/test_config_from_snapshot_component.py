@@ -40,6 +40,12 @@ def test_config_task_prefers_explicit_component_and_keeps_label_fallback():
             "bootc-rocm-azure-disk-image-3-6-ea1",
         ),
         (
+            "bootc-rocm-azure-disk-image-3-6-ea1",
+            "rhelai-bootc-3-6-ea1",
+            "bootc-cuda-disk-image-container-3-6-ea1",
+            "bootc-rocm-azure-disk-image-3-6-ea1",
+        ),
+        (
             "bootc-rocm-azure-disk-image",
             "rhelai-bootc",
             "bootc-cuda-disk-image-container",
