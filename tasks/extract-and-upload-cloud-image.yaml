@@ -9,6 +9,9 @@ spec:
       description: "Cloud provider to upload the image to (aws, azure)"
     - name: container-image
       description: Full reference to the OCI artifact containing the disk image
+    - name: image-architecture
+      default: "x86_64"
+      description: Image architecture in the OCI index; accepts x86_64/aarch64 aliases or Skopeo-native architecture names
     - name: debug
       default: "false"
     - name: host-access-secret-name
@@ -41,6 +44,8 @@ spec:
           value: $(params.cloud-provider)
         - name: CONTAINER_IMAGE
           value: $(params.container-image)
+        - name: IMAGE_ARCHITECTURE
+          value: $(params.image-architecture)
         - name: DEBUG
           value: $(params.debug)
         - name: TAGS
@@ -75,6 +80,23 @@ spec:
         HOST=$(echo "${HOST}" | tr -d '\n\r')
         USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
 
+        case "${IMAGE_ARCHITECTURE}" in
+          x86_64|amd64)
+            SKOPEO_ARCH=amd64
+            ;;
+          aarch64|arm64)
+            SKOPEO_ARCH=arm64
+            ;;
+          *)
+            if [[ "${IMAGE_ARCHITECTURE}" =~ ^[a-z0-9_]+$ ]]; then
+              SKOPEO_ARCH=${IMAGE_ARCHITECTURE}
+            else
+              echo "ERROR: Invalid image architecture: ${IMAGE_ARCHITECTURE}"
+              exit 1
+            fi
+            ;;
+        esac
+
         ssh_cmd="ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
         ${ssh_cmd} cat /etc/redhat-release
 
@@ -92,7 +114,8 @@ spec:
 
         echo -e "\n=== Downloading OCI artifact ==="
         echo "Container image: ${CONTAINER_IMAGE}"
-        ${ssh_cmd} "skopeo copy --authfile auth.json 'docker://${CONTAINER_IMAGE}' 'dir:${DISK_IMAGE_DIR}'"
+        echo "Selecting platform: linux/${SKOPEO_ARCH}"
+        ${ssh_cmd} "skopeo copy --override-os linux --override-arch ${SKOPEO_ARCH} --authfile auth.json 'docker://${CONTAINER_IMAGE}' 'dir:${DISK_IMAGE_DIR}'"
 
         echo -e "\n=== Identifying largest layer ==="
         disk_image_layer=$(${ssh_cmd} "du -aBM ${DISK_IMAGE_DIR} 2>/dev/null | sort -nr | head -n 1 | awk '{print \$2}'")

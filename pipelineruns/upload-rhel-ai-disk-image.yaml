@@ -13,6 +13,10 @@ spec:
     - name: helper-vm-architecture
       value: "x86_64"
 
+    # Architecture of the image in the OCI index; Skopeo selects this platform.
+    - name: image-architecture
+      value: "x86_64"
+
     # Pull secret name - this will be used to pull the container image, unique per Konflux application
     - name: pull-secret-name
       value: "rhelai-bootc-3-2-pull"

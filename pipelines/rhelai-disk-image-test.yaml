@@ -76,10 +76,10 @@ spec:
           - name: pathInRepo
             value: tasks/check-cloud-image-exists.yaml
     - name: create-helper-vm-aws
-      description: Create AWS helper VM instance for extracting and uploading disk image
+      description: Create low-cost AWS ARM helper VM for extracting and uploading disk image
       params:
         - name: arch
-          value: "$(tasks.create-configuration.results.mapt-architecture)"
+          value: "arm64"
         - name: cpus
           value: "2"
         - name: debug
@@ -130,6 +130,8 @@ spec:
           value: "$(tasks.create-configuration.results.cloud-provider)"
         - name: container-image
           value: $(tasks.create-configuration.results.container-image)
+        - name: image-architecture
+          value: $(params.architecture)
         - name: debug
           value: "true"
         - name: host-access-secret-name
