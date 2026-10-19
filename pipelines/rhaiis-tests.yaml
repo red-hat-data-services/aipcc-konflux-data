@@ -120,7 +120,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.5"
+            value: "v0.14.6"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -169,7 +169,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.5"
+            value: "v0.14.6"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel.yaml"
       when:
@@ -410,7 +410,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.5"
+            value: "v0.14.6"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel.yaml"
       when:
@@ -431,7 +431,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.5"
+            value: "v0.14.6"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel.yaml"
       when:
