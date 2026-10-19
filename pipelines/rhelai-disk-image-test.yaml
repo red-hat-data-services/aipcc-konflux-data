@@ -10,6 +10,9 @@ spec:
     - name: container-name
       default: "rhaii"
       description: Name of the RHAIIS podman container to monitor (rhaii for 3.4+, rhaiis for earlier versions)
+    - name: component
+      default: ""
+      description: Base component name from the ITS definition; empty falls back to the PipelineRun component label
     - name: debug
       default: "false"
     - name: model-name
@@ -36,6 +39,8 @@ spec:
       params:
         - name: architecture
           value: $(params.architecture)
+        - name: component
+          value: $(params.component)
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       taskRef:
