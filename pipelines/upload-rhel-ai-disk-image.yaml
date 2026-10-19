@@ -101,7 +101,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.5"
+            value: "v0.14.6"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
     - name: extract-and-upload-cloud-image
@@ -158,7 +158,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.5"
+            value: "v0.14.6"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
       when:
