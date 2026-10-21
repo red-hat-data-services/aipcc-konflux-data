@@ -112,6 +112,8 @@ spec:
       params:
         - name: snapshot
           value: $(params.snapshot)
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
         - name: component
           value: $(tasks.clair-scan-diff-resolve.results.component)
         - name: scanner-image

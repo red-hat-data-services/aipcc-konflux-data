@@ -110,14 +110,34 @@ spec:
         # clair-action cannot scan an image index directly (it resolves to a
         # single platform and fails on indexes without that child). Expand
         # index refs to their linux child manifests so every architecture is
-        # scanned; plain manifests pass through unchanged.
+        # scanned; plain manifests pass through unchanged. Inspection or
+        # parsing failures are fatal: silently passing an index through as a
+        # single ref would scan only one platform and produce incomplete
+        # CVE sets, so the ref is returned unchanged only after positively
+        # identifying a single (non-index) manifest.
         mkdir -p /tmp/auth
         cp /mnt/components-namespace-pull/.dockerconfigjson /tmp/auth/config.json
         export DOCKER_CONFIG=/tmp/auth
         resolve_platform_refs() {
-          local ref="$1" raw
-          raw=$(skopeo inspect --raw "docker://${ref}" 2>/dev/null || true)
+          local ref="$1" raw kind n
+          if ! raw=$(skopeo inspect --raw "docker://${ref}" 2>&1); then
+            echo "ERROR: skopeo inspect --raw failed for ${ref}: ${raw}" >&2
+            return 1
+          fi
+          if ! kind=$(printf '%s' "${raw}" | jq -r 'type'); then
+            echo "ERROR: could not parse manifest JSON for ${ref}" >&2
+            return 1
+          fi
+          if [ "${kind}" != "object" ]; then
+            echo "ERROR: unexpected manifest JSON type '${kind}' for ${ref}" >&2
+            return 1
+          fi
           if printf '%s' "${raw}" | jq -e 'has("manifests")' >/dev/null 2>&1; then
+            n=$(printf '%s' "${raw}" | jq -r '[.manifests[] | select(.platform.os=="linux")] | length')
+            if [ "${n}" -eq 0 ]; then
+              echo "ERROR: image index ${ref} has no linux manifests" >&2
+              return 1
+            fi
             printf '%s' "${raw}" | jq -r \
               '[.manifests[] | select(.platform.os=="linux") | .digest] | unique | .[]' \
               | sed "s|^|${ref%%@*}@|"
@@ -176,8 +196,13 @@ spec:
         fi
         echo "baseline: ${BASELINE_REF}"
 
-        mapfile -t SCAN_CANDIDATE_REFS < <(resolve_platform_refs "${CANDIDATE_REF}")
-        mapfile -t SCAN_BASELINE_REFS < <(resolve_platform_refs "${BASELINE_REF}")
+        # Command substitution (not process substitution) so a resolver
+        # failure propagates: mapfile reading a process substitution ignores
+        # the producer's exit status.
+        CANDIDATE_REFS_RAW=$(resolve_platform_refs "${CANDIDATE_REF}") || exit 1
+        BASELINE_REFS_RAW=$(resolve_platform_refs "${BASELINE_REF}") || exit 1
+        mapfile -t SCAN_CANDIDATE_REFS <<< "${CANDIDATE_REFS_RAW}"
+        mapfile -t SCAN_BASELINE_REFS <<< "${BASELINE_REFS_RAW}"
         echo "candidate scan refs (${#SCAN_CANDIDATE_REFS[@]}): ${SCAN_CANDIDATE_REFS[*]}"
         echo "baseline scan refs (${#SCAN_BASELINE_REFS[@]}): ${SCAN_BASELINE_REFS[*]}"
 

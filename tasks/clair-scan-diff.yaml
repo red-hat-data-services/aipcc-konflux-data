@@ -46,6 +46,12 @@ spec:
     - name: snapshot
       type: string
       description: Snapshot name to annotate with the scan result.
+    - name: pipeline-run
+      type: string
+      description: >
+        Name of the producing PipelineRun, for the result JSON provenance.
+        Supplied by the pipeline from $(context.pipelineRun.name); Tekton
+        does not substitute context variables in task step env values.
     - name: component
       type: string
       description: Component name (from clair-scan-diff-resolve).
@@ -120,7 +126,7 @@ spec:
         - name: SCANNER_IMAGE
           value: $(params.scanner-image)
         - name: PIPELINE_RUN
-          value: $(context.pipelineRun.name)
+          value: $(params.pipeline-run)
       volumeMounts:
         - name: components-namespace-pull
           mountPath: /mnt/components-namespace-pull
