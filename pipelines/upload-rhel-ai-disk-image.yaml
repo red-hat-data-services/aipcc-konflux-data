@@ -22,7 +22,7 @@ spec:
       description: Architecture of the disk-image artifact in its OCI index (x86_64/aarch64 or a Skopeo-native name)
     - name: pull-secret-name
       description: Name of the pull secret to use for pulling the container image
-      default: "rhelai-bootc-3-2-pull"
+      default: "components-namespace-pull"
     - name: rhel-ai-version
       description: RHEL AI version for image naming, e.g. 3.2.0
     - name: debug
