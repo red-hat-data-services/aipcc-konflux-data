@@ -13,6 +13,12 @@ spec:
     scanner database, annotates the snapshot with the fixed/new CVE lists,
     and logs the raw reports.
 
+    The scanner image (clair-in-ci-db-hermetic) is resolved by default to the
+    latest available build of konflux-ci/clair-in-ci-db (commit-history walk,
+    pinned to its digest); pass scanner-image to override with an explicit
+    reference. Both sides of the diff are always scanned with the same
+    database, so the diff only reflects the image bytes.
+
     Why not diff the build-time REPORTS: the Konflux build scanner runs with
     a database that can be weeks old, so a cross-build REPORTS diff measures
     database drift as much as image changes, and a CVE missing from a
@@ -27,8 +33,8 @@ spec:
     - serviceAccountName covering list/get releases and snapshots and patch
       snapshots (konflux-releaser-bot-actions), e.g. aipcc-releaser-bot-sa
     - params: release, releasePlan and snapshot are provided automatically;
-      scanner-image must be pinned to a recent clair-in-ci-db-hermetic digest
-      and bumped per release cycle.
+      scanner-image is optional (empty = resolve the latest build) and
+      prod-release-plan is optional.
 
   params:
     - name: release
@@ -42,10 +48,11 @@ spec:
       description: Snapshot name (automatically provided by the finalPipeline).
     - name: scanner-image
       type: string
+      default: ""
       description: >
-        Fully digest-pinned scanner image with an embedded matcher database
-        (clair-in-ci-db-hermetic). Both sides of the diff are scanned with
-        this same database.
+        Optional explicit scanner image (clair-in-ci-db-hermetic). Empty by
+        default: the latest available build is resolved from the
+        konflux-ci/clair-in-ci-db commit history and pinned to its digest.
     - name: prod-release-plan
       type: string
       default: ""
@@ -55,13 +62,16 @@ spec:
   results:
     - name: baseline-release
       description: Name of the previous Released prod release used as baseline.
-      value: $(tasks.clair-scan-diff.results.baseline-release)
+      value: $(tasks.clair-scan-diff-resolve.results.baseline-release)
     - name: baseline-image
       description: Baseline image reference scanned.
-      value: $(tasks.clair-scan-diff.results.baseline-image)
+      value: $(tasks.clair-scan-diff-resolve.results.baseline-image)
     - name: candidate-image
       description: Candidate image reference scanned.
-      value: $(tasks.clair-scan-diff.results.candidate-image)
+      value: $(tasks.clair-scan-diff-resolve.results.candidate-image)
+    - name: scanner-image
+      description: Digest-pinned scanner image both sides were scanned with.
+      value: $(tasks.clair-scan-diff-resolve.results.scanner-image)
     - name: baseline-cve-count
       description: Number of unique CVEs found in the baseline scan.
       value: $(tasks.clair-scan-diff.results.baseline-cve-count)
@@ -75,8 +85,8 @@ spec:
       description: Number of new CVEs in the candidate (candidate only).
       value: $(tasks.clair-scan-diff.results.new-cve-count)
   tasks:
-    - name: clair-scan-diff
-      timeout: 1h
+    - name: clair-scan-diff-resolve
+      timeout: 15m
       params:
         - name: release
           value: $(params.release)
@@ -88,6 +98,36 @@ spec:
           value: $(params.scanner-image)
         - name: prod-release-plan
           value: $(params.prod-release-plan)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/clair-scan-diff-resolve.yaml
+    - name: clair-scan-diff
+      timeout: 1h
+      params:
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: component
+          value: $(tasks.clair-scan-diff-resolve.results.component)
+        - name: scanner-image
+          value: $(tasks.clair-scan-diff-resolve.results.scanner-image)
+        - name: prev-release
+          value: $(tasks.clair-scan-diff-resolve.results.baseline-release)
+        - name: prev-snapshot
+          value: $(tasks.clair-scan-diff-resolve.results.prev-snapshot)
+        - name: baseline-ref
+          value: $(tasks.clair-scan-diff-resolve.results.baseline-image)
+        - name: candidate-ref
+          value: $(tasks.clair-scan-diff-resolve.results.candidate-image)
+        - name: scan-baseline-refs
+          value: $(tasks.clair-scan-diff-resolve.results.scan-baseline-refs)
+        - name: scan-candidate-refs
+          value: $(tasks.clair-scan-diff-resolve.results.scan-candidate-refs)
       taskRef:
         resolver: git
         params:

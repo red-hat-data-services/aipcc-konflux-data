@@ -1,0 +1,231 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: clair-scan-diff-resolve
+spec:
+  description: |
+    Resolution step of the fresh same-database Clair scan diff: finds the
+    component, the candidate image from the release snapshot, the baseline
+    image of the latest Released prod release, and the scanner image to use.
+
+    Scanner image resolution: the clair-in-ci-db-hermetic scanner (image with
+    an embedded matcher database) is built by Konflux from the
+    konflux-ci/clair-in-ci-db repository, which receives a daily
+    database-update commit; each commit's build tags the final image with the
+    commit SHA. The repo has no usable floating tag (latest-hermetic is stale)
+    and the Quay REST API needs authentication, so by default this task walks
+    the repository's commit history newest-first and uses the first commit
+    whose final image tag exists in Quay, then pins the result to its digest.
+    Walking (instead of taking HEAD) tolerates days where the newest build is
+    still queued, running or failed. An explicit scanner-image param overrides
+    the resolution and is normalized to a digest-pinned reference.
+
+    Both sides of the diff are scanned with the same digest-pinned database,
+    so the diff only reflects the image bytes; see the clair-scan-diff task
+    for the scan and evidence semantics.
+
+    This is evidence collection only: it is not an Enterprise Contract
+    evaluation and not release approval.
+
+    Required service account: list/get releases and snapshots
+    (the konflux-releaser-bot-actions cluster role covers this). Registry
+    inspection uses the components-namespace-pull secret mounted as a volume;
+    the anonymous GitHub commits API is used for scanner resolution.
+  params:
+    - name: release
+      type: string
+      description: Release name (automatically provided by the finalPipeline).
+    - name: releasePlan
+      type: string
+      description: ReleasePlan name (automatically provided by the finalPipeline).
+    - name: snapshot
+      type: string
+      description: Snapshot name (automatically provided by the finalPipeline).
+    - name: scanner-image
+      type: string
+      default: ""
+      description: >
+        Optional explicit scanner image (clair-in-ci-db-hermetic). Empty by
+        default: the latest available build is resolved from the
+        konflux-ci/clair-in-ci-db commit history and pinned to its digest.
+        A non-empty value overrides the resolution and is normalized to a
+        digest-pinned reference.
+    - name: prod-release-plan
+      type: string
+      default: ""
+      description: >
+        ReleasePlan used to find the previous released image. Defaults to the
+        stage ReleasePlan name with "-stage-" replaced by "-prod-".
+  results:
+    - name: component
+      description: Component name resolved from the release.
+    - name: baseline-release
+      description: Name of the previous Released prod release used as baseline.
+    - name: prev-snapshot
+      description: Snapshot of the previous Released prod release.
+    - name: baseline-image
+      description: Baseline image reference to scan.
+    - name: candidate-image
+      description: Candidate image reference to scan.
+    - name: scan-baseline-refs
+      description: >
+        Space-separated per-architecture manifests of the baseline image to
+        scan (linux children of the image index, or the ref itself).
+    - name: scan-candidate-refs
+      description: >
+        Space-separated per-architecture manifests of the candidate image to
+        scan (linux children of the image index, or the ref itself).
+    - name: scanner-image
+      description: >
+        Digest-pinned scanner image to run the scan in (resolved from the
+        latest clair-in-ci-db-hermetic build, or the normalized override).
+  volumes:
+    - name: components-namespace-pull
+      secret:
+        secretName: components-namespace-pull
+  steps:
+    - name: resolve
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: RELEASE
+          value: $(params.release)
+        - name: RELEASE_PLAN
+          value: $(params.releasePlan)
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: SCANNER_IMAGE_PARAM
+          value: $(params.scanner-image)
+        - name: PROD_RELEASE_PLAN_PARAM
+          value: $(params.prod-release-plan)
+      volumeMounts:
+        - name: components-namespace-pull
+          mountPath: /mnt/components-namespace-pull
+          readOnly: true
+      workingDir: /tekton/home
+      script: |
+        #!/bin/bash
+        set -eo pipefail
+        NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+        # clair-action cannot scan an image index directly (it resolves to a
+        # single platform and fails on indexes without that child). Expand
+        # index refs to their linux child manifests so every architecture is
+        # scanned; plain manifests pass through unchanged.
+        mkdir -p /tmp/auth
+        cp /mnt/components-namespace-pull/.dockerconfigjson /tmp/auth/config.json
+        export DOCKER_CONFIG=/tmp/auth
+        resolve_platform_refs() {
+          local ref="$1" raw
+          raw=$(skopeo inspect --raw "docker://${ref}" 2>/dev/null || true)
+          if printf '%s' "${raw}" | jq -e 'has("manifests")' >/dev/null 2>&1; then
+            printf '%s' "${raw}" | jq -r \
+              '[.manifests[] | select(.platform.os=="linux") | .digest] | unique | .[]' \
+              | sed "s|^|${ref%%@*}@|"
+          else
+            printf '%s\n' "${ref}"
+          fi
+        }
+
+        echo "=== resolving component from release ${RELEASE}"
+        COMPONENT=$(kubectl get release "${RELEASE}" -o json \
+          | jq -r '.metadata.labels["appstudio.openshift.io/component"]')
+        if [ -z "${COMPONENT}" ] || [ "${COMPONENT}" = "null" ]; then
+          echo "ERROR: release ${RELEASE} has no appstudio.openshift.io/component label" >&2
+          exit 1
+        fi
+        echo "component: ${COMPONENT}"
+
+        PROD_RELEASE_PLAN="${PROD_RELEASE_PLAN_PARAM}"
+        if [ -z "${PROD_RELEASE_PLAN}" ]; then
+          PROD_RELEASE_PLAN=$(printf '%s' "${RELEASE_PLAN}" | sed 's/-stage-/-prod-/')
+        fi
+        echo "=== prod release plan: ${PROD_RELEASE_PLAN}"
+
+        echo "=== candidate: snapshot ${SNAPSHOT}"
+        # Snapshots can carry stale sibling entries from earlier builds of
+        # other components; match by component name.
+        CANDIDATE_REF=$(get-resource "snapshot" "${NS}/${SNAPSHOT}" "{.spec}" \
+          | jq -r --arg name "${COMPONENT}" '.components[] | select(.name == $name) | .containerImage')
+        if [ -z "${CANDIDATE_REF}" ] || [ "${CANDIDATE_REF}" = "null" ]; then
+          echo "ERROR: component ${COMPONENT} not found in snapshot ${SNAPSHOT}" >&2
+          get-resource "snapshot" "${NS}/${SNAPSHOT}" "{.spec}" | jq -r '.components[].name' >&2
+          exit 1
+        fi
+        echo "candidate: ${CANDIDATE_REF}"
+
+        echo "=== previous Released prod release for ${COMPONENT}"
+        PREV=$(kubectl get releases \
+          -l "appstudio.openshift.io/component=${COMPONENT},release.appstudio.openshift.io/releasePlan=${PROD_RELEASE_PLAN}" \
+          -o json | jq -r '[.items[]
+            | select(.status.conditions[]? | .type == "Released" and .status == "True")]
+            | sort_by(.metadata.creationTimestamp) | last')
+        if [ -z "${PREV}" ] || [ "${PREV}" = "null" ]; then
+          echo "ERROR: no Released prod release found for ${COMPONENT} on plan ${PROD_RELEASE_PLAN}" >&2
+          exit 1
+        fi
+        PREV_RELEASE=$(echo "${PREV}" | jq -r '.metadata.name')
+        PREV_TIME=$(echo "${PREV}" | jq -r '.metadata.creationTimestamp')
+        PREV_SNAPSHOT=$(echo "${PREV}" | jq -r '.spec.snapshot')
+        echo "previous prod release: ${PREV_RELEASE} (${PREV_TIME}), snapshot ${PREV_SNAPSHOT}"
+
+        BASELINE_REF=$(get-resource "snapshot" "${NS}/${PREV_SNAPSHOT}" "{.spec}" \
+          | jq -r --arg name "${COMPONENT}" '.components[] | select(.name == $name) | .containerImage')
+        if [ -z "${BASELINE_REF}" ] || [ "${BASELINE_REF}" = "null" ]; then
+          echo "ERROR: component ${COMPONENT} not found in previous snapshot ${PREV_SNAPSHOT}" >&2
+          exit 1
+        fi
+        echo "baseline: ${BASELINE_REF}"
+
+        mapfile -t SCAN_CANDIDATE_REFS < <(resolve_platform_refs "${CANDIDATE_REF}")
+        mapfile -t SCAN_BASELINE_REFS < <(resolve_platform_refs "${BASELINE_REF}")
+        echo "candidate scan refs (${#SCAN_CANDIDATE_REFS[@]}): ${SCAN_CANDIDATE_REFS[*]}"
+        echo "baseline scan refs (${#SCAN_BASELINE_REFS[@]}): ${SCAN_BASELINE_REFS[*]}"
+
+        echo "=== scanner image"
+        SCANNER_REPO="quay.io/redhat-user-workloads/rhtap-integration-tenant/clair-in-ci-db-hermetic"
+        if [ -n "${SCANNER_IMAGE_PARAM}" ]; then
+          echo "explicit scanner-image param: ${SCANNER_IMAGE_PARAM}"
+          if printf '%s' "${SCANNER_IMAGE_PARAM}" | grep -q '@sha256:'; then
+            SCANNER_IMAGE="${SCANNER_IMAGE_PARAM}"
+          else
+            SCANNER_DIGEST=$(skopeo inspect --format '{{.Digest}}' "docker://${SCANNER_IMAGE_PARAM}")
+            SCANNER_IMAGE="${SCANNER_IMAGE_PARAM%%@*}@${SCANNER_DIGEST}"
+          fi
+        else
+          echo "no scanner-image param: resolving the latest clair-in-ci-db-hermetic build"
+          # konflux-ci/clair-in-ci-db receives a daily database-update commit;
+          # each commit's Konflux build tags the final image with the commit
+          # SHA (plus .git and .prefetch build artifacts). Plain tags can lag
+          # behind HEAD while a build is queued, running or failed, so walk
+          # the commit history newest-first and use the first commit whose
+          # final image tag exists.
+          COMMITS_JSON=$(curl -sfS --max-time 30 \
+            "https://api.github.com/repos/konflux-ci/clair-in-ci-db/commits?per_page=15" \
+            2>/dev/null || true)
+          if ! printf '%s' "${COMMITS_JSON}" \
+              | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+            echo "ERROR: could not list konflux-ci/clair-in-ci-db commits (api.github.com unreachable or rate-limited); pass an explicit scanner-image param" >&2
+            exit 1
+          fi
+          for sha in $(printf '%s' "${COMMITS_JSON}" | jq -r '.[].sha'); do
+            SCANNER_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
+              "docker://${SCANNER_REPO}:${sha}" 2>/dev/null) || continue
+            SCANNER_IMAGE="${SCANNER_REPO}@${SCANNER_DIGEST}"
+            echo "resolved scanner: ${SCANNER_IMAGE} (clair-in-ci-db commit ${sha})"
+            break
+          done
+          if [ -z "${SCANNER_IMAGE}" ]; then
+            echo "ERROR: no final image tag exists for the last 15 commits of konflux-ci/clair-in-ci-db; the nightly scanner builds may be broken - pass an explicit scanner-image param" >&2
+            exit 1
+          fi
+        fi
+        echo "scanner image: ${SCANNER_IMAGE}"
+
+        printf '%s' "${COMPONENT}" > "$(results.component.path)"
+        printf '%s' "${PREV_RELEASE}" > "$(results.baseline-release.path)"
+        printf '%s' "${PREV_SNAPSHOT}" > "$(results.prev-snapshot.path)"
+        printf '%s' "${BASELINE_REF}" > "$(results.baseline-image.path)"
+        printf '%s' "${CANDIDATE_REF}" > "$(results.candidate-image.path)"
+        printf '%s' "${SCAN_BASELINE_REFS[*]}" > "$(results.scan-baseline-refs.path)"
+        printf '%s' "${SCAN_CANDIDATE_REFS[*]}" > "$(results.scan-candidate-refs.path)"
+        printf '%s' "${SCANNER_IMAGE}" > "$(results.scanner-image.path)"
