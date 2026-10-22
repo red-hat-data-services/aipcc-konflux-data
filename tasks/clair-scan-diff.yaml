@@ -1,0 +1,233 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: clair-scan-diff
+spec:
+  description: |
+    Fresh same-database Clair scan diff between a baseline image and a
+    candidate image of a component, run inside a digest-pinned scanner image
+    with an embedded matcher database (clair-in-ci-db-hermetic).
+
+    The build-time clair-scan task runs with the scanner database embedded in
+    the konflux-ci/clair-in-ci image, which can lag behind the current Clair
+    data by weeks. Diffing the build-time REPORTS of two builds therefore
+    measures database drift as much as it measures image changes, and a CVE
+    absent from a candidate REPORTS is not evidence of a fix.
+
+    Both sides are scanned with the same digest-pinned database, so the diff
+    only reflects the image bytes. The scanner image and the refs to scan are
+    produced by the clair-scan-diff-resolve task (latest available
+    clair-in-ci-db-hermetic build by default, overridable).
+
+    Multi-arch images are scanned per architecture: every linux child
+    manifest of the image index is scanned and the CVE lists are unioned, so
+    a CVE counts as fixed only when it is gone from all architectures, and a
+    new CVE is reported when it appears on any of them.
+
+    Evidence semantics:
+    - fixed_in_candidate: CVE names present in the baseline scan and absent
+      from the candidate scan. Valid fix evidence for this scan pair only.
+    - new_in_candidate: CVE names present only in the candidate scan.
+
+    The full result JSON is written to the snapshot as annotations
+    (fresh-scan.aipcc.redhat.com/summary and .../result) and the raw reports
+    are printed to the task log between ===REPORT markers. The result JSON
+    records the producing PipelineRun name and a UTC timestamp, since the
+    annotations are last-writer-wins. Tekton caps the
+    combined size of a task's results, so the task results carry counts only.
+
+    This is evidence collection only: it is not an Enterprise Contract
+    evaluation and not release approval.
+
+    Required service account: patch snapshots (the
+    konflux-releaser-bot-actions cluster role covers this). Image pulls use
+    the components-namespace-pull secret mounted as a volume.
+  params:
+    - name: snapshot
+      type: string
+      description: Snapshot name to annotate with the scan result.
+    - name: pipeline-run
+      type: string
+      description: >
+        Name of the producing PipelineRun, for the result JSON provenance.
+        Supplied by the pipeline from $(context.pipelineRun.name); Tekton
+        does not substitute context variables in task step env values.
+    - name: component
+      type: string
+      description: Component name (from clair-scan-diff-resolve).
+    - name: scanner-image
+      type: string
+      description: >
+        Digest-pinned scanner image with an embedded matcher database
+        (clair-in-ci-db-hermetic), from clair-scan-diff-resolve. The scan
+        step runs inside this image; both sides of the diff are scanned with
+        the same database.
+    - name: prev-release
+      type: string
+      description: Name of the previous Released prod release used as baseline.
+    - name: prev-snapshot
+      type: string
+      description: Snapshot of the previous Released prod release.
+    - name: baseline-ref
+      type: string
+      description: Baseline image reference to scan.
+    - name: candidate-ref
+      type: string
+      description: Candidate image reference to scan.
+    - name: scan-baseline-refs
+      type: string
+      description: >
+        Space-separated per-architecture manifests of the baseline image to
+        scan (linux children of the image index, or the ref itself).
+    - name: scan-candidate-refs
+      type: string
+      description: >
+        Space-separated per-architecture manifests of the candidate image to
+        scan (linux children of the image index, or the ref itself).
+  results:
+    - name: baseline-cve-count
+      description: Number of unique CVEs found in the baseline scan (all arches).
+    - name: candidate-cve-count
+      description: Number of unique CVEs found in the candidate scan (all arches).
+    - name: fixed-cve-count
+      description: Number of CVEs fixed in the candidate (baseline only).
+    - name: new-cve-count
+      description: Number of new CVEs in the candidate (candidate only).
+  volumes:
+    - name: components-namespace-pull
+      secret:
+        secretName: components-namespace-pull
+  steps:
+    - name: scan
+      image: $(params.scanner-image)
+      imagePullPolicy: Always
+      computeResources:
+        requests:
+          memory: 8Gi
+          cpu: "1"
+        limits:
+          memory: 8Gi
+          cpu: "2"
+      env:
+        - name: COMPONENT
+          value: $(params.component)
+        - name: BASELINE_REF
+          value: $(params.baseline-ref)
+        - name: CANDIDATE_REF
+          value: $(params.candidate-ref)
+        - name: SCAN_BASELINE_REFS
+          value: $(params.scan-baseline-refs)
+        - name: SCAN_CANDIDATE_REFS
+          value: $(params.scan-candidate-refs)
+        - name: PREV_RELEASE
+          value: $(params.prev-release)
+        - name: PREV_SNAPSHOT
+          value: $(params.prev-snapshot)
+        - name: SCANNER_IMAGE
+          value: $(params.scanner-image)
+        - name: PIPELINE_RUN
+          value: $(params.pipeline-run)
+      volumeMounts:
+        - name: components-namespace-pull
+          mountPath: /mnt/components-namespace-pull
+          readOnly: true
+      workingDir: /tekton/home
+      script: |
+        #!/usr/bin/env bash
+        set -o errexit
+        set -o nounset
+        set -o pipefail
+
+        read -ra BASELINE_REFS <<< "${SCAN_BASELINE_REFS}"
+        read -ra CANDIDATE_REFS <<< "${SCAN_CANDIDATE_REFS}"
+
+        # clair-action does not read the DOCKER_CONFIG env var; it needs
+        # --docker-config-dir pointing at a docker config directory.
+        mkdir -p /tmp/auth
+        cp /mnt/components-namespace-pull/.dockerconfigjson /tmp/auth/config.json
+
+        scan_side() {
+          local side="$1"
+          shift
+          local i=0
+          for ref in "$@"; do
+            echo "=== scanning ${side} manifest: ${ref}"
+            clair-action report --image-ref="${ref}" --db-path=/tmp/matcher.db \
+              --docker-config-dir=/tmp/auth --format=clair > "clair-${side}-${i}.json"
+            i=$((i + 1))
+          done
+          # Union of unique CVE names across all architecture manifests.
+          jq -s 'map([.vulnerabilities[]? | select((.name // "")
+                     | test("^CVE-[0-9]{4}-[0-9]{4,7}$")) | .name] | unique)
+                 | add | unique' clair-${side}-*.json > "${side}-cves.json"
+        }
+
+        scan_side baseline "${BASELINE_REFS[@]}"
+        scan_side candidate "${CANDIDATE_REFS[@]}"
+
+        SCANNED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+        jq -n --slurpfile b baseline-cves.json --slurpfile c candidate-cves.json \
+          --arg component "${COMPONENT}" \
+          --arg baseline_ref "${BASELINE_REF}" \
+          --arg prev_release "${PREV_RELEASE}" \
+          --arg prev_snapshot "${PREV_SNAPSHOT}" \
+          --arg candidate_ref "${CANDIDATE_REF}" \
+          --arg scanner "${SCANNER_IMAGE}" \
+          --arg scanned_at "${SCANNED_AT}" \
+          --arg pipeline_run "${PIPELINE_RUN}" \
+          --arg baseline_refs "${BASELINE_REFS[*]}" \
+          --arg candidate_refs "${CANDIDATE_REFS[*]}" \
+          '{
+            component: $component,
+            evidence: "fresh same-DB clair scan; not ECP, not release approval",
+            pipeline_run: $pipeline_run,
+            scanned_at: $scanned_at,
+            scanner_image: $scanner,
+            baseline: {release: $prev_release, snapshot: $prev_snapshot, image: $baseline_ref,
+                       scanned_manifests: ($baseline_refs | split(" ") | map(select(. != ""))),
+                       cves: $b[0]},
+            candidate: {image: $candidate_ref,
+                        scanned_manifests: ($candidate_refs | split(" ") | map(select(. != ""))),
+                        cves: $c[0]}
+          }
+          | .fixed_in_candidate = (.baseline.cves - .candidate.cves)
+          | .new_in_candidate = (.candidate.cves - .baseline.cves)' > fresh-scan-result.json
+
+        jq -r '(.baseline.cves|length)' fresh-scan-result.json > "$(results.baseline-cve-count.path)"
+        jq -r '(.candidate.cves|length)' fresh-scan-result.json > "$(results.candidate-cve-count.path)"
+        jq -r '(.fixed_in_candidate|length)' fresh-scan-result.json > "$(results.fixed-cve-count.path)"
+        jq -r '(.new_in_candidate|length)' fresh-scan-result.json > "$(results.new-cve-count.path)"
+
+        jq '{component, baseline_cves: (.baseline.cves|length), candidate_cves: (.candidate.cves|length),
+             fixed_in_candidate, new_in_candidate}' fresh-scan-result.json
+
+        echo "===REPORTS-BEGIN==="
+        for f in clair-baseline-*.json clair-candidate-*.json; do
+          echo "===REPORT ${f} BEGIN==="
+          cat "${f}"
+          echo
+          echo "===REPORT ${f} END==="
+        done
+        echo "===REPORTS-END==="
+    - name: annotate
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+      workingDir: /tekton/home
+      script: |
+        #!/bin/bash
+        set -eo pipefail
+        NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+        RESULT_JSON=$(jq -c . fresh-scan-result.json)
+        SUMMARY=$(jq -c '{component, baseline_cves: (.baseline.cves|length), candidate_cves: (.candidate.cves|length), fixed_in_candidate, new_in_candidate}' fresh-scan-result.json)
+        kubectl patch snapshot "${SNAPSHOT}" -n "${NS}" --type merge -p "$(jq -n \
+          --arg result "$RESULT_JSON" --arg summary "$SUMMARY" \
+          '{metadata: {annotations: {
+            "fresh-scan.aipcc.redhat.com/summary": $summary,
+            "fresh-scan.aipcc.redhat.com/result": $result}}}')"
+        echo "=== annotated snapshot ${SNAPSHOT}"
+        kubectl get snapshot "${SNAPSHOT}" -n "${NS}" \
+          -o jsonpath='{.metadata.annotations.fresh-scan\.aipcc\.redhat\.com/summary}'
+        echo
