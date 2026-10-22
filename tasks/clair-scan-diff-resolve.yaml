@@ -117,6 +117,10 @@ spec:
         # identifying a single (non-index) manifest.
         mkdir -p /tmp/auth
         cp /mnt/components-namespace-pull/.dockerconfigjson /tmp/auth/config.json
+        # REGISTRY_AUTH_FILE selects the pull secret for every skopeo call in
+        # this step; DOCKER_CONFIG additionally covers docker-config-compatible
+        # tooling.
+        export REGISTRY_AUTH_FILE=/tmp/auth/config.json
         export DOCKER_CONFIG=/tmp/auth
         resolve_platform_refs() {
           local ref="$1" raw kind n
