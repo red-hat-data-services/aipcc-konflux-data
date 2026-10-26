@@ -1,0 +1,114 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: acs-scan-diff
+spec:
+  description: |
+    Evidence-only ACS CVE comparison, runnable manually or as a stage
+    finalPipeline. Never use this as a tenantPipeline or release gate.
+    Release mode takes release/releasePlan/snapshot and selects the latest
+    Released prod baseline for that component. For pre-release manual use,
+    pass component/baseline-ref/candidate-ref instead; no Release CR is needed.
+    Both images must be digest-pinned and have identical Linux platforms.
+    Snapshot annotation is optional in explicit mode. No registry uploads.
+    Central's database is live, not frozen: deltas are observed additions/
+    removals, not verified remediation. The producing run must succeed.
+    task-revision MUST equal the commit SHA used to resolve this pipeline,
+    so nested tasks also work before merge and evidence identifies the code.
+    Requires components-namespace-pull and an ACS-authorized service account;
+    release mode also needs get/list releases and get snapshots. Annotation
+    needs get/patch snapshots. No ReleasePlans are wired by adding this file.
+  params:
+    - name: task-revision
+      description: Same immutable Git commit SHA used to resolve this pipeline.
+    - name: release
+      default: ""
+    - name: releasePlan
+      default: ""
+    - name: snapshot
+      default: ""
+    - name: prod-release-plan
+      default: ""
+    - name: component
+      default: ""
+    - name: baseline-ref
+      default: ""
+    - name: candidate-ref
+      default: ""
+  results:
+    - name: baseline-release
+      value: $(tasks.resolve.results.baseline-release)
+    - name: baseline-image
+      value: $(tasks.resolve.results.baseline-image)
+    - name: candidate-image
+      value: $(tasks.resolve.results.candidate-image)
+    - name: baseline-cve-count
+      value: $(tasks.scan.results.baseline-cve-count)
+    - name: candidate-cve-count
+      value: $(tasks.scan.results.candidate-cve-count)
+    - name: fixed-cve-count
+      description: Observed baseline-only CVEs, not verified remediation.
+      value: $(tasks.scan.results.fixed-cve-count)
+    - name: new-cve-count
+      value: $(tasks.scan.results.new-cve-count)
+  tasks:
+    - name: resolve
+      timeout: 15m
+      params:
+        - name: task-revision
+          value: $(params.task-revision)
+        - name: release
+          value: $(params.release)
+        - name: releasePlan
+          value: $(params.releasePlan)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: prod-release-plan
+          value: $(params.prod-release-plan)
+        - name: component
+          value: $(params.component)
+        - name: baseline-ref
+          value: $(params.baseline-ref)
+        - name: candidate-ref
+          value: $(params.candidate-ref)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: $(params.task-revision)
+          - name: pathInRepo
+            value: tasks/acs-scan-diff-resolve.yaml
+    - name: scan
+      timeout: 1h
+      params:
+        - name: task-revision
+          value: $(params.task-revision)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
+        - name: component
+          value: $(tasks.resolve.results.component)
+        - name: prev-release
+          value: $(tasks.resolve.results.baseline-release)
+        - name: prev-snapshot
+          value: $(tasks.resolve.results.prev-snapshot)
+        - name: baseline-ref
+          value: $(tasks.resolve.results.baseline-image)
+        - name: candidate-ref
+          value: $(tasks.resolve.results.candidate-image)
+        - name: scan-baseline-refs
+          value: $(tasks.resolve.results.scan-baseline-refs)
+        - name: scan-candidate-refs
+          value: $(tasks.resolve.results.scan-candidate-refs)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: $(params.task-revision)
+          - name: pathInRepo
+            value: tasks/acs-scan-diff.yaml

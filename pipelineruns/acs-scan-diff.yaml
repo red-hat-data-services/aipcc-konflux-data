@@ -1,0 +1,38 @@
+# Manual pre-release scan: replace ALL <PLACEHOLDERS> before creating this run.
+# Publish the feature branch first; use the SAME full commit SHA in both places.
+# No Release CR, ReleasePlan wiring or registry report upload is required.
+# See acs-scan-diff.md beside this file for release mode and evidence extraction.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: acs-scan-diff-
+  namespace: ai-tenant
+  labels:
+    appstudio.openshift.io/component: "<COMPONENT>"
+spec:
+  taskRunTemplate:
+    # The component build account worked in the ACS control. Do not assume
+    # aipcc-releaser-bot-sa is authorized in Central: verify before changing it.
+    serviceAccountName: "<ACS_AUTHORIZED_SERVICE_ACCOUNT>"
+  params:
+    - name: task-revision
+      value: "<GIT_COMMIT_SHA>"
+    - name: component
+      value: "<COMPONENT>"
+    - name: baseline-ref
+      value: "<BASELINE_REPOSITORY>@sha256:<BASELINE_INDEX_DIGEST>"
+    - name: candidate-ref
+      value: "<CANDIDATE_REPOSITORY>@sha256:<CANDIDATE_INDEX_DIGEST>"
+    # Optional: set snapshot to the candidate Snapshot to publish annotations.
+    # Default is logs/results only; no Snapshot mutation.
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/red-hat-data-services/aipcc-konflux-data
+      - name: revision
+        value: "<GIT_COMMIT_SHA>"
+      - name: pathInRepo
+        value: pipelines/acs-scan-diff.yaml
+  timeouts:
+    pipeline: 1h20m

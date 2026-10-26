@@ -1,0 +1,273 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acs-scan-diff
+spec:
+  description: |
+    Force ACS scans of exact, platform-matched baseline/candidate manifests.
+    fixed_in_candidate means ACS-observed absence, not verified remediation;
+    Central's live database is NOT frozen by pinning the Roxctl client.
+    Raw scan data (excluding unrelated image metadata) is logged between
+    REPORT markers. Compact per-platform sets and provenance use the existing
+    Snapshot annotations. An empty snapshot disables annotation for manual use.
+    Failed/incomplete scans fail this task without publishing success. An older
+    Snapshot annotation is not evidence for this run: verify pipeline_run.
+    Evidence only, not ECP or release approval. No registry report uploads.
+    The service account needs existing ACS machine-to-machine access, and
+    get/patch snapshots only when annotation is requested. Registry access for
+    the scan is provided by Central's existing registry integration.
+  params:
+    - name: task-revision
+    - name: snapshot
+      default: ""
+    - name: pipeline-run
+    - name: component
+    - name: prev-release
+      default: ""
+    - name: prev-snapshot
+      default: ""
+    - name: baseline-ref
+    - name: candidate-ref
+    - name: scan-baseline-refs
+      description: Nonempty JSON array of platform/ref objects from the resolver.
+    - name: scan-candidate-refs
+      description: Nonempty JSON array of platform/ref objects from the resolver.
+  results:
+    - name: baseline-cve-count
+    - name: candidate-cve-count
+    - name: fixed-cve-count
+      description: ACS-observed baseline-only CVEs, not verified package fixes.
+    - name: new-cve-count
+  volumes:
+    - name: rhacs-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: rhacs
+              expirationSeconds: 3600
+              path: token
+  stepTemplate:
+    workingDir: /tekton/home
+    env:
+      - name: ROX_ENDPOINT
+        value: https://acs-d4dgfbkto15c73biblcg.acs.rhcloud.com
+      - name: ROX_CONFIG_DIR
+        value: /tekton/home
+      - name: ROX_EXECUTION_ENV
+        value: Tekton
+  steps:
+    - name: prepare
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: BASELINE_REF
+          value: $(params.baseline-ref)
+        - name: CANDIDATE_REF
+          value: $(params.candidate-ref)
+        - name: BASELINE_MANIFESTS
+          value: $(params.scan-baseline-refs)
+        - name: CANDIDATE_MANIFESTS
+          value: $(params.scan-candidate-refs)
+      script: |
+        #!/usr/bin/env python3
+        import json
+        import os
+        from pathlib import Path
+        import re
+
+        sides = {}
+        for side in ("baseline", "candidate"):
+            ref = os.environ[side.upper() + "_REF"]
+            if not re.fullmatch(r"[a-z0-9][a-z0-9.:/_-]*@sha256:[0-9a-f]{64}", ref):
+                raise ValueError("Expected a canonical digest-pinned image reference")
+            manifests = json.loads(os.environ[side.upper() + "_MANIFESTS"])
+            if not isinstance(manifests, list) or not manifests:
+                raise ValueError("Expected a nonempty platform manifest array")
+            seen = set()
+            for entry in manifests:
+                if not isinstance(entry, dict) or set(entry) != {"platform", "ref"}:
+                    raise ValueError("Expected platform/ref objects")
+                platform = entry["platform"]
+                if not isinstance(platform, str) or not re.fullmatch(r"linux/[a-z0-9_]+", platform) or platform in seen:
+                    raise ValueError("Invalid or duplicate platform")
+                if not isinstance(entry["ref"], str) or not re.fullmatch(
+                        re.escape(ref.split("@")[0]) + r"@sha256:[0-9a-f]{64}", entry["ref"]):
+                    raise ValueError("Manifest must be digest-pinned in its side's repository")
+                seen.add(platform)
+            sides[side] = sorted(manifests, key=lambda m: m["platform"])
+        if [m["platform"] for m in sides["baseline"]] != [m["platform"] for m in sides["candidate"]]:
+            raise ValueError("Baseline/candidate platform coverage differs")
+        Path("acs-manifests.json").write_text(json.dumps(sides))
+        # Pair corresponding platforms so the two scans are close in time.
+        with Path("acs-scan-plan.tsv").open("w") as plan:
+            for b, c in zip(sides["baseline"], sides["candidate"]):
+                for side, m in (("baseline", b), ("candidate", c)):
+                    plan.write(f"{side}\t{m['platform'].split('/')[1]}\t{m['ref']}\n")
+    - name: exchange-service-account-token
+      image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:979f329cbe0d0dd1c41e63b471c246294780c5daf029c239ebd7d48129e75a15
+      args:
+        - central
+        - m2m
+        - exchange
+        - --token-file=/service-account-token/token
+      volumeMounts:
+        - name: rhacs-token
+          mountPath: /service-account-token
+          readOnly: true
+    - name: scan
+      image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:979f329cbe0d0dd1c41e63b471c246294780c5daf029c239ebd7d48129e75a15
+      computeResources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        roxctl version > acs-client-version.txt
+        # Fail rather than silently accepting cache-dependent comparisons.
+        roxctl image scan --help > acs-scan-help.txt
+        grep -q -- '--force' acs-scan-help.txt
+        grep -q -- '--include-snoozed' acs-scan-help.txt
+        while IFS=$'\t' read -r side arch ref; do
+          file="acs-${side}-${arch}"
+          echo "=== scanning ${side} linux/${arch}: ${ref}"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.started"
+          # --format=json deliberately selects the native Image schema, not
+          # the newer --output=json CVE summary. Keep all findings, even snoozed.
+          roxctl image scan --force --include-snoozed --format=json --image="${ref}" > "${file}.json"
+          test -s "${file}.json"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.finished"
+        done < acs-scan-plan.tsv
+    - name: compare-and-annotate
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: CODE_REVISION
+          value: $(params.task-revision)
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: PIPELINE_RUN
+          value: $(params.pipeline-run)
+        - name: COMPONENT
+          value: $(params.component)
+        - name: PREV_RELEASE
+          value: $(params.prev-release)
+        - name: PREV_SNAPSHOT
+          value: $(params.prev-snapshot)
+        - name: BASELINE_REF
+          value: $(params.baseline-ref)
+        - name: CANDIDATE_REF
+          value: $(params.candidate-ref)
+      script: |
+        #!/usr/bin/env python3
+        from datetime import datetime, timedelta, timezone
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import subprocess
+
+        def timestamp(value):
+            if not isinstance(value, str):
+                raise ValueError("Expected scan timestamp")
+            result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if result.tzinfo is None:
+                raise ValueError("Scan timestamp lacks timezone")
+            return result
+
+        def array(obj, key):
+            # Protobuf JSON omits empty repeated fields. Missing is an empty
+            # list only within an otherwise validated scan/component object.
+            value = obj.get(key, [])
+            if not isinstance(value, list):
+                raise ValueError("Expected array: " + key)
+            return value
+
+        manifests = json.loads(Path("acs-manifests.json").read_text())
+        result = {
+            "component": os.environ["COMPONENT"], "engine": "acs",
+            "evidence": "ACS-observed CVE delta; not verified remediation, ECP or release approval; live Central DB is not frozen",
+            "pipeline_run": os.environ["PIPELINE_RUN"], "code_revision": os.environ["CODE_REVISION"],
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "central_endpoint": os.environ["ROX_ENDPOINT"],
+            "database_revision": None, "database_consistency": "unknown; scans paired per platform",
+            "scanner_image": "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:979f329cbe0d0dd1c41e63b471c246294780c5daf029c239ebd7d48129e75a15",
+            "client_version": Path("acs-client-version.txt").read_text().strip(),
+            "force_rescan": True, "include_snoozed": True,
+        }
+        reports = []
+        for side in ("baseline", "candidate"):
+            per_platform = []
+            for m in manifests[side]:
+                prefix = f"acs-{side}-{m['platform'].split('/')[1]}"
+                report = json.loads(Path(prefix + ".json").read_text())
+                if not isinstance(report, dict) or report.get("id") != m["ref"].split("@")[1]:
+                    raise ValueError("ACS report does not match requested manifest digest")
+                if report.get("notPullable", False) is not False or any(
+                        n in ("MISSING_METADATA", "MISSING_SCAN_DATA", 0, 1) for n in array(report, "notes")):
+                    raise ValueError("Image metadata or scan is unavailable")
+                scan = report.get("scan")
+                if not isinstance(scan, dict) or not isinstance(scan.get("operatingSystem"), str) or not scan["operatingSystem"]:
+                    raise ValueError("Missing scan data or OS identification")
+                if any(n not in ("UNSET", 0) for n in array(scan, "notes")):
+                    raise ValueError("ACS reported incomplete, stale or unavailable scan coverage")
+                started = Path(prefix + ".started").read_text().strip()
+                finished = Path(prefix + ".finished").read_text().strip()
+                # shortcut: allow five minutes of service clock skew; require
+                # a newly timestamped forced scan, not just a nonempty response.
+                if not timestamp(started) - timedelta(minutes=5) <= timestamp(scan.get("scanTime")) <= timestamp(finished) + timedelta(minutes=5):
+                    raise ValueError("Forced scan returned an out-of-window timestamp")
+                cves = set()
+                for component in array(scan, "components"):
+                    if not isinstance(component, dict) or not isinstance(component.get("name"), str) or not component["name"]:
+                        raise ValueError("Malformed scan component")
+                    for vuln in array(component, "vulns"):
+                        if not isinstance(vuln, dict) or not isinstance(vuln.get("cve"), str) or not vuln["cve"]:
+                            raise ValueError("Malformed vulnerability")
+                        if re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,7}", vuln["cve"]):
+                            cves.add(vuln["cve"])
+                        elif vuln["cve"].startswith("CVE-"):
+                            raise ValueError("Malformed CVE identifier")
+                per_platform.append({**m, "cves": sorted(cves), "started_at": started, "finished_at": finished,
+                                     "scan_time": scan["scanTime"], "scanner_version": scan.get("scannerVersion"),
+                                     "data_source": scan.get("dataSource")})
+                # Keep native scan/package/advisory/fixedBy data; omit unrelated
+                # image layers, build commands and labels from evidence logs.
+                reports.append((prefix, {"id": report["id"], "scan": scan, "notes": report.get("notes", [])}))
+            result[side] = {"image": os.environ[side.upper() + "_REF"],
+                            "scanned_manifests": [m["ref"] for m in manifests[side]],
+                            "platforms": per_platform,
+                            "cves": sorted({cve for p in per_platform for cve in p["cves"]})}
+        result["baseline"].update(release=os.environ["PREV_RELEASE"], snapshot=os.environ["PREV_SNAPSHOT"])
+        result["fixed_in_candidate"] = sorted(set(result["baseline"]["cves"]) - set(result["candidate"]["cves"]))
+        result["new_in_candidate"] = sorted(set(result["candidate"]["cves"]) - set(result["baseline"]["cves"]))
+        result["platform_diffs"] = [
+            {"platform": b["platform"],
+             "scanner_version_changed": b["scanner_version"] != c["scanner_version"],
+             "fixed_in_candidate": sorted(set(b["cves"]) - set(c["cves"])),
+             "new_in_candidate": sorted(set(c["cves"]) - set(b["cves"]))}
+            for b, c in zip(result["baseline"]["platforms"], result["candidate"]["platforms"])]
+        summary = {k: result[k] for k in ("component", "engine", "evidence", "pipeline_run", "code_revision", "scanned_at", "fixed_in_candidate", "new_in_candidate")}
+        summary.update(baseline_cves=len(result["baseline"]["cves"]), candidate_cves=len(result["candidate"]["cves"]))
+        Path("fresh-scan-result.json").write_text(json.dumps(result))
+        print("===RESULT-BEGIN===\n" + json.dumps(result) + "\n===RESULT-END===")
+        for name, report in reports:
+            print(f"===REPORT {name}.json BEGIN===\n{json.dumps(report)}\n===REPORT {name}.json END===")
+        snapshot = os.environ["SNAPSHOT"]
+        if snapshot:
+            current = json.loads(subprocess.check_output(["kubectl", "get", "snapshot", snapshot, "-o", "json"], text=True))
+            images = [c["containerImage"] for c in current["spec"]["components"] if c["name"] == result["component"]]
+            if len(images) != 1 or images[0].split("@")[1:] != result["candidate"]["image"].split("@")[1:]:
+                raise ValueError("Snapshot component does not match candidate digest")
+            additions = {"fresh-scan.aipcc.redhat.com/summary": json.dumps(summary, separators=(",", ":")),
+                         "fresh-scan.aipcc.redhat.com/result": json.dumps(result, separators=(",", ":"))}
+            annotations = {**current["metadata"].get("annotations", {}), **additions}
+            if sum(len(k.encode()) + len(v.encode()) for k, v in annotations.items()) > 256 * 1024:
+                raise ValueError("Snapshot annotations exceed Kubernetes' size limit; use the logged result")
+            subprocess.run(["kubectl", "patch", "snapshot", snapshot, "--type", "merge", "-p",
+                            json.dumps({"metadata": {"annotations": additions}})], check=True, stdout=subprocess.DEVNULL)
+        counts = {"baseline-cve-count": summary["baseline_cves"], "candidate-cve-count": summary["candidate_cves"],
+                  "fixed-cve-count": len(result["fixed_in_candidate"]), "new-cve-count": len(result["new_in_candidate"])}
+        for name, count in counts.items():
+            Path("/tekton/results", name).write_text(str(count))
+        print(json.dumps(summary, indent=2))

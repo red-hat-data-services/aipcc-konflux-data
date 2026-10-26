@@ -1,0 +1,192 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acs-scan-diff-resolve
+spec:
+  description: |
+    Resolve the candidate and latest Released prod image for one component,
+    or accept an explicit digest-pinned image pair for an ad-hoc scan.
+    Inspect every Linux manifest and require identical platform coverage.
+    Requires get/list releases and get snapshots in the current namespace,
+    plus the existing components-namespace-pull registry secret.
+  params:
+    - name: task-revision
+    - name: release
+      default: ""
+    - name: releasePlan
+      default: ""
+    - name: snapshot
+      default: ""
+    - name: prod-release-plan
+      default: ""
+    - name: component
+      default: ""
+    - name: baseline-ref
+      default: ""
+    - name: candidate-ref
+      default: ""
+  results:
+    - name: component
+    - name: baseline-release
+    - name: prev-snapshot
+    - name: baseline-image
+    - name: candidate-image
+    - name: scan-baseline-refs
+      description: JSON array of platform/ref objects, not space-separated refs.
+    - name: scan-candidate-refs
+      description: JSON array of platform/ref objects, not space-separated refs.
+  volumes:
+    - name: components-namespace-pull
+      secret:
+        secretName: components-namespace-pull
+  steps:
+    - name: resolve
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: CODE_REVISION
+          value: $(params.task-revision)
+        - name: RELEASE
+          value: $(params.release)
+        - name: RELEASE_PLAN
+          value: $(params.releasePlan)
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: PROD_RELEASE_PLAN
+          value: $(params.prod-release-plan)
+        - name: COMPONENT
+          value: $(params.component)
+        - name: BASELINE_REF
+          value: $(params.baseline-ref)
+        - name: CANDIDATE_REF
+          value: $(params.candidate-ref)
+      volumeMounts:
+        - name: components-namespace-pull
+          mountPath: /mnt/components-namespace-pull
+          readOnly: true
+      script: |
+        #!/usr/bin/env python3
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import shutil
+        import subprocess
+
+        def command(*args):
+            return subprocess.check_output(args, text=True)
+
+        def resource(kind, name):
+            return json.loads(command("kubectl", "get", kind, name, "-o", "json"))
+
+        def image_ref(ref):
+            match = re.fullmatch(
+                r"([a-z0-9][a-z0-9.:-]*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)"
+                r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?@sha256:([0-9a-f]{64})", ref)
+            if not match:
+                raise ValueError("Expected a repository@sha256:digest image reference")
+            return f"{match[1]}@sha256:{match[2]}"
+
+        def snapshot_image(name, component):
+            matches = [c["containerImage"] for c in resource("snapshot", name)["spec"]["components"]
+                       if c["name"] == component]
+            if len(matches) != 1:
+                raise ValueError(f"Expected exactly one {component} entry in snapshot {name}")
+            return image_ref(matches[0])
+
+        def platforms(ref):
+            manifest = json.loads(command("skopeo", "inspect", "--raw", "docker://" + ref))
+            if not isinstance(manifest, dict):
+                raise ValueError("Manifest must be an object")
+            repo = ref.split("@")[0]
+            children = []
+            if "manifests" in manifest:
+                if not isinstance(manifest["manifests"], list):
+                    raise ValueError("Invalid image index")
+                for child in manifest["manifests"]:
+                    platform = child.get("platform", {})
+                    if platform.get("os") != "linux":
+                        continue
+                    child_ref = image_ref(repo + "@" + child["digest"])
+                    children.append((child_ref, platform))
+            elif "config" in manifest and isinstance(manifest.get("layers"), list):
+                children.append((ref, None))
+            else:
+                raise ValueError("Expected an image index or single image manifest")
+            found = {}
+            for child_ref, descriptor in children:
+                config = json.loads(command("skopeo", "inspect", "--config", "docker://" + child_ref))
+                arch = config.get("architecture", "")
+                if config.get("os") != "linux" or not re.fullmatch(r"[a-z0-9_]+", arch):
+                    raise ValueError("Expected a Linux manifest with an architecture")
+                if descriptor and descriptor.get("architecture") != arch:
+                    raise ValueError("Index/config architecture mismatch")
+                # shortcut: the four base-image architectures only; extend
+                # with variant-aware matching when another platform is needed.
+                if arch not in {"amd64", "arm64", "ppc64le", "s390x"}:
+                    raise ValueError("Unsupported base-image architecture")
+                for metadata in (config, descriptor or {}):
+                    variant = metadata.get("variant", "")
+                    if variant and not (arch == "arm64" and variant == "v8"):
+                        raise ValueError("Unsupported platform variant")
+                platform = "linux/" + arch
+                if platform in found:
+                    raise ValueError("Duplicate platform: " + platform)
+                found[platform] = child_ref
+            if not found:
+                raise ValueError("Image has no Linux manifests")
+            return [{"platform": p, "ref": found[p]} for p in sorted(found)]
+
+        if not re.fullmatch(r"[0-9a-f]{40}", os.environ["CODE_REVISION"]):
+            raise ValueError("task-revision must be an immutable 40-character Git commit SHA")
+        for key in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT", "PROD_RELEASE_PLAN", "COMPONENT"):
+            value = os.environ[key]
+            if value and (len(value) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", value)):
+                raise ValueError("Invalid Kubernetes resource name: " + key)
+        Path("/tmp/acs-registry-auth").mkdir(exist_ok=True)
+        shutil.copyfile("/mnt/components-namespace-pull/.dockerconfigjson", "/tmp/acs-registry-auth/config.json")
+        os.environ["REGISTRY_AUTH_FILE"] = "/tmp/acs-registry-auth/config.json"
+        os.environ["DOCKER_CONFIG"] = "/tmp/acs-registry-auth"
+        component = os.environ["COMPONENT"]
+        baseline, candidate = os.environ["BASELINE_REF"], os.environ["CANDIDATE_REF"]
+        previous_release = previous_snapshot = ""
+        if baseline or candidate:
+            if not (baseline and candidate and component) or os.environ["RELEASE"]:
+                raise ValueError("Explicit mode requires both image refs and component, without release")
+            baseline, candidate = image_ref(baseline), image_ref(candidate)
+            if os.environ["SNAPSHOT"] and snapshot_image(os.environ["SNAPSHOT"], component) != candidate:
+                raise ValueError("Snapshot does not contain the explicit candidate")
+        else:
+            release, plan, snapshot = (os.environ[k] for k in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT"))
+            if not all((release, plan, snapshot)) or component:
+                raise ValueError("Release mode requires release, releasePlan and snapshot; component comes from release")
+            current = resource("release", release)
+            if current["spec"]["snapshot"] != snapshot or current["spec"]["releasePlan"] != plan:
+                raise ValueError("Release does not match snapshot/releasePlan")
+            component = current["metadata"]["labels"]["appstudio.openshift.io/component"]
+            prod_plan = os.environ["PROD_RELEASE_PLAN"] or plan.replace("-stage-", "-prod-")
+            if not prod_plan or prod_plan == plan:
+                raise ValueError("Provide an explicit prod-release-plan for a non-stage plan")
+            selector = f"appstudio.openshift.io/component={component},release.appstudio.openshift.io/releasePlan={prod_plan}"
+            releases = json.loads(command("kubectl", "get", "releases", "-l", selector, "-o", "json"))["items"]
+            released = [r for r in releases if any(c.get("type") == "Released" and c.get("status") == "True"
+                        for c in r.get("status", {}).get("conditions", []))]
+            if not released:
+                raise ValueError("No Released prod baseline for " + component)
+            previous = max(released, key=lambda r: r["metadata"]["creationTimestamp"])
+            previous_release = previous["metadata"]["name"]
+            previous_snapshot = previous["spec"]["snapshot"]
+            baseline = snapshot_image(previous_snapshot, component)
+            candidate = snapshot_image(snapshot, component)
+        b, c = platforms(baseline), platforms(candidate)
+        if [r["platform"] for r in b] != [r["platform"] for r in c]:
+            raise ValueError("Baseline and candidate platform coverage differ")
+        results = {"component": component, "baseline-release": previous_release,
+                   "prev-snapshot": previous_snapshot, "baseline-image": baseline,
+                   "candidate-image": candidate, "scan-baseline-refs": json.dumps(b, separators=(",", ":")),
+                   "scan-candidate-refs": json.dumps(c, separators=(",", ":"))}
+        # Leave headroom for Tekton's result envelope under its default 4 KiB cap.
+        if sum(len(v.encode()) for v in results.values()) > 3500:
+            raise ValueError("Resolved image/platform results exceed the supported size")
+        for name, value in results.items():
+            Path("/tekton/results", name).write_text(value)
+        print(json.dumps(results, indent=2))
