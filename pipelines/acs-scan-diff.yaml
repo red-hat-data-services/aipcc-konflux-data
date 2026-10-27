@@ -15,9 +15,12 @@ spec:
     removals, not verified remediation. The producing run must succeed.
     task-revision MUST equal the commit SHA used to resolve this pipeline,
     so nested tasks also work before merge and evidence identifies the code.
-    Requires components-namespace-pull and an ACS-authorized service account;
-    release mode also needs get/list releases and get snapshots. Annotation
-    needs get/patch snapshots. No ReleasePlans are wired by adding this file.
+    Use the release account by default and override only the scan TaskRun
+    with an existing ACS-authorized build account. The resolver needs
+    components-namespace-pull; release mode also needs get/list releases and
+    get snapshots. The annotation task needs get/patch snapshots, not ACS.
+    The full comparison is passed as a Tekton result, with no shared workspace;
+    the cluster must support its size. No ReleasePlans are wired here.
   params:
     - name: task-revision
       description: Same immutable Git commit SHA used to resolve this pipeline.
@@ -85,8 +88,6 @@ spec:
       params:
         - name: task-revision
           value: $(params.task-revision)
-        - name: snapshot
-          value: $(params.snapshot)
         - name: pipeline-run
           value: $(context.pipelineRun.name)
         - name: component
@@ -112,3 +113,33 @@ spec:
             value: $(params.task-revision)
           - name: pathInRepo
             value: tasks/acs-scan-diff.yaml
+    - name: annotate
+      timeout: 5m
+      when:
+        - input: $(params.snapshot)
+          operator: notin
+          values: [""]
+      params:
+        - name: comparison
+          value: $(tasks.scan.results.comparison)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: task-revision
+          value: $(params.task-revision)
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
+        - name: component
+          value: $(tasks.resolve.results.component)
+        - name: baseline-ref
+          value: $(tasks.resolve.results.baseline-image)
+        - name: candidate-ref
+          value: $(tasks.resolve.results.candidate-image)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: $(params.task-revision)
+          - name: pathInRepo
+            value: tasks/acs-scan-diff-annotate.yaml

@@ -14,10 +14,12 @@ Clair definitions and callers remain unchanged during this branch-only trial.
    source repository/index digest and the candidate's exact source repository/
    index digest. Tags alone are rejected; `repository:tag@sha256:digest` is
    normalized to `repository@sha256:digest` by the resolver.
-3. Choose an existing ACS-authorized service account. The CPU 3.5.4 control used
-   `build-pipeline-base-image-cpu-3-5` in `ai-tenant`. This is evidence for that
-   account only: access for other component accounts and
-   `aipcc-releaser-bot-sa` must be checked, not assumed or granted automatically.
+3. Keep `aipcc-releaser-bot-sa` as the default service account for resolution
+   and annotation. Override **only `scan`** through `taskRunSpecs` with an
+   existing ACS-authorized component build account. The CPU 3.5.4 control used
+   `build-pipeline-base-image-cpu-3-5` in `ai-tenant`; other accounts still need
+   validation. The release account need not authenticate to ACS, and the build
+   account need not patch Snapshots. No rolebindings or ACS mappings are added.
    The resolver needs the existing `components-namespace-pull` secret. ACS pulls
    through Central's existing registry integration, not that mounted secret.
 4. Create the prepared run only with operator authorization:
@@ -35,9 +37,16 @@ errors fail rather than inventing a partial comparison.
 The default manual mode does **not** mutate Snapshots or upload registry reports.
 It does call Central's scan API with `--force --include-snoozed`. Add a `snapshot`
 parameter only if you intentionally want to publish annotations to the candidate
-Snapshot and the chosen account has get/patch permission for it. The component's
-candidate digest must match that Snapshot. Annotation is last-writer-wins;
-failed runs do not erase earlier evidence, so always check the producing run.
+Snapshot. A separate `annotate` task consumes the full compact comparison through
+one Tekton string result, validates its run/revision/component/image bindings and
+CVE-set consistency, then patches the Snapshot using the release account's existing
+get/patch permissions. It runs only after successful scanning/result transport.
+No workspace or PVC is required. The cluster must support the result size: the
+CPU 3.5 transport probe passed 29,756 bytes, not a guarantee for larger payloads or
+other clusters. Oversized/truncated results must fail rather than publish partial
+evidence. The component's candidate digest must match the Snapshot. Annotation
+checks resourceVersion to reject concurrent edits; successful runs are otherwise
+last-writer-wins. Failed runs do not erase earlier evidence: check the producing run.
 
 ### Resolve a baseline from an existing release
 
@@ -51,7 +60,10 @@ correct plan. This mode also needs get/list releases and get snapshots.
 Run before the candidate is promoted to prod: otherwise the latest prod baseline
 may already be the candidate. Use explicit image mode to preserve the intended
 older baseline after promotion. A failed run never gates or approves a release.
-No stage ReleasePlan references this pipeline yet.
+No stage ReleasePlan references this pipeline yet. Future finalPipeline wiring
+must retain the release-account default and the scan-account override under
+`finalPipeline.taskRunSpecs`; this is supported by the upstream release-service
+API but must be validated against the deployed version before rollout.
 
 ## Collect evidence
 
@@ -69,7 +81,7 @@ For plain JSON without the `tkn` log prefixes:
 RUN=<PIPELINERUN_NAME>
 test "$(oc get pipelinerun "$RUN" -n ai-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}')" = True
 POD=$(oc get taskrun -n ai-tenant -l "tekton.dev/pipelineRun=$RUN,tekton.dev/pipelineTask=scan" -o jsonpath='{.items[0].status.podName}')
-oc logs "$POD" -n ai-tenant -c step-compare-and-annotate > "$RUN.log"
+oc logs "$POD" -n ai-tenant -c step-compare > "$RUN.log"
 awk '/^===RESULT-BEGIN===$/{on=1;next}/^===RESULT-END===$/{on=0}on' "$RUN.log" > "$RUN.json"
 jq '{component, engine, code_revision, baseline: .baseline.cves, candidate: .candidate.cves, fixed_in_candidate, new_in_candidate, platform_diffs}' "$RUN.json"
 ```
@@ -86,7 +98,9 @@ Raw native **scan** sections between `===REPORT ...` markers retain package,
 severity, advisory and available-fix metadata. Unrelated image layers/build
 commands/labels are excluded. Full reports stay in logs; Snapshot annotations
 hold compact CVE sets/provenance and are checked against the Kubernetes size cap.
-Tekton results carry counts only. Retain/export logs before cluster pruning.
+The scan Task's `comparison` result carries the compact sets/provenance to the
+annotation Task; count results and Pipeline results retain their existing contract.
+Retain/export logs before cluster pruning.
 
 - `fixed_in_candidate`: baseline CVEs absent from the candidate's complete ACS
   inventory, across all comparable platforms. This is an **observed removal**,

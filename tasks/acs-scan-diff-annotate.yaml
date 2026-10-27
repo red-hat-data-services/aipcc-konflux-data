@@ -1,0 +1,126 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acs-scan-diff-annotate
+spec:
+  description: |
+    Publish a successful ACS comparison result to its candidate Snapshot.
+    Runs under the release account, independently of ACS authentication.
+    Validates result provenance, image bindings and CVE-set consistency before
+    patching the existing evidence annotations. No scans, uploads or approval.
+    An old annotation is not evidence for this run: verify pipeline_run and
+    require the producing PipelineRun to have succeeded.
+  params:
+    - name: comparison
+      description: Complete compact JSON result from the scan task, not logs.
+    - name: snapshot
+    - name: task-revision
+    - name: pipeline-run
+    - name: component
+    - name: baseline-ref
+    - name: candidate-ref
+  steps:
+    - name: annotate
+      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      env:
+        - name: COMPARISON
+          value: $(params.comparison)
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: CODE_REVISION
+          value: $(params.task-revision)
+        - name: PIPELINE_RUN
+          value: $(params.pipeline-run)
+        - name: COMPONENT
+          value: $(params.component)
+        - name: BASELINE_REF
+          value: $(params.baseline-ref)
+        - name: CANDIDATE_REF
+          value: $(params.candidate-ref)
+      script: |
+        #!/usr/bin/env python3
+        from datetime import datetime
+        import json
+        import os
+        import re
+        import subprocess
+
+        def cves(value):
+            if not isinstance(value, list) or any(not isinstance(c, str) or not re.fullmatch(
+                    r"CVE-[0-9]{4}-[0-9]{4,7}", c) for c in value):
+                raise ValueError("Expected CVE array")
+            if value != sorted(set(value)):
+                raise ValueError("Expected sorted, unique CVEs")
+            return set(value)
+
+        snapshot = os.environ["SNAPSHOT"]
+        if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", snapshot) or len(snapshot) > 253:
+            raise ValueError("Invalid Snapshot name")
+        result = json.loads(os.environ["COMPARISON"])
+        if not isinstance(result, dict) or result.get("engine") != "acs":
+            raise ValueError("Expected ACS comparison object")
+        for key, env in (("component", "COMPONENT"), ("pipeline_run", "PIPELINE_RUN"), ("code_revision", "CODE_REVISION")):
+            if result.get(key) != os.environ[env]:
+                raise ValueError("Comparison provenance mismatch: " + key)
+        if not re.fullmatch(r"[0-9a-f]{40}", result["code_revision"]):
+            raise ValueError("Expected immutable code revision")
+        if result.get("force_rescan") is not True or result.get("include_snoozed") is not True:
+            raise ValueError("Expected forced scans including snoozed findings")
+        if not isinstance(result.get("evidence"), str) or not result["evidence"]:
+            raise ValueError("Missing evidence caveat")
+        if datetime.fromisoformat(result["scanned_at"].replace("Z", "+00:00")).tzinfo is None:
+            raise ValueError("Expected timezone-aware scan timestamp")
+        platforms = {}
+        for side in ("baseline", "candidate"):
+            data = result[side]
+            image = data["image"]
+            if image != os.environ[side.upper() + "_REF"] or not re.fullmatch(
+                    r"[a-z0-9][a-z0-9.:/_-]*@sha256:[0-9a-f]{64}", image):
+                raise ValueError("Comparison image binding mismatch")
+            entries = data["platforms"]
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("Missing platform coverage")
+            by_platform = {}
+            for entry in entries:
+                platform = entry["platform"]
+                if platform not in {"linux/amd64", "linux/arm64", "linux/ppc64le", "linux/s390x"} or platform in by_platform:
+                    raise ValueError("Invalid or duplicate platform")
+                if not re.fullmatch(re.escape(image.split("@")[0]) + r"@sha256:[0-9a-f]{64}", entry["ref"]):
+                    raise ValueError("Invalid platform manifest binding")
+                by_platform[platform] = cves(entry["cves"])
+            if data["scanned_manifests"] != [p["ref"] for p in entries] or cves(data["cves"]) != set().union(*by_platform.values()):
+                raise ValueError("Manifest list or aggregate CVEs differ from platform evidence")
+            platforms[side] = by_platform
+        if set(platforms["baseline"]) != set(platforms["candidate"]):
+            raise ValueError("Baseline/candidate platform coverage differs")
+        baseline, candidate = cves(result["baseline"]["cves"]), cves(result["candidate"]["cves"])
+        if cves(result["fixed_in_candidate"]) != baseline - candidate or cves(result["new_in_candidate"]) != candidate - baseline:
+            raise ValueError("Aggregate CVE delta is inconsistent")
+        diffs = result["platform_diffs"]
+        if not isinstance(diffs, list) or len(diffs) != len(platforms["baseline"]):
+            raise ValueError("Missing platform diffs")
+        seen = set()
+        for diff in diffs:
+            platform = diff["platform"]
+            if platform in seen or platform not in platforms["baseline"]:
+                raise ValueError("Invalid or duplicate platform diff")
+            seen.add(platform)
+            b, c = platforms["baseline"][platform], platforms["candidate"][platform]
+            if cves(diff["fixed_in_candidate"]) != b - c or cves(diff["new_in_candidate"]) != c - b:
+                raise ValueError("Platform CVE delta is inconsistent")
+        current = json.loads(subprocess.check_output(["kubectl", "get", "snapshot", snapshot, "-o", "json"], text=True))
+        images = [c["containerImage"] for c in current["spec"]["components"] if c["name"] == result["component"]]
+        if len(images) != 1 or images[0].split("@")[1:] != result["candidate"]["image"].split("@")[1:]:
+            raise ValueError("Snapshot component does not match candidate digest")
+        summary = {k: result[k] for k in ("component", "engine", "evidence", "pipeline_run", "code_revision", "scanned_at", "fixed_in_candidate", "new_in_candidate")}
+        summary.update(baseline_cves=len(result["baseline"]["cves"]), candidate_cves=len(result["candidate"]["cves"]))
+        additions = {"fresh-scan.aipcc.redhat.com/summary": json.dumps(summary, separators=(",", ":")),
+                     "fresh-scan.aipcc.redhat.com/result": json.dumps(result, separators=(",", ":"))}
+        annotations = {**current["metadata"].get("annotations", {}), **additions}
+        if sum(len(k.encode()) + len(v.encode()) for k, v in annotations.items()) > 256 * 1024:
+            raise ValueError("Snapshot annotations exceed Kubernetes' size limit")
+        # Fail on concurrent Snapshot edits rather than publishing stale bindings.
+        subprocess.run(["kubectl", "patch", "snapshot", snapshot, "--type", "merge", "-p",
+                        json.dumps({"metadata": {"resourceVersion": current["metadata"]["resourceVersion"],
+                                                 "annotations": additions}})], check=True, stdout=subprocess.DEVNULL)
+        print(json.dumps(summary, indent=2))

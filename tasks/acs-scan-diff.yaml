@@ -8,18 +8,16 @@ spec:
     fixed_in_candidate means ACS-observed absence, not verified remediation;
     Central's live database is NOT frozen by pinning the Roxctl client.
     Raw scan data (excluding unrelated image metadata) is logged between
-    REPORT markers. Compact per-platform sets and provenance use the existing
-    Snapshot annotations. An empty snapshot disables annotation for manual use.
-    Failed/incomplete scans fail this task without publishing success. An older
-    Snapshot annotation is not evidence for this run: verify pipeline_run.
+    REPORT markers. Compact per-platform sets and provenance are emitted as
+    one comparison result for the separate annotation task. The cluster must
+    support this result size; failed transport must fail the pipeline.
+    Failed/incomplete scans fail this task without publishing success.
     Evidence only, not ECP or release approval. No registry report uploads.
-    The service account needs existing ACS machine-to-machine access, and
-    get/patch snapshots only when annotation is requested. Registry access for
-    the scan is provided by Central's existing registry integration.
+    The service account needs existing ACS machine-to-machine access, not
+    Snapshot permissions. Registry access for the scan is provided by
+    Central's existing registry integration.
   params:
     - name: task-revision
-    - name: snapshot
-      default: ""
     - name: pipeline-run
     - name: component
     - name: prev-release
@@ -33,6 +31,8 @@ spec:
     - name: scan-candidate-refs
       description: Nonempty JSON array of platform/ref objects from the resolver.
   results:
+    - name: comparison
+      description: Compact JSON CVE sets and provenance; requires large-result support.
     - name: baseline-cve-count
     - name: candidate-cve-count
     - name: fixed-cve-count
@@ -139,13 +139,13 @@ spec:
           test -s "${file}.json"
           date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.finished"
         done < acs-scan-plan.tsv
-    - name: compare-and-annotate
+    - name: compare
       image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
       env:
         - name: CODE_REVISION
           value: $(params.task-revision)
-        - name: SNAPSHOT
-          value: $(params.snapshot)
+        - name: COMPARISON_RESULT
+          value: $(results.comparison.path)
         - name: PIPELINE_RUN
           value: $(params.pipeline-run)
         - name: COMPONENT
@@ -165,7 +165,6 @@ spec:
         import os
         from pathlib import Path
         import re
-        import subprocess
 
         def timestamp(value):
             if not isinstance(value, str):
@@ -253,19 +252,7 @@ spec:
         print("===RESULT-BEGIN===\n" + json.dumps(result) + "\n===RESULT-END===")
         for name, report in reports:
             print(f"===REPORT {name}.json BEGIN===\n{json.dumps(report)}\n===REPORT {name}.json END===")
-        snapshot = os.environ["SNAPSHOT"]
-        if snapshot:
-            current = json.loads(subprocess.check_output(["kubectl", "get", "snapshot", snapshot, "-o", "json"], text=True))
-            images = [c["containerImage"] for c in current["spec"]["components"] if c["name"] == result["component"]]
-            if len(images) != 1 or images[0].split("@")[1:] != result["candidate"]["image"].split("@")[1:]:
-                raise ValueError("Snapshot component does not match candidate digest")
-            additions = {"fresh-scan.aipcc.redhat.com/summary": json.dumps(summary, separators=(",", ":")),
-                         "fresh-scan.aipcc.redhat.com/result": json.dumps(result, separators=(",", ":"))}
-            annotations = {**current["metadata"].get("annotations", {}), **additions}
-            if sum(len(k.encode()) + len(v.encode()) for k, v in annotations.items()) > 256 * 1024:
-                raise ValueError("Snapshot annotations exceed Kubernetes' size limit; use the logged result")
-            subprocess.run(["kubectl", "patch", "snapshot", snapshot, "--type", "merge", "-p",
-                            json.dumps({"metadata": {"annotations": additions}})], check=True, stdout=subprocess.DEVNULL)
+        Path(os.environ["COMPARISON_RESULT"]).write_text(json.dumps(result, separators=(",", ":")))
         counts = {"baseline-cve-count": summary["baseline_cves"], "candidate-cve-count": summary["candidate_cves"],
                   "fixed-cve-count": len(result["fixed_in_candidate"]), "new-cve-count": len(result["new_in_candidate"])}
         for name, count in counts.items():
