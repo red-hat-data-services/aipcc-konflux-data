@@ -155,8 +155,8 @@ spec:
         annotations = {**current["metadata"].get("annotations", {}), **additions}
         if sum(len(k.encode()) + len(v.encode()) for k, v in annotations.items()) > 256 * 1024:
             raise ValueError("Snapshot annotations exceed Kubernetes' size limit")
-        # Fail on concurrent Snapshot edits rather than publishing stale bindings.
-        subprocess.run(["kubectl", "patch", "snapshot", snapshot, "--type", "merge", "-p",
-                        json.dumps({"metadata": {"resourceVersion": current["metadata"]["resourceVersion"],
-                                                 "annotations": additions}})], check=True, stdout=subprocess.DEVNULL)
+        # Avoid argv size limits; resourceVersion still rejects concurrent edits.
+        subprocess.run(["kubectl", "patch", "snapshot", snapshot, "--type", "merge", "--patch-file=/dev/stdin"],
+                       input=json.dumps({"metadata": {"resourceVersion": current["metadata"]["resourceVersion"],
+                                                      "annotations": additions}}), text=True, check=True, stdout=subprocess.DEVNULL)
         print(json.dumps(summary, indent=2))
