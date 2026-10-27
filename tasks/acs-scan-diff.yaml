@@ -142,7 +142,7 @@ spec:
           date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.started"
           # --format=json deliberately selects the native Image schema, not
           # the newer --output=json CVE summary. Keep all findings, even snoozed.
-          roxctl image scan --force --include-snoozed --format=json --image="${ref}" > "${file}.json"
+          roxctl image scan --timeout=20m --force --include-snoozed --format=json --image="${ref}" > "${file}.json"
           test -s "${file}.json"
           date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.finished"
         done < acs-scan-plan.tsv
