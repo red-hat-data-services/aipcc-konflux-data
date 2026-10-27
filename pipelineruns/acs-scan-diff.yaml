@@ -1,6 +1,7 @@
 # Manual pre-release scan: replace ALL <PLACEHOLDERS> before creating this run.
 # Publish the feature branch first; use the SAME full commit SHA in both places.
-# No Release CR, ReleasePlan wiring or registry report upload is required.
+# No Release CR or ReleasePlan wiring. Publishes a temporary Trusted Artifact,
+# not native reports or image referrers; uses the existing check-labels repository.
 # See acs-scan-diff.md beside this file for release mode and evidence extraction.
 apiVersion: tekton.dev/v1
 kind: PipelineRun

@@ -11,20 +11,62 @@ spec:
     An old annotation is not evidence for this run: verify pipeline_run and
     require the producing PipelineRun to have succeeded.
   params:
-    - name: comparison
-      description: Complete compact JSON result from the scan task, not logs.
+    - name: sourceDataArtifact
+      description: Digest-bound Trusted Artifact locator from the successful scan task.
     - name: snapshot
     - name: task-revision
     - name: pipeline-run
     - name: component
     - name: baseline-ref
     - name: candidate-ref
+  volumes:
+    - name: workdir
+      emptyDir: {}
+    - name: trusted-artifacts-auth
+      secret:
+        secretName: quay-aipcc-cicd-konflux-access
   steps:
+    - name: use-trusted-artifact
+      computeResources:
+        requests:
+          cpu: 30m
+          memory: 64Mi
+        limits:
+          memory: 64Mi
+      securityContext:
+        runAsUser: 1001
+      env:
+        - name: AUTHFILE
+          value: /var/run/secrets/oci-push-auth/.dockerconfigjson
+      volumeMounts:
+        - name: workdir
+          mountPath: /var/workdir
+        - name: trusted-artifacts-auth
+          mountPath: /var/run/secrets/oci-push-auth
+          readOnly: true
+      ref:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/konflux-ci/release-service-catalog
+          - name: revision
+            value: 5954499ad691f94e36e7b0cc86a1ca46672f81d8
+          - name: pathInRepo
+            value: stepactions/use-trusted-artifact/use-trusted-artifact.yaml
+      params:
+        - name: workDir
+          value: /var/workdir/acs-result
+        - name: sourceDataArtifact
+          value: $(params.sourceDataArtifact)
+        - name: orasOptions
+          value: --registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson
     - name: annotate
       image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      volumeMounts:
+        - name: workdir
+          mountPath: /var/workdir
+          readOnly: true
       env:
-        - name: COMPARISON
-          value: $(params.comparison)
         - name: SNAPSHOT
           value: $(params.snapshot)
         - name: CODE_REVISION
@@ -42,6 +84,7 @@ spec:
         from datetime import datetime
         import json
         import os
+        from pathlib import Path
         import re
         import subprocess
 
@@ -56,7 +99,7 @@ spec:
         snapshot = os.environ["SNAPSHOT"]
         if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", snapshot) or len(snapshot) > 253:
             raise ValueError("Invalid Snapshot name")
-        result = json.loads(os.environ["COMPARISON"])
+        result = json.loads(Path("/var/workdir/acs-result/fresh-scan-result.json").read_text())
         if not isinstance(result, dict) or result.get("engine") != "acs":
             raise ValueError("Expected ACS comparison object")
         for key, env in (("component", "COMPONENT"), ("pipeline_run", "PIPELINE_RUN"), ("code_revision", "CODE_REVISION")):

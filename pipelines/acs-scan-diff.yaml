@@ -10,7 +10,7 @@ spec:
     Released prod baseline for that component. For pre-release manual use,
     pass component/baseline-ref/candidate-ref instead; no Release CR is needed.
     Both images must be digest-pinned and have identical Linux platforms.
-    Snapshot annotation is optional in explicit mode. No registry uploads.
+    Snapshot annotation is optional in explicit mode. No native report uploads.
     Central's database is live, not frozen: deltas are observed additions/
     removals, not verified remediation. The producing run must succeed.
     task-revision MUST equal the commit SHA used to resolve this pipeline,
@@ -19,8 +19,11 @@ spec:
     with an existing ACS-authorized build account. The resolver needs
     components-namespace-pull; release mode also needs get/list releases and
     get snapshots. The annotation task needs get/patch snapshots, not ACS.
-    The full comparison is passed as a Tekton result, with no shared workspace;
-    the cluster must support its size. No ReleasePlans are wired here.
+    The comparison file is passed via Trusted Artifacts, not a large Tekton
+    result or shared workspace. Only the digest-bound locator and counts are
+    Task results. Uses the existing trusted-artifacts registry credential;
+    publishes temporary comparison data, not native reports/image referrers.
+    No ReleasePlans are wired here.
   params:
     - name: task-revision
       description: Same immutable Git commit SHA used to resolve this pipeline.
@@ -38,6 +41,11 @@ spec:
       default: ""
     - name: candidate-ref
       default: ""
+    - name: ociStorage
+      description: Existing OCI repository for temporary comparison artifacts, without tag/digest.
+      default: quay.io/aipcc-cicd/aipcc-konflux-trusted-artifacts
+    - name: ociArtifactExpiresAfter
+      default: "1d"
   results:
     - name: baseline-release
       value: $(tasks.resolve.results.baseline-release)
@@ -104,6 +112,10 @@ spec:
           value: $(tasks.resolve.results.scan-baseline-refs)
         - name: scan-candidate-refs
           value: $(tasks.resolve.results.scan-candidate-refs)
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: ociArtifactExpiresAfter
+          value: $(params.ociArtifactExpiresAfter)
       taskRef:
         resolver: git
         params:
@@ -120,8 +132,8 @@ spec:
           operator: notin
           values: [""]
       params:
-        - name: comparison
-          value: $(tasks.scan.results.comparison)
+        - name: sourceDataArtifact
+          value: $(tasks.scan.results.sourceDataArtifact)
         - name: snapshot
           value: $(params.snapshot)
         - name: task-revision

@@ -9,10 +9,10 @@ spec:
     Central's live database is NOT frozen by pinning the Roxctl client.
     Raw scan data (excluding unrelated image metadata) is logged between
     REPORT markers. Compact per-platform sets and provenance are emitted as
-    one comparison result for the separate annotation task. The cluster must
-    support this result size; failed transport must fail the pipeline.
+    a Trusted Artifact for the separate annotation task. Tekton carries only
+    its digest-bound locator and counts, never the full comparison JSON.
     Failed/incomplete scans fail this task without publishing success.
-    Evidence only, not ECP or release approval. No registry report uploads.
+    Evidence only, not ECP or release approval. No native scan report uploads.
     The service account needs existing ACS machine-to-machine access, not
     Snapshot permissions. Registry access for the scan is provided by
     Central's existing registry integration.
@@ -30,15 +30,22 @@ spec:
       description: Nonempty JSON array of platform/ref objects from the resolver.
     - name: scan-candidate-refs
       description: Nonempty JSON array of platform/ref objects from the resolver.
+    - name: ociStorage
+      description: Existing OCI repository for temporary Trusted Artifacts, without tag/digest.
+    - name: ociArtifactExpiresAfter
+      default: "1d"
   results:
-    - name: comparison
-      description: Compact JSON CVE sets and provenance; requires large-result support.
+    - name: sourceDataArtifact
+      description: Digest-bound OCI locator for the comparison JSON Trusted Artifact.
     - name: baseline-cve-count
     - name: candidate-cve-count
     - name: fixed-cve-count
       description: ACS-observed baseline-only CVEs, not verified package fixes.
     - name: new-cve-count
   volumes:
+    - name: trusted-artifacts-auth
+      secret:
+        secretName: quay-aipcc-cicd-konflux-access
     - name: rhacs-token
       projected:
         sources:
@@ -144,8 +151,6 @@ spec:
       env:
         - name: CODE_REVISION
           value: $(params.task-revision)
-        - name: COMPARISON_RESULT
-          value: $(results.comparison.path)
         - name: PIPELINE_RUN
           value: $(params.pipeline-run)
         - name: COMPONENT
@@ -248,13 +253,49 @@ spec:
             for b, c in zip(result["baseline"]["platforms"], result["candidate"]["platforms"])]
         summary = {k: result[k] for k in ("component", "engine", "evidence", "pipeline_run", "code_revision", "scanned_at", "fixed_in_candidate", "new_in_candidate")}
         summary.update(baseline_cves=len(result["baseline"]["cves"]), candidate_cves=len(result["candidate"]["cves"]))
-        Path("fresh-scan-result.json").write_text(json.dumps(result))
+        Path("fresh-scan-result.json").write_text(json.dumps(result, separators=(",", ":")))
         print("===RESULT-BEGIN===\n" + json.dumps(result) + "\n===RESULT-END===")
         for name, report in reports:
             print(f"===REPORT {name}.json BEGIN===\n{json.dumps(report)}\n===REPORT {name}.json END===")
-        Path(os.environ["COMPARISON_RESULT"]).write_text(json.dumps(result, separators=(",", ":")))
         counts = {"baseline-cve-count": summary["baseline_cves"], "candidate-cve-count": summary["candidate_cves"],
                   "fixed-cve-count": len(result["fixed_in_candidate"]), "new-cve-count": len(result["new_in_candidate"])}
         for name, count in counts.items():
             Path("/tekton/results", name).write_text(str(count))
         print(json.dumps(summary, indent=2))
+    - name: create-trusted-artifact
+      computeResources:
+        requests:
+          cpu: 250m
+          memory: 128Mi
+        limits:
+          memory: 128Mi
+      securityContext:
+        runAsUser: 1001
+      env:
+        - name: AUTHFILE
+          value: /var/run/secrets/oci-push-auth/.dockerconfigjson
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.ociArtifactExpiresAfter)
+      volumeMounts:
+        - name: trusted-artifacts-auth
+          mountPath: /var/run/secrets/oci-push-auth
+          readOnly: true
+      ref:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/konflux-ci/release-service-catalog
+          - name: revision
+            value: 5954499ad691f94e36e7b0cc86a1ca46672f81d8
+          - name: pathInRepo
+            value: stepactions/create-trusted-artifact/create-trusted-artifact.yaml
+      params:
+        - name: ociStorage
+          value: $(params.ociStorage):$(context.taskRun.name)
+        # Archive this file only, never /tekton/home (which contains ACS auth).
+        - name: workDir
+          value: /tekton/home/fresh-scan-result.json
+        - name: sourceDataArtifact
+          value: $(results.sourceDataArtifact.path)
+        - name: orasOptions
+          value: --registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson

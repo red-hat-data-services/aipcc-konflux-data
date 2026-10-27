@@ -34,17 +34,36 @@ s390x. Single-platform pairs also work. Baseline/candidate coverage must match;
 unknown architectures, unsupported variants, duplicate platforms and inspection
 errors fail rather than inventing a partial comparison.
 
-The default manual mode does **not** mutate Snapshots or upload registry reports.
-It does call Central's scan API with `--force --include-snoozed`. Add a `snapshot`
-parameter only if you intentionally want to publish annotations to the candidate
-Snapshot. A separate `annotate` task consumes the full compact comparison through
-one Tekton string result, validates its run/revision/component/image bindings and
-CVE-set consistency, then patches the Snapshot using the release account's existing
-get/patch permissions. It runs only after successful scanning/result transport.
-No workspace or PVC is required. The cluster must support the result size: the
-CPU 3.5 transport probe passed 29,756 bytes, not a guarantee for larger payloads or
-other clusters. Oversized/truncated results must fail rather than publish partial
-evidence. The component's candidate digest must match the Snapshot. Annotation
+The default manual mode does **not** mutate Snapshots or upload native reports
+or image referrers. It does call Central with `--force --include-snoozed` and
+publish a temporary Trusted Artifact containing **only `fresh-scan-result.json`**.
+It reuses the check-labels flow and defaults to
+`quay.io/aipcc-cicd/aipcc-konflux-trusted-artifacts`, with a unique TaskRun tag and
+`1d` expiry (`ociStorage` / `ociArtifactExpiresAfter`). The expiry is registry
+retention, not a guarantee of immediate deletion. The publisher archives the
+single comparison file, never `/tekton/home` or its ACS authentication data.
+
+Both artifact steps explicitly mount the existing
+`quay-aipcc-cicd-konflux-access` credential read-only. `AUTHFILE` selects it
+without depending on service-account credential merging; the StepActions also
+receive the explicit registry-config option. No credentials are exported to
+results or artifacts, and no service-account links or permissions are changed.
+The catalog StepActions are pinned to commit
+`5954499ad691f94e36e7b0cc86a1ca46672f81d8`.
+
+Add a `snapshot` parameter only if you intentionally want annotations published.
+The separate `annotate` task restores the digest-bound artifact to its own local
+`emptyDir`, validates the full JSON's run/revision/component/image bindings and
+CVE-set consistency, then patches the Snapshot with the release account. It runs
+only after successful scanning and artifact publication. No shared workspace or
+PVC is required: Tekton carries only the small `sourceDataArtifact` locator and
+counts. A missing artifact, failed restore, missing/malformed JSON or inconsistent
+evidence fails rather than publishing partial data.
+
+The earlier 29,756-byte one-step results probe was not representative: the real
+multi-step scan pod has less termination-message space per container and lost
+its compressed results. The full JSON is therefore no longer a Tekton result.
+The component's candidate digest must match the Snapshot. Annotation
 checks resourceVersion to reject concurrent edits; successful runs are otherwise
 last-writer-wins. Failed runs do not erase earlier evidence: check the producing run.
 
@@ -98,8 +117,8 @@ Raw native **scan** sections between `===REPORT ...` markers retain package,
 severity, advisory and available-fix metadata. Unrelated image layers/build
 commands/labels are excluded. Full reports stay in logs; Snapshot annotations
 hold compact CVE sets/provenance and are checked against the Kubernetes size cap.
-The scan Task's `comparison` result carries the compact sets/provenance to the
-annotation Task; count results and Pipeline results retain their existing contract.
+The scan Task's `sourceDataArtifact` result carries the digest-bound locator to
+the annotation Task; count results and Pipeline results retain their contract.
 Retain/export logs before cluster pruning.
 
 - `fixed_in_candidate`: baseline CVEs absent from the candidate's complete ACS
