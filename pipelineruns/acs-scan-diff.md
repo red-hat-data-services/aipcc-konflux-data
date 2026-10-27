@@ -45,11 +45,13 @@ single comparison file, never `/tekton/home` or its ACS authentication data.
 
 Both artifact steps explicitly mount the existing
 `quay-aipcc-cicd-konflux-access` credential read-only. `AUTHFILE` selects it
-without depending on service-account credential merging; the StepActions also
-receive the explicit registry-config option. No credentials are exported to
-results or artifacts, and no service-account links or permissions are changed.
-The catalog StepActions are pinned to commit
-`5954499ad691f94e36e7b0cc86a1ca46672f81d8`.
+without depending on service-account credential merging; ORAS also receives the
+explicit registry-config option. No credentials are exported to results or
+artifacts, and no service-account links or permissions are changed. The steps use
+`quay.io/konflux-ci/build-trusted-artifacts@sha256:9bd32f6bafb517b309e11a2d89365052b4ab3f1c9c23c4ffd45aff6f03960476`,
+the image/arguments from catalog StepActions at commit
+`5954499ad691f94e36e7b0cc86a1ca46672f81d8`. Direct Steps are used because this
+cluster rejects environment and volume-mount overrides on StepAction refs.
 
 Add a `snapshot` parameter only if you intentionally want annotations published.
 The separate `annotate` task restores the digest-bound artifact to its own local

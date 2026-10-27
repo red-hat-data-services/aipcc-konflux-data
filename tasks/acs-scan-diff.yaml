@@ -263,6 +263,7 @@ spec:
             Path("/tekton/results", name).write_text(str(count))
         print(json.dumps(summary, indent=2))
     - name: create-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts@sha256:9bd32f6bafb517b309e11a2d89365052b4ab3f1c9c23c4ffd45aff6f03960476
       computeResources:
         requests:
           cpu: 250m
@@ -276,26 +277,18 @@ spec:
           value: /var/run/secrets/oci-push-auth/.dockerconfigjson
         - name: IMAGE_EXPIRES_AFTER
           value: $(params.ociArtifactExpiresAfter)
+        - name: HOME
+          value: /tekton/home
+        - name: ORAS_OPTIONS
+          value: --registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson
       volumeMounts:
         - name: trusted-artifacts-auth
           mountPath: /var/run/secrets/oci-push-auth
           readOnly: true
-      ref:
-        resolver: git
-        params:
-          - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
-          - name: revision
-            value: 5954499ad691f94e36e7b0cc86a1ca46672f81d8
-          - name: pathInRepo
-            value: stepactions/create-trusted-artifact/create-trusted-artifact.yaml
-      params:
-        - name: ociStorage
-          value: $(params.ociStorage):$(context.taskRun.name)
+      # Direct Step: StepAction refs cannot override env/mounts on this cluster.
+      args:
+        - create
+        - --store
+        - $(params.ociStorage):$(context.taskRun.name)
         # Archive this file only, never /tekton/home (which contains ACS auth).
-        - name: workDir
-          value: /tekton/home/fresh-scan-result.json
-        - name: sourceDataArtifact
-          value: $(results.sourceDataArtifact.path)
-        - name: orasOptions
-          value: --registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson
+        - $(results.sourceDataArtifact.path)=/tekton/home/fresh-scan-result.json

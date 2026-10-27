@@ -27,6 +27,7 @@ spec:
         secretName: quay-aipcc-cicd-konflux-access
   steps:
     - name: use-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts@sha256:9bd32f6bafb517b309e11a2d89365052b4ab3f1c9c23c4ffd45aff6f03960476
       computeResources:
         requests:
           cpu: 30m
@@ -38,28 +39,20 @@ spec:
       env:
         - name: AUTHFILE
           value: /var/run/secrets/oci-push-auth/.dockerconfigjson
+        - name: HOME
+          value: /tekton/home
+        - name: ORAS_OPTIONS
+          value: --registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson
       volumeMounts:
         - name: workdir
           mountPath: /var/workdir
         - name: trusted-artifacts-auth
           mountPath: /var/run/secrets/oci-push-auth
           readOnly: true
-      ref:
-        resolver: git
-        params:
-          - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
-          - name: revision
-            value: 5954499ad691f94e36e7b0cc86a1ca46672f81d8
-          - name: pathInRepo
-            value: stepactions/use-trusted-artifact/use-trusted-artifact.yaml
-      params:
-        - name: workDir
-          value: /var/workdir/acs-result
-        - name: sourceDataArtifact
-          value: $(params.sourceDataArtifact)
-        - name: orasOptions
-          value: --registry-config /var/run/secrets/oci-push-auth/.dockerconfigjson
+      # Same image/arguments as the catalog StepAction, with scoped auth mounts.
+      args:
+        - use
+        - $(params.sourceDataArtifact)=/var/workdir/acs-result
     - name: annotate
       image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
       volumeMounts:
