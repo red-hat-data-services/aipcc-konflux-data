@@ -126,7 +126,7 @@ spec:
         set -euo pipefail
         roxctl version > acs-client-version.txt
         # Fail rather than silently accepting cache-dependent comparisons.
-        roxctl image scan --help > acs-scan-help.txt
+        roxctl image scan --help > acs-scan-help.txt 2>&1
         grep -q -- '--force' acs-scan-help.txt
         grep -q -- '--include-snoozed' acs-scan-help.txt
         while IFS=$'\t' read -r side arch ref; do
