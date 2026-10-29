@@ -81,6 +81,31 @@ correct plan. This mode also needs get/list releases and get snapshots.
 Run before the candidate is promoted to prod: otherwise the latest prod baseline
 may already be the candidate. Use explicit image mode to preserve the intended
 older baseline after promotion. A failed run never gates or approves a release.
+
+### Compare two snapshots of one component
+
+Instead of release inputs, supply `component`, `baseline-snapshot` and
+`snapshot` (the candidate). Both snapshots must belong to the same application
+and must not be the same Snapshot. The resolver extracts the exact `component`
+entry from each snapshot's component list: grouped snapshots containing
+several components are supported, and the Snapshot's own component label is
+deliberately ignored because it names only one of the grouped components. A
+missing or duplicate component entry, a different application, identical
+snapshots or mismatched platform coverage fails the run rather than scanning
+an ambiguous pair. No ReleasePlan or Release CR is involved in this mode.
+
+The baseline snapshot is **not** verified as published by this pipeline.
+Before starting the run, resolve the intended baseline yourself: identify the
+named successful archived Release that produced it, require its `Released=True`
+condition and confirm its artifact digests match the snapshot's component
+images. Only then pass that snapshot as `baseline-snapshot`; there is no
+automatic archive lookup here, and a snapshot name alone is never evidence of
+publication. The resolver TaskRun's `prev-snapshot` result and the comparison
+evidence record the baseline snapshot for provenance, while `baseline-release`
+stays empty because this mode does not look up a Release CR. Snapshot-pair mode
+always annotates the candidate snapshot; omit `snapshot` only in explicit-ref
+mode when annotations are not wanted.
+
 No stage ReleasePlan references this pipeline yet. Future finalPipeline wiring
 must retain the release-account default and the scan-account override under
 `finalPipeline.taskRunSpecs`; this is supported by the upstream release-service

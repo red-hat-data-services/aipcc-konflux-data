@@ -7,8 +7,14 @@ spec:
     Evidence-only ACS CVE comparison, runnable manually or as a stage
     finalPipeline. Never use this as a tenantPipeline or release gate.
     Release mode takes release/releasePlan/snapshot and selects the latest
-    Released prod baseline for that component. For pre-release manual use,
-    pass component/baseline-ref/candidate-ref instead; no Release CR is needed.
+    Released prod baseline for that component. Snapshot-pair mode takes
+    component/baseline-snapshot/snapshot and extracts that component's exact
+    image from both snapshots, requiring the same application; the baseline
+    snapshot must already have been verified against its archived Release
+    (Released=True, matching artifact digests) by the caller: this pipeline
+    performs no archive lookup or publication check. For pre-release manual
+    use, pass component/baseline-ref/candidate-ref instead; no Release CR is
+    needed.
     Both images must be digest-pinned and have identical Linux platforms.
     Snapshot annotation is optional in explicit mode. No native report uploads.
     Central's database is live, not frozen: deltas are observed additions/
@@ -32,6 +38,8 @@ spec:
     - name: releasePlan
       default: ""
     - name: snapshot
+      default: ""
+    - name: baseline-snapshot
       default: ""
     - name: prod-release-plan
       default: ""
@@ -74,6 +82,8 @@ spec:
           value: $(params.releasePlan)
         - name: snapshot
           value: $(params.snapshot)
+        - name: baseline-snapshot
+          value: $(params.baseline-snapshot)
         - name: prod-release-plan
           value: $(params.prod-release-plan)
         - name: component

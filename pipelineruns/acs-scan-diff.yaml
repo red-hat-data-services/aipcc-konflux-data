@@ -26,8 +26,18 @@ spec:
       value: "<BASELINE_REPOSITORY>@sha256:<BASELINE_INDEX_DIGEST>"
     - name: candidate-ref
       value: "<CANDIDATE_REPOSITORY>@sha256:<CANDIDATE_INDEX_DIGEST>"
-    # Optional: set snapshot to the candidate Snapshot to publish annotations
-    # from the separate release-account task. Default: logs/results only.
+    # Alternative snapshot-pair mode: retain component above and replace only
+    # baseline-ref/candidate-ref with the grouped baseline snapshot you verified
+    # and your own candidate snapshot. This mode annotates the candidate:
+    # - name: baseline-snapshot
+    #   value: "<VERIFIED_BASELINE_SNAPSHOT>"
+    # - name: snapshot
+    #   value: "<CANDIDATE_SNAPSHOT>"
+    # The baseline snapshot must come from an archived Release you already
+    # checked yourself: Released=True condition and artifact digests matching
+    # the snapshot component images. This pipeline does no archive lookup.
+    # Explicit-ref mode only: optionally set snapshot to publish annotations
+    # from the release-account task. Without it, logs/results only.
   pipelineRef:
     resolver: git
     params:

@@ -5,7 +5,12 @@ metadata:
 spec:
   description: |
     Resolve the candidate and latest Released prod image for one component,
-    or accept an explicit digest-pinned image pair for an ad-hoc scan.
+    or accept an explicit digest-pinned image pair for an ad-hoc scan, or take
+    a component plus baseline and candidate snapshots. Snapshot-pair mode
+    extracts that component's exact entry from both snapshots and requires
+    the same application; the caller must already have verified the baseline
+    snapshot's archived Release (Released=True, matching artifact digests),
+    because this task performs no archive lookup or publication check.
     Inspect every Linux manifest and require identical platform coverage.
     Requires get/list releases and get snapshots in the current namespace,
     plus the existing components-namespace-pull registry secret.
@@ -16,6 +21,8 @@ spec:
     - name: releasePlan
       default: ""
     - name: snapshot
+      default: ""
+    - name: baseline-snapshot
       default: ""
     - name: prod-release-plan
       default: ""
@@ -51,6 +58,8 @@ spec:
           value: $(params.releasePlan)
         - name: SNAPSHOT
           value: $(params.snapshot)
+        - name: BASELINE_SNAPSHOT
+          value: $(params.baseline-snapshot)
         - name: PROD_RELEASE_PLAN
           value: $(params.prod-release-plan)
         - name: COMPONENT
@@ -92,6 +101,12 @@ spec:
             if len(matches) != 1:
                 raise ValueError(f"Expected exactly one {component} entry in snapshot {name}")
             return image_ref(matches[0])
+
+        def snapshot_application(name):
+            application = resource("snapshot", name)["spec"].get("application")
+            if not isinstance(application, str) or not application:
+                raise ValueError("Snapshot has no application: " + name)
+            return application
 
         def platforms(ref):
             manifest = json.loads(command("skopeo", "inspect", "--raw", "docker://" + ref))
@@ -138,7 +153,7 @@ spec:
 
         if not re.fullmatch(r"[0-9a-f]{40}", os.environ["CODE_REVISION"]):
             raise ValueError("task-revision must be an immutable 40-character Git commit SHA")
-        for key in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT", "PROD_RELEASE_PLAN", "COMPONENT"):
+        for key in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT", "BASELINE_SNAPSHOT", "PROD_RELEASE_PLAN", "COMPONENT"):
             value = os.environ[key]
             if value and (len(value) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", value)):
                 raise ValueError("Invalid Kubernetes resource name: " + key)
@@ -148,16 +163,30 @@ spec:
         os.environ["DOCKER_CONFIG"] = "/tmp/acs-registry-auth"
         component = os.environ["COMPONENT"]
         baseline, candidate = os.environ["BASELINE_REF"], os.environ["CANDIDATE_REF"]
+        baseline_snapshot = os.environ["BASELINE_SNAPSHOT"]
         previous_release = previous_snapshot = ""
         if baseline or candidate:
-            if not (baseline and candidate and component) or os.environ["RELEASE"]:
-                raise ValueError("Explicit mode requires both image refs and component, without release")
+            if not (baseline and candidate and component) or os.environ["RELEASE"] or baseline_snapshot:
+                raise ValueError("Explicit mode requires both image refs and component, without release or baseline-snapshot")
             baseline, candidate = image_ref(baseline), image_ref(candidate)
             if os.environ["SNAPSHOT"] and snapshot_image(os.environ["SNAPSHOT"], component) != candidate:
                 raise ValueError("Snapshot does not contain the explicit candidate")
+        elif baseline_snapshot:
+            release, plan, snapshot = (os.environ[k] for k in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT"))
+            if not (component and snapshot) or release or plan or os.environ["PROD_RELEASE_PLAN"]:
+                raise ValueError("Snapshot mode requires component, baseline-snapshot and snapshot, without release inputs")
+            if baseline_snapshot == snapshot:
+                raise ValueError("Baseline and candidate snapshots are identical")
+            # No archive lookup: the caller has already verified the baseline
+            # snapshot's archived Release (Released=True, matching digests).
+            if snapshot_application(baseline_snapshot) != snapshot_application(snapshot):
+                raise ValueError("Baseline and candidate snapshots belong to different applications")
+            previous_snapshot = baseline_snapshot
+            baseline = snapshot_image(baseline_snapshot, component)
+            candidate = snapshot_image(snapshot, component)
         else:
             release, plan, snapshot = (os.environ[k] for k in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT"))
-            if not all((release, plan, snapshot)) or component:
+            if not all((release, plan, snapshot)) or component or baseline_snapshot:
                 raise ValueError("Release mode requires release, releasePlan and snapshot; component comes from release")
             current = resource("release", release)
             if current["spec"]["snapshot"] != snapshot or current["spec"]["releasePlan"] != plan:
