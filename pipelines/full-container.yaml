@@ -179,10 +179,14 @@ spec:
     - name: image-prefetch-configs
       description: >
         JSON array describing OCI images to prefetch before the hermetic build.
-        Each entry specifies the argument variable, argfile, and docker-archive output path.
+        Each entry specifies the argument variable, argfile, and OCI-archive output path.
         Leave empty for projects that don't embed additional images.
       type: string
       default: ""
+    - name: additional-base-images
+      description: Digest-pinned images consumed by trusted pre-build scripts; include them in the build SBOM.
+      type: array
+      default: []
   results:
     - description: ""
       name: IMAGE_URL
@@ -289,7 +293,7 @@ spec:
         - name: SCRIPT
           value: |
             #!/usr/bin/env bash
-            set -ex
+            set -euo pipefail
             cd /var/workdir/source
             IMAGE_PREFETCH_CONFIGS='$(params.image-prefetch-configs)'
             if [[ -z "$IMAGE_PREFETCH_CONFIGS" || "$IMAGE_PREFETCH_CONFIGS" == "[]" ]]; then
@@ -311,9 +315,22 @@ spec:
                 echo "ERROR: ${var} not found in ${argfile}"
                 exit 1
               fi
-              echo "Fetching full image: ${var}=${ref} -> ${output}"
+              if [[ "$ref" != *@sha256:* ]]; then
+                echo "ERROR: ${var} must be pinned by a sha256 digest: ${ref}"
+                exit 1
+              fi
+              tagged_ref="${ref%%@sha256:*}"
+              digest_ref="${ref##*@}"
+              tagged_leaf="${tagged_ref##*/}"
+              if [[ "$tagged_leaf" != *:* ]]; then
+                echo "ERROR: ${var} needs a tag as well as a digest for the local OCI archive: ${ref}"
+                exit 1
+              fi
+              repository="${tagged_ref%:*}"
+              source_ref="${repository}@${digest_ref}"
+              echo "Fetching all platforms for ${var}=${source_ref} -> ${output} (${tagged_ref})"
               mkdir -p "$(dirname "$output")"
-              skopeo copy --override-os linux "${SKOPEO_ARGS[@]}" "docker://${ref}" "docker-archive:${output}:${ref}"
+              skopeo copy --all --remove-signatures "${SKOPEO_ARGS[@]}" "docker://${source_ref}" "oci-archive:${output}:${tagged_ref}"
               echo "  $(du -h "$output" | cut -f1) written"
             done
       runAfter:
@@ -364,6 +381,7 @@ spec:
         - name: ADDITIONAL_BASE_IMAGES
           value:
             - $(tasks.fetch-image-prefetch-configs.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
+            - $(params.additional-base-images[*])
         - name: PRIVILEGED_NESTED
           value: $(params.privileged-nested)
         - name: SQUASH
