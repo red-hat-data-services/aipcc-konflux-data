@@ -360,6 +360,10 @@ spec:
           value: $(params.build-args-file)
         - name: ADDITIONAL_SECRET
           value: $(params.additional-build-secret)
+        # Conforma requires the trusted pre-build script runner to appear in the build SBOM.
+        - name: ADDITIONAL_BASE_IMAGES
+          value:
+            - $(tasks.fetch-image-prefetch-configs.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
         - name: PRIVILEGED_NESTED
           value: $(params.privileged-nested)
         - name: SQUASH
