@@ -382,6 +382,8 @@ spec:
           value: "mapt-rhel-$(context.pipelineRun.name)"
         - name: model-names
           value: ["$(params.model-names[*])"]
+        - name: skip-text-completion
+          value: "$(tasks.create-configuration.results.is-vllm-omni)"
       runAfter:
         - pull-images
         - download-models
@@ -395,6 +397,31 @@ spec:
             value: main
           - name: pathInRepo
             value: tasks/test-inference.yaml
+    - name: test-vllm-omni-multimodal-inference
+      params:
+        - name: container-name
+          value: "$(params.container-name)"
+        - name: debug
+          value: "$(params.debug)"
+        - name: host-access-secret-name
+          value: "mapt-rhel-$(context.pipelineRun.name)"
+        - name: model-names
+          value: ["$(params.model-names[*])"]
+      runAfter:
+        - test-inference
+      when:
+        - input: $(tasks.create-configuration.results.is-vllm-omni)
+          operator: in
+          values: ["true"]
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/test-vllm-omni-multimodal-inference.yaml
   finally:
     - name: delete-vm-aws
       params:
