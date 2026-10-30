@@ -322,11 +322,11 @@ spec:
         resolver: git
         params:
           - name: url
-            value: https://github.com/jangel97/build-definitions
+            value: https://github.com/konflux-ci/container-build-catalog
           - name: revision
-            value: add-pull-secret-to-run-script-oci-ta
+            value: 9f8e323179efbdc862977fcde8cbdc0ef3d7ea05
           - name: pathInRepo
-            value: task/run-script-oci-ta/0.1/run-script-oci-ta.yaml
+            value: task/run-script-oci-ta/run-script-oci-ta.yaml
     - name: build-container
       timeout: 6h
       matrix:
