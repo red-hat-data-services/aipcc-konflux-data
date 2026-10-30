@@ -176,6 +176,17 @@ spec:
       description: Run pickle-scan on the built image to detect malicious pickle payloads in AI/ML model files
       name: run-pickle-scan
       type: string
+    - name: image-prefetch-configs
+      description: >
+        JSON array describing OCI images to prefetch before the hermetic build.
+        Each entry specifies the argument variable, argfile, and OCI-archive output path.
+        Leave empty for projects that don't embed additional images.
+      type: string
+      default: ""
+    - name: additional-base-images
+      description: Digest-pinned images consumed by trusted pre-build scripts; include them in the build SBOM.
+      type: array
+      default: []
   results:
     - description: ""
       name: IMAGE_URL
@@ -263,6 +274,76 @@ spec:
           workspace: git-auth
         - name: netrc
           workspace: netrc
+    - name: fetch-image-prefetch-configs
+      params:
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+        - name: ociStorage
+          value: $(params.output-image).image-prefetch-configs
+        - name: ociArtifactExpiresAfter
+          value: $(params.image-expires-after)
+        - name: HERMETIC
+          value: "false"
+        - name: enableSymlinkCheck
+          value: "false"
+        - name: ADDITIONAL_SECRET
+          value: $(params.additional-build-secret)
+        - name: SCRIPT_RUNNER_IMAGE
+          value: quay.io/konflux-ci/release-service-utils@sha256:b42578b8eda9853aaac89353d184358abfff8e117c95ab6981658a0f04bf7d32
+        - name: SCRIPT
+          value: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            cd /var/workdir/source
+            IMAGE_PREFETCH_CONFIGS='$(params.image-prefetch-configs)'
+            if [[ -z "$IMAGE_PREFETCH_CONFIGS" || "$IMAGE_PREFETCH_CONFIGS" == "[]" ]]; then
+              echo "No image configs requested, passthrough"
+              exit 0
+            fi
+            SKOPEO_ARGS=()
+            AUTH_FILE="/var/run/secrets/additional-secret/.dockerconfigjson"
+            if [[ -f "$AUTH_FILE" ]]; then
+              SKOPEO_ARGS+=(--authfile "$AUTH_FILE")
+              echo "Using pull secret for registry auth"
+            fi
+            echo "$IMAGE_PREFETCH_CONFIGS" | jq -c '.[]' | while read -r entry; do
+              var=$(jq -r '.var' <<< "$entry")
+              argfile=$(jq -r '.argfile' <<< "$entry")
+              output=$(jq -r '.output' <<< "$entry")
+              ref=$(grep -E "^${var}=" "$argfile" | cut -d= -f2-)
+              if [[ -z "$ref" ]]; then
+                echo "ERROR: ${var} not found in ${argfile}"
+                exit 1
+              fi
+              if [[ "$ref" != *@sha256:* ]]; then
+                echo "ERROR: ${var} must be pinned by a sha256 digest: ${ref}"
+                exit 1
+              fi
+              tagged_ref="${ref%%@sha256:*}"
+              digest_ref="${ref##*@}"
+              tagged_leaf="${tagged_ref##*/}"
+              if [[ "$tagged_leaf" != *:* ]]; then
+                echo "ERROR: ${var} needs a tag as well as a digest for the local OCI archive: ${ref}"
+                exit 1
+              fi
+              repository="${tagged_ref%:*}"
+              source_ref="${repository}@${digest_ref}"
+              echo "Fetching all platforms for ${var}=${source_ref} -> ${output} (${tagged_ref})"
+              mkdir -p "$(dirname "$output")"
+              skopeo copy --all --remove-signatures "${SKOPEO_ARGS[@]}" "docker://${source_ref}" "oci-archive:${output}:${tagged_ref}"
+              echo "  $(du -h "$output" | cut -f1) written"
+            done
+      runAfter:
+        - prefetch-dependencies
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/konflux-ci/container-build-catalog
+          - name: revision
+            value: 9f8e323179efbdc862977fcde8cbdc0ef3d7ea05
+          - name: pathInRepo
+            value: task/run-script-oci-ta/run-script-oci-ta.yaml
     - name: build-container
       timeout: 6h
       matrix:
@@ -296,12 +377,17 @@ spec:
           value: $(params.build-args-file)
         - name: ADDITIONAL_SECRET
           value: $(params.additional-build-secret)
+        # Conforma requires the trusted pre-build script runner to appear in the build SBOM.
+        - name: ADDITIONAL_BASE_IMAGES
+          value:
+            - $(tasks.fetch-image-prefetch-configs.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
+            - $(params.additional-base-images[*])
         - name: PRIVILEGED_NESTED
           value: $(params.privileged-nested)
         - name: SQUASH
           value: $(params.squash-build)
         - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+          value: $(tasks.fetch-image-prefetch-configs.results.SCRIPT_ARTIFACT)
         - name: CACHI2_ARTIFACT
           value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
         - name: IMAGE_APPEND_PLATFORM
@@ -324,7 +410,7 @@ spec:
         - name: OMIT_HISTORY
           value: $(params.omit-history)
       runAfter:
-        - prefetch-dependencies
+        - fetch-image-prefetch-configs
       taskRef:
         params:
           - name: name
