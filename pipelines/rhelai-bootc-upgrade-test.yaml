@@ -19,7 +19,7 @@ spec:
       default: "ibm-granite/granite-3.3-8b-instruct"
       description: Name of the model to test
     - name: pull-secret-name
-      default: "rhelai-bootc-pull"
+      default: "components-namespace-pull"
       description: Name of the pull secret to use for pulling the container image
     - name: rhel-ai-version
       default: "3.2.0"

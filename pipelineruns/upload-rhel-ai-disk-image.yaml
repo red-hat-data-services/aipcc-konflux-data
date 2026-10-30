@@ -17,9 +17,9 @@ spec:
     - name: image-architecture
       value: "x86_64"
 
-    # Pull secret name - this will be used to pull the container image, unique per Konflux application
+    # Pull secret name - namespace-level secret shared by components
     - name: pull-secret-name
-      value: "rhelai-bootc-3-2-pull"
+      value: "components-namespace-pull"
 
     # RHEL AI version - used in the cloud image name
     - name: rhel-ai-version
