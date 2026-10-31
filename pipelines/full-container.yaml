@@ -4,610 +4,604 @@ metadata:
   name: container-build
 spec:
   finally:
-    - name: slack-webhook-notification
+  - name: slack-webhook-notification
+    params:
+    - name: secret-name
+      value: slack-webhook
+    - name: key-name
+      value: rhel-ai-notification
+    - name: message
+      value: $(params.slack-message)
+    - name: files
+      value:
+      - $(params.slack-files[*])
+    - name: submodules
+      value:
+      - $(params.slack-submodules[*])
+    taskRef:
+      resolver: git
       params:
-        - name: secret-name
-          value: slack-webhook
-        - name: key-name
-          value: rhel-ai-notification
-        - name: message
-          value: $(params.slack-message)
-        - name: files
-          value:
-            - $(params.slack-files[*])
-        - name: submodules
-          value:
-            - $(params.slack-submodules[*])
-      taskRef:
-        params:
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-slack-webhook-notification:0.1@sha256:02842e9c752056c47a409f69ed462cfd38cbd6b15facb796564a610b549222ea
-          - name: name
-            value: slack-webhook-notification
-          - name: kind
-            value: Task
-        resolver: bundles
-      when:
-        - input: $(tasks.status)
-          operator: in
-          values: ["Completed", "Succeeded"]
-        - input: $(params.send-slack-notification)
-          operator: in
-          values: ["true"]
+      - name: url
+        value: https://github.com/konflux-ci/tekton-integration-catalog.git
+      - name: revision
+        value: 5d9486140df10bc8a0b8e78b6ee6a6138de5bf53
+      - name: pathInRepo
+        value: tasks/slack-webhook-notification/0.1/slack-webhook-notification.yaml
+    when:
+    - input: $(tasks.status)
+      operator: in
+      values: ["Completed", "Succeeded"]
+    - input: $(params.send-slack-notification)
+      operator: in
+      values: ["true"]
   params:
-    - description: Source Repository URL
-      name: git-url
-      type: string
-    - default: ""
-      description: Revision of the Source Repository
-      name: revision
-      type: string
-    - description: Fully Qualified Output Image
-      name: output-image
-      type: string
-    - default: .
-      description: Path to the source code of an application's component from where to build image.
-      name: path-context
-      type: string
-    - default: Dockerfile
-      description: Path to the Dockerfile inside the context specified by parameter path-context
-      name: dockerfile
-      type: string
-    - default: "false"
-      description: Skip checks against built image
-      name: skip-checks
-      type: string
-    - default: "false"
-      description: Execute the build with network isolation
-      name: hermetic
-      type: string
-    - default: ""
-      description: Build dependencies to be prefetched by Cachi2
-      name: prefetch-input
-      type: string
-    - default: ""
-      description: Python package index URL to use when prefetching pip dependencies
-      name: pip-index-url
-      type: string
-    - default: ""
-      description: Image tag expiration time, time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively.
-      name: image-expires-after
-    - default: "true"
-      description: Build a source image.
-      name: build-source-image
-      type: string
-    - default: []
-      description: Array of --build-arg values ("arg=value" strings) for buildah
-      name: build-args
-      type: array
-    - default: ""
-      description: Parameter for ADD_CAPABILITIES for the container build
-      name: add-capabilities
-      type: string
-    - default: ""
-      description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
-      name: build-args-file
-      type: string
-    - name: additional-build-secret
-      description: Additional secret to use while building
-      type: string
-      default: ""
-    - name: squash-build
-      description: Squash all new and previous layers added as a part of this build, as per --squash
-      default: "false"
-      type: string
-    - name: send-slack-notification
-      default: "false"
-      description: Send slack notification on completed build
-    - name: slack-message
-      description: Message to be sent
-      type: string
-      default: ""
-    - name: slack-submodules
-      type: array
-      description: List of submodules name to dump in the slack notif. Git log since previous submodule commit will be added to the message. The previous submodule commit is found by looking at the previous commit in the repository that declares the submodules.
-      default: []
-    - name: slack-files
-      type: array
-      description: List of file to dump. The content will be added to the slack message.
-      default: []
-    - name: additional-tags
-      description: Additional tags to apply to the built image
-      type: array
-      default: []
-    - default: "false"
-      description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
-      name: privileged-nested
-      type: string
-    - name: build-platforms
-      description: List of platforms to build the container images on. The available
-        set of values is determined by the configuration of the multi-platform-controller.
-      type: array
-      default:
-        - linux-d160-m4xlarge/amd64
-    - name: build-image-index
-      description: Add built image into an image index
-      type: string
-      default: "true"
-    - name: buildah-format
-      description: The manifest format to use for built images
-      type: string
-      default: docker
-    - name: snyk-project-name
-      description: Snyk project name
-      type: string
-      default: ""
-    - name: snyk-org
-      description: Snyk Org
-      type: string
-      default: ""
-    - name: activation-key
-      description: name of the secret of the activation-key for entitlement builds
-      type: string
-      default: activation-key
-    - name: labels
-      description: Additional key=value labels to apply to the built image
-      type: array
-      default: []
-    - name: contextualize-sbom
-      description: Determines if SBOM will be contextualized on the build-container task.
-      type: string
-      default: "false"
-    - default: "false"
-      description: Enable cache proxy configuration
-      name: enable-cache-proxy
-    - default: "true"
-      description: Enable package registry proxy for prefetch dependencies
-      name: enable-package-registry-proxy
-      type: string
-    - name: source-date-epoch
-      type: string
-      default: ''
-      description: Sets the image created time and the SOURCE_DATE_EPOCH build argument. On its own, it does not change file timestamps inside the layers (set rewrite-timestamp to "true" for that). Leave empty to keep the actual build time.
-    - name: rewrite-timestamp
-      type: string
-      default: 'false'
-      description: When "true", clamp file modification times in the image layers to at most source-date-epoch. Does nothing unless source-date-epoch is set.
-    - name: omit-history
-      type: string
-      default: 'false'
-      description: When "true", omit the build history (history timestamps, layer metadata, etc.) from the resulting image.
-    - default: "false"
-      description: Run pickle-scan on the built image to detect malicious pickle payloads in AI/ML model files
-      name: run-pickle-scan
-      type: string
+  - description: Source Repository URL
+    name: git-url
+    type: string
+  - default: ""
+    description: Revision of the Source Repository
+    name: revision
+    type: string
+  - description: Fully Qualified Output Image
+    name: output-image
+    type: string
+  - default: .
+    description: Path to the source code of an application's component from where to build image.
+    name: path-context
+    type: string
+  - default: Dockerfile
+    description: Path to the Dockerfile inside the context specified by parameter path-context
+    name: dockerfile
+    type: string
+  - default: "false"
+    description: Skip checks against built image
+    name: skip-checks
+    type: string
+  - default: "false"
+    description: Execute the build with network isolation
+    name: hermetic
+    type: string
+  - default: ""
+    description: Build dependencies to be prefetched by Cachi2
+    name: prefetch-input
+    type: string
+  - default: ""
+    description: Python package index URL to use when prefetching pip dependencies
+    name: pip-index-url
+    type: string
+  - default: ""
+    description: Image tag expiration time, time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively.
+    name: image-expires-after
+  - default: "true"
+    description: Build a source image.
+    name: build-source-image
+    type: string
+  - default: []
+    description: Array of --build-arg values ("arg=value" strings) for buildah
+    name: build-args
+    type: array
+  - default: ""
+    description: Parameter for ADD_CAPABILITIES for the container build
+    name: add-capabilities
+    type: string
+  - default: ""
+    description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
+    name: build-args-file
+    type: string
+  - name: additional-build-secret
+    description: Additional secret to use while building
+    type: string
+    default: ""
+  - name: squash-build
+    description: Squash all new and previous layers added as a part of this build, as per --squash
+    default: "false"
+    type: string
+  - name: send-slack-notification
+    default: "false"
+    description: Send slack notification on completed build
+  - name: slack-message
+    description: Message to be sent
+    type: string
+    default: ""
+  - name: slack-submodules
+    type: array
+    description: List of submodules name to dump in the slack notif. Git log since previous submodule commit will be added to the message. The previous submodule commit is found by looking at the previous commit in the repository that declares the submodules.
+    default: []
+  - name: slack-files
+    type: array
+    description: List of file to dump. The content will be added to the slack message.
+    default: []
+  - name: additional-tags
+    description: Additional tags to apply to the built image
+    type: array
+    default: []
+  - default: "false"
+    description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
+    name: privileged-nested
+    type: string
+  - name: build-platforms
+    description: List of platforms to build the container images on. The available set of values is determined by the configuration of the multi-platform-controller.
+    type: array
+    default:
+    - linux-d160-m4xlarge/amd64
+  - name: build-image-index
+    description: Add built image into an image index
+    type: string
+    default: "true"
+  - name: buildah-format
+    description: The manifest format to use for built images
+    type: string
+    default: docker
+  - name: snyk-project-name
+    description: Snyk project name
+    type: string
+    default: ""
+  - name: snyk-org
+    description: Snyk Org
+    type: string
+    default: ""
+  - name: activation-key
+    description: name of the secret of the activation-key for entitlement builds
+    type: string
+    default: activation-key
+  - name: labels
+    description: Additional key=value labels to apply to the built image
+    type: array
+    default: []
+  - name: contextualize-sbom
+    description: Determines if SBOM will be contextualized on the build-container task.
+    type: string
+    default: "false"
+  - default: "false"
+    description: Enable cache proxy configuration
+    name: enable-cache-proxy
+  - default: "true"
+    description: Enable package registry proxy for prefetch dependencies
+    name: enable-package-registry-proxy
+    type: string
+  - name: source-date-epoch
+    type: string
+    default: ''
+    description: Sets the image created time and the SOURCE_DATE_EPOCH build argument. On its own, it does not change file timestamps inside the layers (set rewrite-timestamp to "true" for that). Leave empty to keep the actual build time.
+  - name: rewrite-timestamp
+    type: string
+    default: 'false'
+    description: When "true", clamp file modification times in the image layers to at most source-date-epoch. Does nothing unless source-date-epoch is set.
+  - name: omit-history
+    type: string
+    default: 'false'
+    description: When "true", omit the build history (history timestamps, layer metadata, etc.) from the resulting image.
+  - default: "false"
+    description: Run pickle-scan on the built image to detect malicious pickle payloads in AI/ML model files
+    name: run-pickle-scan
+    type: string
   results:
-    - description: ""
-      name: IMAGE_URL
-      value: $(tasks.build-image-index.results.IMAGE_URL)
-    - description: ""
-      name: IMAGE_DIGEST
-      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-    - description: ""
-      name: CHAINS-GIT_URL
-      value: $(tasks.clone-repository.results.url)
-    - description: ""
-      name: CHAINS-GIT_COMMIT
-      value: $(tasks.clone-repository.results.commit)
+  - description: ""
+    name: IMAGE_URL
+    value: $(tasks.build-image-index.results.IMAGE_URL)
+  - description: ""
+    name: IMAGE_DIGEST
+    value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+  - description: ""
+    name: CHAINS-GIT_URL
+    value: $(tasks.clone-repository.results.url)
+  - description: ""
+    name: CHAINS-GIT_COMMIT
+    value: $(tasks.clone-repository.results.commit)
   tasks:
-    - name: init
+  - name: init
+    params:
+    - name: enable-cache-proxy
+      value: $(params.enable-cache-proxy)
+    taskRef:
       params:
-        - name: enable-cache-proxy
-          value: $(params.enable-cache-proxy)
-      taskRef:
-        params:
-          - name: name
-            value: init
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-init:0.4.3@sha256:7854d7babe4136e53e337f6433d952532314433b48bb62b422ddc02700934d85
-          - name: kind
-            value: task
-        resolver: bundles
-    - name: clone-repository
+      - name: name
+        value: init
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-init:0.4.3@sha256:e3f908cd8ba002db70bc1264f0591c9c946fefa78678e8600fbd9eb3aac322dd
+      - name: kind
+        value: task
+      resolver: bundles
+  - name: clone-repository
+    params:
+    - name: url
+      value: $(params.git-url)
+    - name: revision
+      value: $(params.revision)
+    - name: depth
+      value: 10
+    - name: enableSymlinkCheck
+      value: false
+    - name: ociStorage
+      value: $(params.output-image).git
+    - name: ociArtifactExpiresAfter
+      value: $(params.image-expires-after)
+    runAfter:
+    - init
+    taskRef:
       params:
-        - name: url
-          value: $(params.git-url)
-        - name: revision
-          value: $(params.revision)
-        - name: depth
-          value: 10
-        - name: enableSymlinkCheck
-          value: false
-        - name: ociStorage
-          value: $(params.output-image).git
-        - name: ociArtifactExpiresAfter
-          value: $(params.image-expires-after)
-      runAfter:
-        - init
-      taskRef:
-        params:
-          - name: name
-            value: git-clone-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.2.6@sha256:a3678910c2bf9187a66a96066193cb41046fbb7097160bf2be6a374ed5e49d30
-          - name: kind
-            value: task
-        resolver: bundles
-      workspaces:
-        - name: basic-auth
-          workspace: git-auth
-    - name: prefetch-dependencies
+      - name: name
+        value: git-clone-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.2.6@sha256:590db5c909fa2f3b89cb46e10adb48d278ed7f259d7f613bc2c2b775504c9c11
+      - name: kind
+        value: task
+      resolver: bundles
+    workspaces:
+    - name: basic-auth
+      workspace: git-auth
+  - name: prefetch-dependencies
+    params:
+    - name: input
+      value: $(params.prefetch-input)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+    - name: ociStorage
+      value: $(params.output-image).prefetch
+    - name: ociArtifactExpiresAfter
+      value: $(params.image-expires-after)
+    - name: ACTIVATION_KEY
+      value: $(params.activation-key)
+    - name: enable-package-registry-proxy
+      value: $(params.enable-package-registry-proxy)
+    - name: pip-index-url
+      value: $(params.pip-index-url)
+    runAfter:
+    - clone-repository
+    taskRef:
       params:
-        - name: input
-          value: $(params.prefetch-input)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
-        - name: ociStorage
-          value: $(params.output-image).prefetch
-        - name: ociArtifactExpiresAfter
-          value: $(params.image-expires-after)
-        - name: ACTIVATION_KEY
-          value: $(params.activation-key)
-        - name: enable-package-registry-proxy
-          value: $(params.enable-package-registry-proxy)
-        - name: pip-index-url
-          value: $(params.pip-index-url)
-      runAfter:
-        - clone-repository
-      taskRef:
-        params:
-          - name: name
-            value: prefetch-dependencies-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.10.3@sha256:0c386f2c26b46b978280c5c54caac26bcd524975f8f7cc06bb080ba00eae3ad4
-          - name: kind
-            value: task
-        resolver: bundles
-      workspaces:
-        - name: git-basic-auth
-          workspace: git-auth
-        - name: netrc
-          workspace: netrc
-    - name: build-container
-      timeout: 6h
-      matrix:
-        params:
-          - name: PLATFORM
-            value:
-              - $(params.build-platforms)
-      params:
-        - name: IMAGE
-          value: $(params.output-image)
-        - name: DOCKERFILE
-          value: $(params.dockerfile)
-        - name: CONTEXT
-          value: $(params.path-context)
-        - name: HERMETIC
-          value: $(params.hermetic)
-        - name: BUILDAH_FORMAT
-          value: $(params.buildah-format)
-        - name: PREFETCH_INPUT
-          value: $(params.prefetch-input)
-        - name: IMAGE_EXPIRES_AFTER
-          value: $(params.image-expires-after)
-        - name: COMMIT_SHA
-          value: $(tasks.clone-repository.results.commit)
-        - name: BUILD_ARGS
-          value:
-            - $(params.build-args[*])
-        - name: ADD_CAPABILITIES
-          value: $(params.add-capabilities)
-        - name: BUILD_ARGS_FILE
-          value: $(params.build-args-file)
-        - name: ADDITIONAL_SECRET
-          value: $(params.additional-build-secret)
-        - name: PRIVILEGED_NESTED
-          value: $(params.privileged-nested)
-        - name: SQUASH
-          value: $(params.squash-build)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-        - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
-        - name: IMAGE_APPEND_PLATFORM
-          value: "true"
-        - name: LABELS
-          value:
-          - url=$(params.git-url)
-          - release=$(tasks.clone-repository.results.commit-timestamp)
-          - git.url=$(params.git-url)
-          - git.commit=$(params.revision)
-          - $(params.labels[*])
-        - name: ACTIVATION_KEY
-          value: $(params.activation-key)
-        - name: CONTEXTUALIZE_SBOM
-          value: $(params.contextualize-sbom)
-        - name: SOURCE_DATE_EPOCH
-          value: $(params.source-date-epoch)
-        - name: REWRITE_TIMESTAMP
-          value: $(params.rewrite-timestamp)
-        - name: OMIT_HISTORY
-          value: $(params.omit-history)
-      runAfter:
-        - prefetch-dependencies
-      taskRef:
-        params:
-          - name: name
-            value: buildah-remote-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.12.2@sha256:a68dce8ed79be8d9e10d98bd2b56895c27fc34f1ed7d67cbc9ec0a91d64cf641
-          - name: kind
-            value: task
-        resolver: bundles
-    - name: build-image-index
-      params:
-        - name: IMAGE
-          value: $(params.output-image)
-        - name: ALWAYS_BUILD_INDEX
-          value: $(params.build-image-index)
-        - name: BUILDAH_FORMAT
-          value: $(params.buildah-format)
-        - name: IMAGES
-          value:
-          - $(tasks.build-container.results.IMAGE_REF[*])
-      runAfter:
-        - build-container
-      taskRef:
-        params:
-          - name: name
-            value: build-image-index
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.4@sha256:654446d8ec028b20ed6ada8a96486ff16692a25192755aa04a99cea8e0afb7e2
-          - name: kind
-            value: task
-        resolver: bundles
-    - name: build-source-image
-      params:
-        - name: BINARY_IMAGE
-          value: "$(tasks.build-image-index.results.IMAGE_URL)"
-        - name: BINARY_IMAGE_DIGEST
-          value: "$(tasks.build-image-index.results.IMAGE_DIGEST)"
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-        - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: source-build-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-source-build-oci-ta:0.3.2@sha256:45091b5022754d452b4de60c7d7f4c6e03626efff55f96e9af937400fe3506eb
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.build-source-image)
-          operator: in
-          values:
-            - "true"
-    - name: deprecated-base-image-check
-      params:
-        - name: IMAGE_URL
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: IMAGE_DIGEST
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: deprecated-image-check
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-deprecated-image-check:0.5@sha256:0ccc688a77e9b7b0b8973c132a1e840844137e77f887be4a0bec8893b0776872
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-    - matrix:
-        params:
-        - name: image-platform
-          value:
-          - $(params.build-platforms)
-      name: clair-scan
-      params:
-      - name: image-digest
-        value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-      - name: image-url
-        value: $(tasks.build-image-index.results.IMAGE_URL)
-      runAfter:
-      - build-image-index
-      taskRef:
-        params:
-        - name: name
-          value: clair-scan
-        - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.4@sha256:219964897ac4d5a9473ec297a1b39ae078a34b76b45d04c4672bd569cc295c29
-        - name: kind
-          value: task
-        resolver: bundles
-      when:
-      - input: $(params.skip-checks)
-        operator: in
-        values:
-        - "false"
-    - name: sast-snyk-check
-      timeout: 2h
-      params:
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: image-digest
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-        - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
-        - name: ARGS
-          value: "-d --report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: sast-snyk-check-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.5@sha256:17b9587eba53fabaab35061275306bfe1f99661d55e14e22f62321fa7cb5ff3e
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-    - matrix:
-        params:
-          - name: image-arch
-            value:
-              - $(params.build-platforms)
-      name: clamav-scan
-      timeout: 6h
-      params:
-        - name: image-digest
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: clamav-scan
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.3.4@sha256:3203cd3bde82d9e4d1beb5f1366942346800cff89e392c920733eb0ea78d731b
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-    - name: apply-tags
-      params:
-        - name: IMAGE_URL
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: IMAGE_DIGEST
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: ADDITIONAL_TAGS
-          value:
-            - $(params.additional-tags[*])
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: apply-tags
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.3.1@sha256:c177fc2b2482b1299e713c51bf258eba4972c016ef260d9f45335c2550dc7b2b
-          - name: kind
-            value: task
-        resolver: bundles
-    - name: pickle-scan
-      params:
-        - name: image-digest
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: pickle-scan-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-pickle-scan-oci-ta:0.1.2@sha256:669e9575e86b4de6bd8802741175666e4eb783f037ce7cdbe084c1adde24f1e4
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.run-pickle-scan)
-          operator: in
-          values:
-            - "true"
-    - name: rpms-signature-scan
-      params:
-        - name: image-digest
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: rpms-signature-scan
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-rpms-signature-scan:0.2.2@sha256:9ef4dabd53e823e3139b99c8de708be4ee759d63b32982847929df19ab75b2f8
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-    - name: sast-shell-check
-      params:
-        - name: image-digest
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-        - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: sast-shell-check-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-shell-check-oci-ta:0.1@sha256:d00c884c78489a52dc638e6ced0a01429670d0754f5b1305ad576709cf660312
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-    - name: sast-unicode-check
-      params:
-        - name: image-digest
-          value: $(tasks.build-image-index.results.IMAGE_DIGEST)
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-        - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
-      runAfter:
-        - build-image-index
-      taskRef:
-        params:
-          - name: name
-            value: sast-unicode-check-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.4@sha256:15d654c9576b9c4ee1f78b09fce541acf9afe33f1c2363fd6219a79dbf62c95d
-          - name: kind
-            value: task
-        resolver: bundles
-      when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-  workspaces:
-    - name: git-auth
-      optional: true
+      - name: name
+        value: prefetch-dependencies-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.11.0@sha256:6c63bc1ef05e823bb07fe73b4626a82b602ee3e6d3315fc5afa58dd5c532c270
+      - name: kind
+        value: task
+      resolver: bundles
+    workspaces:
+    - name: git-basic-auth
+      workspace: git-auth
     - name: netrc
-      optional: true
+      workspace: netrc
+  - name: build-container
+    timeout: 6h
+    matrix:
+      params:
+      - name: PLATFORM
+        value:
+        - $(params.build-platforms)
+    params:
+    - name: IMAGE
+      value: $(params.output-image)
+    - name: DOCKERFILE
+      value: $(params.dockerfile)
+    - name: CONTEXT
+      value: $(params.path-context)
+    - name: HERMETIC
+      value: $(params.hermetic)
+    - name: BUILDAH_FORMAT
+      value: $(params.buildah-format)
+    - name: PREFETCH_INPUT
+      value: $(params.prefetch-input)
+    - name: IMAGE_EXPIRES_AFTER
+      value: $(params.image-expires-after)
+    - name: COMMIT_SHA
+      value: $(tasks.clone-repository.results.commit)
+    - name: BUILD_ARGS
+      value:
+      - $(params.build-args[*])
+    - name: ADD_CAPABILITIES
+      value: $(params.add-capabilities)
+    - name: ADDITIONAL_SECRET
+      value: $(params.additional-build-secret)
+    - name: PRIVILEGED_NESTED
+      value: $(params.privileged-nested)
+    - name: SQUASH
+      value: $(params.squash-build)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    - name: IMAGE_APPEND_PLATFORM
+      value: "true"
+    - name: LABELS
+      value:
+      - url=$(params.git-url)
+      - release=$(tasks.clone-repository.results.commit-timestamp)
+      - git.url=$(params.git-url)
+      - git.commit=$(params.revision)
+      - $(params.labels[*])
+    - name: ACTIVATION_KEY
+      value: $(params.activation-key)
+    - name: CONTEXTUALIZE_SBOM
+      value: $(params.contextualize-sbom)
+    - name: SOURCE_DATE_EPOCH
+      value: $(params.source-date-epoch)
+    - name: REWRITE_TIMESTAMP
+      value: $(params.rewrite-timestamp)
+    - name: OMIT_HISTORY
+      value: $(params.omit-history)
+    - name: BUILD_ARGS_FILES
+      value:
+      - $(params.build-args-file)
+    - name: PREFETCH_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.PREFETCH_ARTIFACT)
+    runAfter:
+    - prefetch-dependencies
+    taskRef:
+      params:
+      - name: name
+        value: buildah-remote-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.14.1@sha256:612f539c5c45cb4fe2989695f988069245065a16e322888eeb3347eef9748471
+      - name: kind
+        value: task
+      resolver: bundles
+  - name: build-image-index
+    params:
+    - name: IMAGE
+      value: $(params.output-image)
+    - name: ALWAYS_BUILD_INDEX
+      value: $(params.build-image-index)
+    - name: BUILDAH_FORMAT
+      value: $(params.buildah-format)
+    - name: IMAGES
+      value:
+      - $(tasks.build-container.results.IMAGE_REF[*])
+    runAfter:
+    - build-container
+    taskRef:
+      params:
+      - name: name
+        value: build-image-index
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.4@sha256:daa950c95b818de4db643bc9d38d76abe0d0277cb4b0a7973f5dbaef5fe935b3
+      - name: kind
+        value: task
+      resolver: bundles
+  - name: build-source-image
+    params:
+    - name: BINARY_IMAGE
+      value: "$(tasks.build-image-index.results.IMAGE_URL)"
+    - name: BINARY_IMAGE_DIGEST
+      value: "$(tasks.build-image-index.results.IMAGE_DIGEST)"
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    - name: PREFETCH_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.PREFETCH_ARTIFACT)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: source-build-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-source-build-oci-ta:0.4.0@sha256:71bd384a9c3daf5b4299e7ee2691a5073a49168ec1a31ed58ffec30d6dee5c84
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.build-source-image)
+      operator: in
+      values:
+      - "true"
+  - name: deprecated-base-image-check
+    params:
+    - name: IMAGE_URL
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - name: IMAGE_DIGEST
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: deprecated-image-check
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-deprecated-image-check:0.5@sha256:81b7cad8d5fd0148b157d622f4064f57d38aa33c142275050c8a4727d1e2144c
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  - matrix:
+      params:
+      - name: image-platform
+        value:
+        - $(params.build-platforms)
+    name: roxctl-scan
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: roxctl-scan
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-roxctl-scan:0.1@sha256:41ec2c60fa2becba661a0e5178a6a320fe90db734ccdc58e3da4707ef8645d34
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  - name: sast-snyk-check
+    timeout: 2h
+    params:
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    - name: ARGS
+      value: "-d --report --org=$(params.snyk-org) --project-name=$(params.snyk-project-name)"
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: sast-snyk-check-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.5.1@sha256:53443febc3a87ea6d4baacffc70d6f7dbdd1b4e69e0852337661097c73433519
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  - matrix:
+      params:
+      - name: image-arch
+        value:
+        - $(params.build-platforms)
+    name: clamav-scan
+    timeout: 6h
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: clamav-scan
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.3.4@sha256:79d5b56151a4bab17ed6f49fad19e62306ec74533120c8739318657406b958de
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  - name: apply-tags
+    params:
+    - name: IMAGE_URL
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - name: IMAGE_DIGEST
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: ADDITIONAL_TAGS
+      value:
+      - $(params.additional-tags[*])
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: apply-tags
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.3.2@sha256:a77e61465d4296611186dab48cabfaa5b3f8d8383831f80684ed98ce3ac02e9f
+      - name: kind
+        value: task
+      resolver: bundles
+  - name: pickle-scan
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: pickle-scan-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-pickle-scan-oci-ta:0.1.2@sha256:fec06b2852b9295cd6b79bb54d9c3203e10dc568383adcef5e8808369fc56cf2
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.run-pickle-scan)
+      operator: in
+      values:
+      - "true"
+  - name: rpms-signature-scan
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: rpms-signature-scan
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-rpms-signature-scan:0.2.2@sha256:a09426471bb6300723ccca8f212cd71621db60ce1acf22bc0eef4e3ba17034de
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  - name: sast-shell-check
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: sast-shell-check-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-sast-shell-check-oci-ta:0.1.1@sha256:83722286ec3297e3f66b0c220cec8895e0f745337e464c1d1c038ed737cf69fd
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  - name: sast-unicode-check
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    runAfter:
+    - build-image-index
+    taskRef:
+      params:
+      - name: name
+        value: sast-unicode-check-oci-ta
+      - name: bundle
+        value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.4.1@sha256:2ee89730856f542d851d99b5d945963583a840c295354dc4257a0052841e35ab
+      - name: kind
+        value: task
+      resolver: bundles
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+  workspaces:
+  - name: git-auth
+    optional: true
+  - name: netrc
+    optional: true
