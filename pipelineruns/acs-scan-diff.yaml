@@ -38,6 +38,11 @@ spec:
     # the snapshot component images. This pipeline does no archive lookup.
     # Explicit-ref mode only: optionally set snapshot to publish annotations
     # from the release-account task. Without it, logs/results only.
+    # Build-parity scans: client default timeouts/retries, no forced rescan,
+    # cached scans accepted, provenance marked non-fresh, annotation skipped.
+    # Leave unset for the default forced fresh scan.
+    # - name: scan-mode
+    #   value: build
   pipelineRef:
     resolver: git
     params:
@@ -48,4 +53,5 @@ spec:
       - name: pathInRepo
         value: pipelines/acs-scan-diff.yaml
   timeouts:
-    pipeline: 1h20m
+    # resolve 15m + scan 2h + annotate 5m
+    pipeline: 2h20m

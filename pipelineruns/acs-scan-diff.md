@@ -69,6 +69,41 @@ The component's candidate digest must match the Snapshot. Annotation
 checks resourceVersion to reject concurrent edits; successful runs are otherwise
 last-writer-wins. Failed runs do not erase earlier evidence: check the producing run.
 
+### Match the ACS build scanner settings
+
+`scan-mode` selects how the scan Task calls the same pinned `roxctl` image
+against the same Central endpoint:
+
+- `fresh` (default) is the mode described above and is unchanged: per-manifest
+  `roxctl image scan --timeout=20m --force --include-snoozed --format=json`, and
+  every returned scan timestamp must fall inside its request window.
+- `build` mirrors the ACS build catalog's scan invocation, so a build-parity
+  failure or retry pattern can be reproduced without changing the scanner:
+  no `--force`, no `--timeout`, no retry override and no `--include-snoozed`,
+  and therefore client default timeouts/retries. TLS verification keeps the
+  client default (this pipeline never sets `--insecure-skip-tls-verify`).
+  `--format=json` is retained only because it is the serialization the
+  comparison parses; it is the one deliberate deviation from the catalog
+  command, not a change to what gets scanned.
+
+Build mode still enforces the same digest, schema, platform-coverage and
+scan-availability validation, but ACS may answer from its cache, so a scan
+timestamp is only required to be well formed and timezone-aware. The evidence
+records `scan_mode: build` with `force_rescan: false` and
+`include_snoozed: false`, and its caveat says the delta is not fresh-scan
+evidence. Such results never annotate a Snapshot: the `annotate` task is gated
+on `scan-mode == fresh`, and independently rejects a comparison whose
+provenance is not labeled `scan_mode: fresh` with forced scans including
+snoozed findings. Unknown modes fail before any scan starts.
+
+### Timeouts and total budget
+
+The `scan` Task allows 2h, matching the 2h observed for the catalog scan on the
+same images. The resolver is capped at 15m and annotation at 5m, so the example
+PipelineRun allows 2h20m in total. Fresh mode keeps its unchanged 20m client
+timeout per request, so a pair that needs many retries can still exhaust the 2h
+scan budget; the run then fails instead of producing partial evidence.
+
 ### Resolve a baseline from an existing release
 
 Instead of `component`, `baseline-ref`, and `candidate-ref`, supply `release`,
@@ -116,9 +151,10 @@ API but must be validated against the deployed version before rollout.
 After the run ends, require its `Succeeded` condition to be `True` before using
 any results. A successful scan with CVEs is not a policy failure. Authentication,
 missing scan data, stale/partial coverage, wrong digests or mismatched platforms
-are failures, not empty CVE lists. The client must support forced scans; each
-returned scan timestamp must fall within its request window with five minutes
-of clock-skew allowance. Native protobuf JSON may omit empty repeated fields;
+are failures, not empty CVE lists. The client must support forced scans; in
+fresh mode each returned scan timestamp must fall within its request window with
+five minutes of clock-skew allowance. Build mode only requires a well-formed
+timestamp. Native protobuf JSON may omit empty repeated fields;
 those are accepted only within an otherwise valid, digest-bound, timestamped scan.
 
 For plain JSON without the `tkn` log prefixes:

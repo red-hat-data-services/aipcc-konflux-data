@@ -7,7 +7,9 @@ spec:
     Publish a successful ACS comparison result to its candidate Snapshot.
     Runs under the release account, independently of ACS authentication.
     Validates result provenance, image bindings and CVE-set consistency before
-    patching the existing evidence annotations. No scans, uploads or approval.
+    patching the existing evidence annotations. Only fresh-mode provenance is
+    publishable: build-parity or unlabeled comparisons are rejected, never
+    annotated. No scans, uploads or approval.
     An old annotation is not evidence for this run: verify pipeline_run and
     require the producing PipelineRun to have succeeded.
   params:
@@ -102,6 +104,10 @@ spec:
             raise ValueError("Expected immutable code revision")
         if result.get("force_rescan") is not True or result.get("include_snoozed") is not True:
             raise ValueError("Expected forced scans including snoozed findings")
+        # Defense in depth for build-parity scans: the mode label must agree
+        # with the forced-scan provenance before any annotation is written.
+        if result.get("scan_mode") != "fresh":
+            raise ValueError("Expected fresh scan provenance")
         if not isinstance(result.get("evidence"), str) or not result["evidence"]:
             raise ValueError("Missing evidence caveat")
         if datetime.fromisoformat(result["scanned_at"].replace("Z", "+00:00")).tzinfo is None:
