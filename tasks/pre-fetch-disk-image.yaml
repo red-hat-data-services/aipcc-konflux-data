@@ -1,0 +1,186 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: pre-fetch-disk-image
+spec:
+  description: |
+    Fetch pre-built disk images (qcow2) that a hermetic container build needs.
+
+    The disk images are published as OCI artifacts by the build-vm-image
+    pipeline. Pulling them needs network access, so it cannot happen inside
+    a hermetic build. This task runs before the build with network access
+    and stores the pulled files inside the source trusted artifact, so the
+    build task restores them as part of its normal source restoration and
+    the Containerfile can COPY them instead of pulling at build time.
+
+    Artifact references are read from the build args file (the same file the
+    build already uses), so Konflux nudge MRs keep them current without any
+    duplicated digest in the pipeline definition.
+  params:
+    - name: SOURCE_ARTIFACT
+      description: The trusted artifact holding the cloned source
+      type: string
+    - name: ociStorage
+      description: The OCI repository where the trusted artifact is stored
+      type: string
+    - name: ociArtifactExpiresAfter
+      description: Expiration of the trusted artifact
+      type: string
+    - name: BUILD_ARGS_FILE
+      description: |
+        Build args file, relative to the source root, that holds the artifact
+        references. Required: the task fails when it is missing from the source.
+      type: string
+    - name: ARTIFACT_ARG_AMD64
+      description: Name of the build arg holding the amd64 disk image reference
+      type: string
+      default: OCI_ARTIFACT_AMD64
+    - name: ARTIFACT_ARG_ARM64
+      description: Name of the build arg holding the arm64 disk image reference
+      type: string
+      default: OCI_ARTIFACT_ARM64
+    - name: ORAS_VERSION
+      description: oras CLI version used to pull the artifacts
+      type: string
+      default: "1.2.2"
+    - name: ORAS_SHA256_AMD64
+      description: Checksum of the pinned oras release for x86_64
+      type: string
+      default: "bff970346470e5ef888e9f2c0bf7f8ee47283f5a45207d6e7a037da1fb0eae0d"
+    - name: ORAS_SHA256_ARM64
+      description: Checksum of the pinned oras release for aarch64
+      type: string
+      default: "edd7195cbb8ba56c29ede413eefa10c8026201d63326017cd315841b4063aa56"
+  results:
+    - name: SOURCE_ARTIFACT
+      description: The trusted artifact with the disk images added to the source
+  volumes:
+    - name: workdir
+      emptyDir: {}
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /var/workdir
+        name: workdir
+  workspaces:
+    - name: registry-auth
+      description: Secret holding the registry credentials used to pull the disk images
+  steps:
+    - name: use-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:23953da08db809f841120214055aeb238bc553368e366feb58495d5a5493b19a
+      args:
+        - use
+        - $(params.SOURCE_ARTIFACT)=/var/workdir/source
+      computeResources:
+        limits:
+          memory: 512Mi
+        requests:
+          cpu: 250m
+          memory: 512Mi
+    - name: pull-disk-images
+      image: registry.access.redhat.com/ubi9/ubi:9.8-1793580630
+      workingDir: /var/workdir/source
+      env:
+        - name: BUILD_ARGS_FILE
+          value: $(params.BUILD_ARGS_FILE)
+        - name: ARTIFACT_ARG_AMD64
+          value: $(params.ARTIFACT_ARG_AMD64)
+        - name: ARTIFACT_ARG_ARM64
+          value: $(params.ARTIFACT_ARG_ARM64)
+        - name: ORAS_VERSION
+          value: $(params.ORAS_VERSION)
+        - name: ORAS_SHA256_AMD64
+          value: $(params.ORAS_SHA256_AMD64)
+        - name: ORAS_SHA256_ARM64
+          value: $(params.ORAS_SHA256_ARM64)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if [ ! -f "${BUILD_ARGS_FILE}" ]; then
+            echo "ERROR: build args file ${BUILD_ARGS_FILE} not found in the source" >&2
+            exit 1
+        fi
+
+        # Read one "KEY=value" entry out of the build args file, ignoring
+        # commented lines and surrounding whitespace.
+        get_arg() {
+            awk -F= -v key="$1" '
+                /^[[:space:]]*#/ { next }
+                {
+                    k = $1
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+                    if (k != key) { next }
+                    v = substr($0, index($0, "=") + 1)
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+                    print v
+                    exit
+                }
+            ' "${BUILD_ARGS_FILE}"
+        }
+
+        amd64_ref="$(get_arg "${ARTIFACT_ARG_AMD64}")"
+        arm64_ref="$(get_arg "${ARTIFACT_ARG_ARM64}")"
+
+        for ref in "${amd64_ref}" "${arm64_ref}"; do
+            case "${ref}" in
+                *PLACEHOLDER*|"")
+                    echo "ERROR: ${ARTIFACT_ARG_AMD64}/${ARTIFACT_ARG_ARM64} in ${BUILD_ARGS_FILE} is empty or still a placeholder" >&2
+                    exit 1
+                    ;;
+            esac
+        done
+
+        echo "amd64 artifact: ${amd64_ref}"
+        echo "arm64 artifact: ${arm64_ref}"
+
+        case "$(uname -m)" in
+            x86_64)  oras_arch=amd64; checksum="${ORAS_SHA256_AMD64}" ;;
+            aarch64) oras_arch=arm64; checksum="${ORAS_SHA256_ARM64}" ;;
+            *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+        esac
+
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "${tmpdir}"' EXIT
+        archive="oras_${ORAS_VERSION}_linux_${oras_arch}.tar.gz"
+        curl -fsSL -o "${tmpdir}/${archive}" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/${archive}"
+        echo "${checksum}  ${tmpdir}/${archive}" | sha256sum -c -
+        tar -xzf "${tmpdir}/${archive}" -C "${tmpdir}" oras
+        install -m 0755 "${tmpdir}/oras" /usr/local/bin/oras
+        oras version
+
+        # Both architectures are pulled, because the build task is a matrix
+        # and each leg restores the same source artifact. The Containerfile
+        # selects its own arch directory at COPY time.
+        if [ ! -f /workspace/registry-auth/.dockerconfigjson ]; then
+            echo "ERROR: registry-auth workspace does not hold a .dockerconfigjson" >&2
+            exit 1
+        fi
+        registry_config=/workspace/registry-auth/.dockerconfigjson
+
+        oras pull "${amd64_ref}" --registry-config "${registry_config}" --output disk-image/amd64
+        oras pull "${arm64_ref}" --registry-config "${registry_config}" --output disk-image/arm64
+
+        ls -lhR disk-image
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          cpu: "1"
+          memory: 4Gi
+    - name: create-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:23953da08db809f841120214055aeb238bc553368e366feb58495d5a5493b19a
+      args:
+        - create
+        - --store
+        - $(params.ociStorage)
+        - $(results.SOURCE_ARTIFACT.path)=/var/workdir/source
+      env:
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.ociArtifactExpiresAfter)
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          cpu: "1"
+          memory: 4Gi
