@@ -38,7 +38,7 @@ spec:
     # the snapshot component images. This pipeline does no archive lookup.
     # Explicit-ref mode only: optionally set snapshot to publish annotations
     # from the release-account task. Without it, logs/results only.
-    # Build-parity scans: client default timeouts/retries, no forced rescan,
+    # Build-compatible scans: 20m client timeout, default retries, no forced rescan,
     # cached scans accepted, provenance marked non-fresh, annotation skipped.
     # Leave unset for the default forced fresh scan.
     # - name: scan-mode

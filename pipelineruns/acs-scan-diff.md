@@ -69,7 +69,7 @@ The component's candidate digest must match the Snapshot. Annotation
 checks resourceVersion to reject concurrent edits; successful runs are otherwise
 last-writer-wins. Failed runs do not erase earlier evidence: check the producing run.
 
-### Match the ACS build scanner settings
+### Use build-compatible non-forced scans
 
 `scan-mode` selects how the scan Task calls the same pinned `roxctl` image
 against the same Central endpoint:
@@ -77,20 +77,23 @@ against the same Central endpoint:
 - `fresh` (default) is the mode described above and is unchanged: per-manifest
   `roxctl image scan --timeout=20m --force --include-snoozed --format=json`, and
   every returned scan timestamp must fall inside its request window.
-- `build` mirrors the ACS build catalog's scan invocation, so a build-parity
-  failure or retry pattern can be reproduced without changing the scanner:
-  no `--force`, no `--timeout`, no retry override and no `--include-snoozed`,
-  and therefore client default timeouts/retries. TLS verification keeps the
+- `build` uses the catalog's non-forced behavior: no `--force`, no retry
+  override and no `--include-snoozed`. It deliberately sets `--timeout=20m`
+  rather than the catalog/client's 10m default. TLS verification keeps its
   client default (this pipeline never sets `--insecure-skip-tls-verify`).
-  `--format=json` is retained only because it is the serialization the
-  comparison parses; it is the one deliberate deviation from the catalog
-  command, not a change to what gets scanned.
+  `--format=json` selects the serialization the comparison parses. These
+  timeout/serialization differences mean this is not exact catalog parity.
+
+The client image matches catalog task v0.2 (roxctl 4.11.5). Updating this custom
+comparison does not add the catalog's RHSA extraction result or its report-upload
+steps; existing comparison/artifact contracts remain unchanged.
 
 Build mode still enforces the same digest, schema, platform-coverage and
 scan-availability validation, but ACS may answer from its cache, so a scan
 timestamp is only required to be well formed and timezone-aware. The evidence
 records `scan_mode: build` with `force_rescan: false` and
-`include_snoozed: false`, and its caveat says the delta is not fresh-scan
+`include_snoozed: false`; `request_timeout: 20m` records the client request
+limit in both modes, and the caveat says build-mode data is not fresh-scan
 evidence. Such results never annotate a Snapshot: the `annotate` task is gated
 on `scan-mode == fresh`, and independently rejects a comparison whose
 provenance is not labeled `scan_mode: fresh` with forced scans including
@@ -100,9 +103,10 @@ snoozed findings. Unknown modes fail before any scan starts.
 
 The `scan` Task allows 2h, matching the 2h observed for the catalog scan on the
 same images. The resolver is capped at 15m and annotation at 5m, so the example
-PipelineRun allows 2h20m in total. Fresh mode keeps its unchanged 20m client
-timeout per request, so a pair that needs many retries can still exhaust the 2h
-scan budget; the run then fails instead of producing partial evidence.
+PipelineRun allows 2h20m in total. Both modes use a 20m client timeout per
+request, so a pair that needs many retries can still exhaust the 2h scan budget;
+the run then fails instead of producing partial evidence. A longer client timeout
+cannot override a shorter deadline imposed by Central, Scanner or a proxy.
 
 ### Resolve a baseline from an existing release
 
@@ -138,8 +142,8 @@ automatic archive lookup here, and a snapshot name alone is never evidence of
 publication. The resolver TaskRun's `prev-snapshot` result and the comparison
 evidence record the baseline snapshot for provenance, while `baseline-release`
 stays empty because this mode does not look up a Release CR. Snapshot-pair mode
-always annotates the candidate snapshot; omit `snapshot` only in explicit-ref
-mode when annotations are not wanted.
+annotates the candidate snapshot only in `fresh` mode; `build` mode skips
+annotation. In explicit-ref mode, omit `snapshot` when annotations are not wanted.
 
 No stage ReleasePlan references this pipeline yet. Future finalPipeline wiring
 must retain the release-account default and the scan-account override under

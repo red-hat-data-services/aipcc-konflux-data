@@ -6,8 +6,8 @@ spec:
   description: |
     Scan exact, platform-matched baseline/candidate manifests. Fresh mode
     (default) forces a new scan per manifest and requires a newly timestamped
-    response. Build mode mirrors the ACS build catalog's scan invocation:
-    client default timeouts/retries, no forced rescan, no snoozed findings,
+    response. Build mode uses the ACS build catalog's non-forced behavior
+    with a longer 20m client request timeout and default retries, no snoozed findings,
     so a cached scan timestamp is accepted and the result must not be
     published as fresh annotation evidence.
     fixed_in_candidate means ACS-observed absence, not verified remediation;
@@ -35,7 +35,7 @@ spec:
       default: fresh
       description: >-
         fresh forces a rescan and requires an in-window scan timestamp; build
-        matches the ACS build catalog invocation and permits cached scans.
+        permits cached scans with a 20m client timeout and default retries.
     - name: scan-baseline-refs
       description: Nonempty JSON array of platform/ref objects from the resolver.
     - name: scan-candidate-refs
@@ -120,7 +120,7 @@ spec:
                 for side, m in (("baseline", b), ("candidate", c)):
                     plan.write(f"{side}\t{m['platform'].split('/')[1]}\t{m['ref']}\n")
     - name: exchange-service-account-token
-      image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:979f329cbe0d0dd1c41e63b471c246294780c5daf029c239ebd7d48129e75a15
+      image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:98f01d623e119acbbc211bdeb36192b619969aa149d9c66bab8034eeef84c861
       args:
         - central
         - m2m
@@ -131,7 +131,7 @@ spec:
           mountPath: /service-account-token
           readOnly: true
     - name: scan
-      image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:979f329cbe0d0dd1c41e63b471c246294780c5daf029c239ebd7d48129e75a15
+      image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:98f01d623e119acbbc211bdeb36192b619969aa149d9c66bab8034eeef84c861
       computeResources:
         requests:
           cpu: 100m
@@ -170,11 +170,11 @@ spec:
             # the newer --output=json CVE summary. Keep all findings, even snoozed.
             roxctl image scan --timeout=20m --force --include-snoozed --format=json --image="${ref}" > "${file}.json"
           else
-            # Build parity lives in the trigger flags: client default timeouts
-            # and retries, no forced rescan, no snoozed findings. --format=json
-            # is only the serialization this comparison can parse, and TLS
-            # verification keeps its client default.
-            roxctl image scan --format=json --image="${ref}" > "${file}.json"
+            # Keep catalog non-forced behavior and default retries, but allow
+            # 20m per request instead of the client's 10m default. This cannot
+            # override a shorter server deadline. JSON is parser transport;
+            # TLS verification keeps its client default.
+            roxctl image scan --timeout=20m --format=json --image="${ref}" > "${file}.json"
           fi
           test -s "${file}.json"
           date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.finished"
@@ -231,13 +231,14 @@ spec:
             "component": os.environ["COMPONENT"], "engine": "acs",
             "evidence": ("ACS-observed CVE delta; not verified remediation, ECP or release approval; live Central DB is not frozen"
                          if fresh else
-                         "ACS-observed CVE delta from build-parity scans; ACS may serve cached scans and snoozed findings are excluded, so this is not fresh-scan evidence, verified remediation, ECP or release approval; live Central DB is not frozen"),
+                         "ACS-observed CVE delta from build-compatible scans with a 20m client timeout; ACS may serve cached scans and snoozed findings are excluded, so this is not fresh-scan evidence, verified remediation, ECP or release approval; live Central DB is not frozen"),
             "pipeline_run": os.environ["PIPELINE_RUN"], "code_revision": os.environ["CODE_REVISION"],
             "scanned_at": datetime.now(timezone.utc).isoformat(),
             "central_endpoint": os.environ["ROX_ENDPOINT"],
             "database_revision": None, "database_consistency": "unknown; scans paired per platform",
-            "scanner_image": "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:979f329cbe0d0dd1c41e63b471c246294780c5daf029c239ebd7d48129e75a15",
+            "scanner_image": "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:98f01d623e119acbbc211bdeb36192b619969aa149d9c66bab8034eeef84c861",
             "client_version": Path("acs-client-version.txt").read_text().strip(),
+            "request_timeout": "20m",
             "scan_mode": scan_mode, "force_rescan": fresh, "include_snoozed": fresh,
         }
         reports = []

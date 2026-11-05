@@ -17,8 +17,8 @@ spec:
     needed.
     Both images must be digest-pinned and have identical Linux platforms.
     scan-mode defaults to fresh: forced rescans, in-window timestamps and
-    Snapshot annotation allowed. scan-mode=build mirrors the ACS build
-    catalog's scan invocation, so cached scans are accepted, provenance is
+    Snapshot annotation allowed. scan-mode=build uses ACS build-compatible
+    non-forced scans with a 20m client timeout; cached scans are accepted, provenance is
     recorded as non-fresh and the annotate task is skipped.
     Snapshot annotation is optional in explicit mode. No native report uploads.
     Central's database is live, not frozen: deltas are observed additions/
@@ -56,8 +56,8 @@ spec:
     - name: scan-mode
       description: >-
         fresh (default) forces a new scan per manifest and requires in-window
-        timestamps. build mirrors the ACS build catalog invocation, permits
-        cached scans and never annotates the Snapshot.
+        timestamps. build permits cached scans with a 20m client timeout,
+        default retries and never annotates the Snapshot.
       default: fresh
     - name: ociStorage
       description: Existing OCI repository for temporary comparison artifacts, without tag/digest.

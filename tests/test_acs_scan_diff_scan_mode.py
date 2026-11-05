@@ -17,6 +17,7 @@ EXAMPLE_RUN = ROOT / "pipelineruns" / "acs-scan-diff.yaml"
 CODE_REVISION = "0123456789abcdef0123456789abcdef01234567"
 PIPELINE_RUN = "acs-scan-diff-run"
 COMPONENT = "my-component"
+ROXCTL_IMAGE = "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9@sha256:98f01d623e119acbbc211bdeb36192b619969aa149d9c66bab8034eeef84c861"
 STARTED = "2026-10-27T10:00:00Z"
 FINISHED = "2026-10-27T10:05:00Z"
 FRESH_EVIDENCE = ("ACS-observed CVE delta; not verified remediation, ECP or "
@@ -173,6 +174,12 @@ def test_task_defaults_to_fresh_and_exposes_scan_mode_to_scan_and_compare():
         assert env["SCAN_MODE"]["value"] == "$(params.scan-mode)"
 
 
+def test_task_uses_catalog_v02_client_for_exchange_and_scan():
+    task = _load(TASK)
+    for name in ("exchange-service-account-token", "scan"):
+        assert _step(task, name)["image"] == ROXCTL_IMAGE
+
+
 def test_fresh_scan_keeps_the_forced_scan_command(tmp_path):
     completed, calls = _run_scan(tmp_path, "fresh", ROXCTL_HELP_FORCED)
 
@@ -185,13 +192,13 @@ def test_fresh_scan_keeps_the_forced_scan_command(tmp_path):
     ]
 
 
-def test_build_scan_uses_client_default_timeouts_and_no_forced_rescan(tmp_path):
+def test_build_scan_uses_twenty_minute_timeout_and_no_forced_rescan(tmp_path):
     completed, calls = _run_scan(tmp_path, "build", ROXCTL_HELP_CLIENT_DEFAULTS)
 
     assert completed.returncode == 0, completed.stderr
     assert _scan_calls(calls) == [
-        ["image", "scan", "--format=json", f"--image={BASELINE_REF}"],
-        ["image", "scan", "--format=json", f"--image={CANDIDATE_REF}"],
+        ["image", "scan", "--timeout=20m", "--format=json", f"--image={BASELINE_REF}"],
+        ["image", "scan", "--timeout=20m", "--format=json", f"--image={CANDIDATE_REF}"],
     ]
     # No forced-scan help probe and no weakened TLS verification in build mode.
     assert [call for call in calls if "--help" in call] == []
@@ -215,6 +222,8 @@ def test_fresh_mode_records_forced_provenance_for_an_in_window_scan(tmp_path):
     assert result["force_rescan"] is True
     assert result["include_snoozed"] is True
     assert result["evidence"] == FRESH_EVIDENCE
+    assert result["request_timeout"] == "20m"
+    assert result["scanner_image"] == ROXCTL_IMAGE
     assert result["fixed_in_candidate"] == ["CVE-2025-1111"]
     assert result["new_in_candidate"] == ["CVE-2026-2222"]
 
@@ -234,6 +243,8 @@ def test_build_mode_accepts_a_cached_scan_and_labels_it_non_fresh(tmp_path):
     assert result["scan_mode"] == "build"
     assert result["force_rescan"] is False
     assert result["include_snoozed"] is False
+    assert result["request_timeout"] == "20m"
+    assert result["scanner_image"] == ROXCTL_IMAGE
     assert "may serve cached scans" in result["evidence"]
     assert "not fresh-scan evidence" in result["evidence"]
     assert result["fixed_in_candidate"] == ["CVE-2025-1111"]
