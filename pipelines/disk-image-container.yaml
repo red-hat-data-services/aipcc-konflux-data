@@ -80,9 +80,10 @@ spec:
     description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
     name: build-args-file
     type: string
-  - default: OCI_ARTIFACT
+  - default: ""
     description: >-
       Build arg in build-args-file containing the disk image artifact reference.
+      Leave empty to skip disk image prefetch.
     name: disk-image-artifact-arg
     type: string
   - default: does-not-exist
@@ -269,12 +270,12 @@ spec:
         set -euo pipefail
         cd /var/workdir/source
 
-        BUILD_ARGS_FILE="$(params.build-args-file)"
         ARTIFACT_ARG="$(params.disk-image-artifact-arg)"
-        if [[ -z "${BUILD_ARGS_FILE}" ]]; then
+        if [[ -z "${ARTIFACT_ARG}" ]]; then
           echo "No disk image configured for prefetch; passing source artifact through"
           exit 0
         fi
+        BUILD_ARGS_FILE="$(params.build-args-file)"
         if [[ ! -f "${BUILD_ARGS_FILE}" ]]; then
           echo "ERROR: build args file ${BUILD_ARGS_FILE} does not exist" >&2
           exit 1
