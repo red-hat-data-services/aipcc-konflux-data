@@ -80,6 +80,18 @@ spec:
     description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
     name: build-args-file
     type: string
+  - default: ""
+    description: >-
+      Build arg in build-args-file containing the disk image artifact reference.
+      Leave empty to skip disk image prefetch.
+    name: disk-image-artifact-arg
+    type: string
+  - default: does-not-exist
+    description: >-
+      Kubernetes secret containing credentials for the disk image artifact
+      registry.
+    name: disk-image-pull-secret
+    type: string
   - name: additional-build-secret
     description: Additional secret to use while building
     type: string
@@ -238,6 +250,97 @@ spec:
       workspace: git-auth
     - name: netrc
       workspace: netrc
+  - name: prefetch-disk-image
+    params:
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+    - name: PREFETCH_ARTIFACT
+      value: $(tasks.prefetch-dependencies.results.PREFETCH_ARTIFACT)
+    - name: ociStorage
+      value: $(params.output-image).disk-image
+    - name: ociArtifactExpiresAfter
+      value: $(params.image-expires-after)
+    - name: ADDITIONAL_SECRET
+      value: $(params.disk-image-pull-secret)
+    - name: SCRIPT_RUNNER_IMAGE
+      value: registry.access.redhat.com/ubi9/ubi:9.8-1793580630@sha256:8f989cc9270da6abec0144c22846ed1e6e92e462dc7768ce0981c4ac1d574733
+    - name: SCRIPT
+      value: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        cd /var/workdir/source
+
+        ARTIFACT_ARG="$(params.disk-image-artifact-arg)"
+        if [[ -z "${ARTIFACT_ARG}" ]]; then
+          echo "No disk image configured for prefetch; passing source artifact through"
+          exit 0
+        fi
+        BUILD_ARGS_FILE="$(params.build-args-file)"
+        if [[ ! -f "${BUILD_ARGS_FILE}" ]]; then
+          echo "ERROR: build args file ${BUILD_ARGS_FILE} does not exist" >&2
+          exit 1
+        fi
+
+        artifact_ref=$(awk -F= -v key="${ARTIFACT_ARG}" '
+          /^[[:space:]]*#/ { next }
+          $1 == key {
+            value = substr($0, index($0, "=") + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            gsub(/^"|"$/, "", value)
+            print value
+            count++
+          }
+          END { if (count != 1) exit 1 }
+        ' "${BUILD_ARGS_FILE}") || {
+          echo "ERROR: expected exactly one ${ARTIFACT_ARG} in ${BUILD_ARGS_FILE}" >&2
+          exit 1
+        }
+        if [[ ! "${artifact_ref}" =~ @sha256:[a-f0-9]{64}$ ]]; then
+          echo "ERROR: disk image reference must be pinned by sha256 digest: ${artifact_ref}" >&2
+          exit 1
+        fi
+
+        case "$(uname -m)" in
+          x86_64) oras_arch=amd64; oras_sha256=bff970346470e5ef888e9f2c0bf7f8ee47283f5a45207d6e7a037da1fb0eae0d ;;
+          aarch64|arm64) oras_arch=arm64; oras_sha256=edd7195cbb8ba56c29ede413eefa10c8026201d63326017cd315841b4063aa56 ;;
+          *) echo "ERROR: unsupported runner architecture $(uname -m)" >&2; exit 1 ;;
+        esac
+        oras_version=1.2.2
+        tmpdir=$(mktemp -d)
+        trap 'rm -rf "${tmpdir}"' EXIT
+        archive="oras_${oras_version}_linux_${oras_arch}.tar.gz"
+        curl -fsSL -o "${tmpdir}/${archive}" \
+          "https://github.com/oras-project/oras/releases/download/v${oras_version}/${archive}"
+        echo "${oras_sha256}  ${tmpdir}/${archive}" | sha256sum -c -
+        tar -xzf "${tmpdir}/${archive}" -C "${tmpdir}" oras
+
+        auth_file=/var/run/secrets/additional-secret/.dockerconfigjson
+        if [[ ! -s "${auth_file}" ]]; then
+          echo "ERROR: registry credentials not found at ${auth_file}" >&2
+          exit 1
+        fi
+        mkdir -p disk-image
+        "${tmpdir}/oras" pull "${artifact_ref}" \
+          --registry-config "${auth_file}" \
+          --output disk-image
+        if [[ ! -s disk-image/disk.qcow2 ]]; then
+          echo "ERROR: pull did not produce disk-image/disk.qcow2" >&2
+          ls -la disk-image >&2
+          exit 1
+        fi
+        chmod 0440 disk-image/disk.qcow2
+        echo "Prefetched ${artifact_ref} into disk-image/disk.qcow2"
+    runAfter:
+    - prefetch-dependencies
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/konflux-ci/container-build-catalog
+      - name: revision
+        value: 9f8e323179efbdc862977fcde8cbdc0ef3d7ea05
+      - name: pathInRepo
+        value: task/run-script-oci-ta/run-script-oci-ta.yaml
   - name: build-container
     timeout: 6h
     matrix:
@@ -265,10 +368,13 @@ spec:
       - $(params.build-args[*])
     - name: ADDITIONAL_SECRET
       value: $(params.additional-build-secret)
+    - name: ADDITIONAL_BASE_IMAGES
+      value:
+      - $(tasks.prefetch-disk-image.results.SCRIPT_RUNNER_IMAGE_REFERENCE)
     - name: SQUASH
       value: $(params.squash-build)
     - name: SOURCE_ARTIFACT
-      value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+      value: $(tasks.prefetch-disk-image.results.SCRIPT_ARTIFACT)
     - name: IMAGE_APPEND_PLATFORM
       value: "true"
     - name: LABELS
@@ -294,7 +400,7 @@ spec:
     - name: PREFETCH_ARTIFACT
       value: $(tasks.prefetch-dependencies.results.PREFETCH_ARTIFACT)
     runAfter:
-    - prefetch-dependencies
+    - prefetch-disk-image
     taskRef:
       params:
       - name: name
@@ -522,4 +628,3 @@ spec:
     optional: true
   - name: netrc
     optional: true
-
