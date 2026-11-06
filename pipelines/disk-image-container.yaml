@@ -80,16 +80,9 @@ spec:
     description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
     name: build-args-file
     type: string
-  - default: ""
-    description: >-
-      Build args file containing the OCI disk image reference to prefetch before
-      a hermetic build.
-    name: disk-image-build-args-file
-    type: string
   - default: OCI_ARTIFACT
     description: >-
-      Build arg in disk-image-build-args-file containing the disk image artifact
-      reference.
+      Build arg in build-args-file containing the disk image artifact reference.
     name: disk-image-artifact-arg
     type: string
   - default: does-not-exist
@@ -276,7 +269,7 @@ spec:
         set -euo pipefail
         cd /var/workdir/source
 
-        BUILD_ARGS_FILE="$(params.disk-image-build-args-file)"
+        BUILD_ARGS_FILE="$(params.build-args-file)"
         ARTIFACT_ARG="$(params.disk-image-artifact-arg)"
         if [[ -z "${BUILD_ARGS_FILE}" ]]; then
           echo "No disk image configured for prefetch; passing source artifact through"
