@@ -185,9 +185,9 @@ def test_fresh_scan_keeps_the_forced_scan_command(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert _scan_calls(calls) == [
-        ["image", "scan", "--timeout=20m", "--force", "--include-snoozed",
+        ["image", "scan", "--timeout=30m", "--force", "--include-snoozed",
          "--format=json", f"--image={BASELINE_REF}"],
-        ["image", "scan", "--timeout=20m", "--force", "--include-snoozed",
+        ["image", "scan", "--timeout=30m", "--force", "--include-snoozed",
          "--format=json", f"--image={CANDIDATE_REF}"],
     ]
 
@@ -197,8 +197,8 @@ def test_build_scan_uses_twenty_minute_timeout_and_no_forced_rescan(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert _scan_calls(calls) == [
-        ["image", "scan", "--timeout=20m", "--format=json", f"--image={BASELINE_REF}"],
-        ["image", "scan", "--timeout=20m", "--format=json", f"--image={CANDIDATE_REF}"],
+        ["image", "scan", "--timeout=30m", "--format=json", f"--image={BASELINE_REF}"],
+        ["image", "scan", "--timeout=30m", "--format=json", f"--image={CANDIDATE_REF}"],
     ]
     # No forced-scan help probe and no weakened TLS verification in build mode.
     assert [call for call in calls if "--help" in call] == []
@@ -222,7 +222,7 @@ def test_fresh_mode_records_forced_provenance_for_an_in_window_scan(tmp_path):
     assert result["force_rescan"] is True
     assert result["include_snoozed"] is True
     assert result["evidence"] == FRESH_EVIDENCE
-    assert result["request_timeout"] == "20m"
+    assert result["request_timeout"] == "30m"
     assert result["scanner_image"] == ROXCTL_IMAGE
     assert result["fixed_in_candidate"] == ["CVE-2025-1111"]
     assert result["new_in_candidate"] == ["CVE-2026-2222"]
@@ -243,7 +243,7 @@ def test_build_mode_accepts_a_cached_scan_and_labels_it_non_fresh(tmp_path):
     assert result["scan_mode"] == "build"
     assert result["force_rescan"] is False
     assert result["include_snoozed"] is False
-    assert result["request_timeout"] == "20m"
+    assert result["request_timeout"] == "30m"
     assert result["scanner_image"] == ROXCTL_IMAGE
     assert "may serve cached scans" in result["evidence"]
     assert "not fresh-scan evidence" in result["evidence"]

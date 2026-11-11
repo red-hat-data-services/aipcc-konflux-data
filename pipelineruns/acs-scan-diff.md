@@ -75,10 +75,10 @@ last-writer-wins. Failed runs do not erase earlier evidence: check the producing
 against the same Central endpoint:
 
 - `fresh` (default) is the mode described above and is unchanged: per-manifest
-  `roxctl image scan --timeout=20m --force --include-snoozed --format=json`, and
+  `roxctl image scan --timeout=30m --force --include-snoozed --format=json`, and
   every returned scan timestamp must fall inside its request window.
 - `build` uses the catalog's non-forced behavior: no `--force`, no retry
-  override and no `--include-snoozed`. It deliberately sets `--timeout=20m`
+  override and no `--include-snoozed`. It deliberately sets `--timeout=30m`
   rather than the catalog/client's 10m default. TLS verification keeps its
   client default (this pipeline never sets `--insecure-skip-tls-verify`).
   `--format=json` selects the serialization the comparison parses. These
@@ -92,7 +92,7 @@ Build mode still enforces the same digest, schema, platform-coverage and
 scan-availability validation, but ACS may answer from its cache, so a scan
 timestamp is only required to be well formed and timezone-aware. The evidence
 records `scan_mode: build` with `force_rescan: false` and
-`include_snoozed: false`; `request_timeout: 20m` records the client request
+`include_snoozed: false`; `request_timeout: 30m` records the client request
 limit in both modes, and the caveat says build-mode data is not fresh-scan
 evidence. Such results never annotate a Snapshot: the `annotate` task is gated
 on `scan-mode == fresh`, and independently rejects a comparison whose
@@ -103,7 +103,7 @@ snoozed findings. Unknown modes fail before any scan starts.
 
 The `scan` Task allows 2h, matching the 2h observed for the catalog scan on the
 same images. The resolver is capped at 15m and annotation at 5m, so the example
-PipelineRun allows 2h20m in total. Both modes use a 20m client timeout per
+PipelineRun allows 2h20m in total. Both modes use a 30m client timeout per
 request, so a pair that needs many retries can still exhaust the 2h scan budget;
 the run then fails instead of producing partial evidence. A longer client timeout
 cannot override a shorter deadline imposed by Central, Scanner or a proxy.
