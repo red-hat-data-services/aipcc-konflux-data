@@ -1,0 +1,724 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/pipelines.minVersion: 0.12.1
+    tekton.dev/tags: image-build, konflux
+  labels:
+    app.kubernetes.io/version: "0.3.2"
+    build.appstudio.redhat.com/build_type: disk-image
+  name: build-vm-image-taskflow
+spec:
+  description: |
+    Build disk images using image-builder's multi-step task flow
+    (task init / task prefetch / task build-image). When HERMETIC=true the
+    build step runs with no network access, mirroring how the container
+    build tasks enforce hermeticity (networked task, isolated build
+    process). Requires a builder image built from the new
+    image-builder Containerfile (ENTRYPOINT /usr/bin/image-builder, the
+    multi-call binary): invoking it as bootc-image-builder serves the legacy
+    CLI without the task subcommands. Draft wiring for RHAI-15893, gated on
+    an image-builder release that contains the task commands.
+  params:
+    - description: The platform to build on
+      name: PLATFORM
+      type: string
+    - default: "false"
+      description: Whether to append a sanitized platform architecture on the IMAGE tag
+      name: IMAGE_APPEND_PLATFORM
+      type: string
+    - name: OUTPUT_IMAGE
+      type: string
+      description: The output manifest list that points to the OCI artifact of the zipped image
+    - name: SOURCE_ARTIFACT
+      type: string
+    - name: TASK_ARTIFACT
+      type: string
+      description: |
+        Trusted artifact with the image-builder task directory produced by
+        prefetch-disk-image-taskflow, one directory per platform. The build
+        consumes only this, with no network and no container pulls.
+    - name: IMAGE_TYPE
+      type: string
+      description: The type of VM image to build, valid values are ami, anaconda-iso, bootc-installer, gce, iso, ova, pxe-tar-xz, qcow2, raw, vhd and vmdk
+    - name: BIB_CONFIG_FILE
+      default: bib.yaml
+      type: string
+      description: The config file specifying what to build and the builder to build it with
+    - name: IMAGE_SIZE
+      default: ""
+      type: string
+      description: |
+        Size of the disk image (e.g. 20GiB). Replaces the legacy config.toml
+        [[customizations.filesystem]] root sizing, which the new CLI rejects
+        for bootc qcow2 images.
+    - name: HERMETIC
+      default: "false"
+      type: string
+      description: Determines if build will be executed without network access.
+    - name: CONFIG_TOML_FILE
+      default: ""
+      type: string
+      description: The path for the config.toml file within the source repository
+    - name: STORAGE_DRIVER
+      description: Storage driver to configure for buildah
+      type: string
+      default: vfs
+    - name: SBOM_TYPE
+      description: "The SBOM format to use for attaching the SBOM to the artifact. Valid values: spdx, cyclonedx."
+      type: string
+      default: spdx
+    - name: SKIP_SBOM_GENERATION
+      description: Skip SBOM propagation and attachment
+      type: string
+      default: "false"
+  results:
+    - description: Digest of the manifest list just built
+      name: IMAGE_DIGEST
+    - description: Image repository where the built manifest list was pushed
+      name: IMAGE_URL
+    - description: Image reference (IMAGE_URL + IMAGE_DIGEST)
+      name: IMAGE_REFERENCE
+    - description: Reference of SBOM blob digest to enable digest-based verification from provenance
+      name: SBOM_BLOB_URL
+      type: string
+    - description: >-
+        OCI platform ("linux/<arch>") of the disk image built by this task run,
+        derived from the PLATFORM param. Lets build-image-index set the platform
+        on each child descriptor of the multi-arch index, since the artifact
+        manifest itself carries an empty config with no platform information.
+      name: PLATFORM
+      type: string
+    - description: >-
+        Combined "<IMAGE_REFERENCE>=linux/<arch>" entry for this task run,
+        ready to be fanned into build-image-index's IMAGE_PLATFORM_MAP
+        parameter (one entry per matrix leg via the [*] aggregate). The
+        image reference and platform are joined here, in-task, because
+        Tekton does not support zipping two separately-aggregated result
+        arrays produced by a matrixed PipelineTask (see IMAGE_REFERENCE
+        above for the same rationale applied to URL+digest).
+      name: IMAGE_PLATFORM_MAP
+      type: string
+  stepTemplate:
+    env:
+      - name: OUTPUT_IMAGE
+        value: $(params.OUTPUT_IMAGE)
+      - name: BIB_CONFIG_FILE
+        value: $(params.BIB_CONFIG_FILE)
+      - name: CONFIG_TOML_FILE
+        value: $(params.CONFIG_TOML_FILE)
+      - name: IMAGE_SIZE
+        value: $(params.IMAGE_SIZE)
+      - name: HERMETIC
+        value: $(params.HERMETIC)
+      - name: IMAGE_TYPE
+        value: $(params.IMAGE_TYPE)
+      - name: STORAGE_DRIVER
+        value: $(params.STORAGE_DRIVER)
+      - name: BUILDAH_IMAGE
+        value: 'registry.access.redhat.com/ubi9/buildah@sha256:61eccd0b8b3a6b87233376e6529ce08e4e002d9bef07f27c8fb431a500947792'
+      - name: PLATFORM
+        value: $(params.PLATFORM)
+      - name: IMAGE_APPEND_PLATFORM
+        value: $(params.IMAGE_APPEND_PLATFORM)
+      - name: SBOM_TYPE
+        value: $(params.SBOM_TYPE)
+      - name: SKIP_SBOM_GENERATION
+        value: $(params.SKIP_SBOM_GENERATION)
+    volumeMounts:
+      - mountPath: "/var/workdir"
+        name: workdir
+      - mountPath: "/var/lib/containers/storage"
+        name: varlibcontainers
+    imagePullPolicy: IfNotPresent
+  steps:
+    - name: use-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:f72b62c8bc6ca56bab2e5526c6acf227ff532c9d3e2a9fae1e28bb216fc8f240
+      computeResources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+      args:
+        - use
+        - $(params.SOURCE_ARTIFACT)=/var/workdir/source
+        - $(params.TASK_ARTIFACT)=/var/workdir/task
+    - name: validate-config
+      image: quay.io/konflux-ci/task-runner:3.1.2@sha256:e272c1e1c60a4ecc72ff9c8d65bc48da534de6f1ce0d5aba79db3ac532d11c35
+      computeResources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        set -x
+
+        case "${IMAGE_TYPE}" in
+          ami|anaconda-iso|bootc-installer|gce|iso|ova|pxe-tar-xz|qcow2|raw|vhd|vmdk) ;;
+          *) echo "Invalid IMAGE_TYPE: ${IMAGE_TYPE}. Must be one of: ami, anaconda-iso, bootc-installer, gce, iso, ova, pxe-tar-xz, qcow2, raw, vhd, vmdk." >&2; exit 1 ;;
+        esac
+
+        case "${STORAGE_DRIVER}" in
+          vfs|overlay) ;;
+          *) echo "Invalid STORAGE_DRIVER: ${STORAGE_DRIVER}. Must be one of: vfs, overlay." >&2; exit 1 ;;
+        esac
+
+        case "${SBOM_TYPE}" in
+          spdx|cyclonedx) ;;
+          *) echo "Invalid SBOM_TYPE: ${SBOM_TYPE}. Must be one of: spdx, cyclonedx." >&2; exit 1 ;;
+        esac
+
+        # expects a config file like the following as BIB_CONFIG_FILE
+        #
+        echo -e "BIB_CONFIG_FILE: $BIB_CONFIG_FILE"
+        # # BIB: Bootc Image Builder config
+        # bootc-builder-image: "quay.io/centos-bootc/bootc-image-builder:latest"
+        # source-image: "quay.io/centos-bootc/centos-bootc:stream9"
+        # tagged-as: registry.centos.org/bootc:stream9
+
+        # trim any leading slash.
+        BIB_CONFIG_FILE=${BIB_CONFIG_FILE#/}
+
+        BIB_CONFIG_PATH="/var/workdir/source/${BIB_CONFIG_FILE}"
+        BIB_CONFIG_REAL="$(realpath -m "${BIB_CONFIG_PATH}")"
+        if [[ "${BIB_CONFIG_REAL}" != /var/workdir/source/* ]]; then
+          echo "BIB_CONFIG_FILE escapes source directory: ${BIB_CONFIG_FILE}" >&2; exit 1
+        fi
+
+        # The task flow sizes disks with IMAGE_SIZE and does not hand a
+        # config.toml to image-builder, so accepting one silently would drop
+        # whatever customizations it carried. Fail instead.
+        if [ -n "${CONFIG_TOML_FILE}" ]; then
+          echo "CONFIG_TOML_FILE is not supported by the task flow: it does not pass config.toml to image-builder." >&2
+          echo "Use IMAGE_SIZE for disk sizing; other customizations have no task-flow equivalent yet." >&2
+          exit 1
+        fi
+
+        BIB_IMAGE=$(yq -r .bootc-builder-image "${BIB_CONFIG_PATH}")
+        SOURCE_IMAGE=$(yq -r .source-image "${BIB_CONFIG_PATH}")
+
+        # Validate that all keys exist and are plausible pullspecs
+        valid_pullspec_characters="0-9a-zA-Z@:/._-"
+        if [[ "${BIB_IMAGE}" =~ [^$valid_pullspec_characters] ]]; then
+          echo ".bootc-builder-image in $BIB_CONFIG_FILE contains invalid characters"
+          exit 1
+        fi
+        if [[ "${SOURCE_IMAGE}" =~ [^$valid_pullspec_characters] ]]; then
+          echo ".source-image in $BIB_CONFIG_FILE contains invalid characters"
+          exit 1
+        fi
+
+        # write values to a file in the workspace (printf %q escapes shell metacharacters)
+        printf 'declare BOOTC_BUILDER_IMAGE=%q\n' "${BIB_IMAGE}" > /var/workdir/vars
+        printf 'declare SOURCE_IMAGE=%q\n' "${SOURCE_IMAGE}" >> /var/workdir/vars
+
+    - name: build
+      image: quay.io/konflux-ci/task-runner:3.1.2@sha256:e272c1e1c60a4ecc72ff9c8d65bc48da534de6f1ce0d5aba79db3ac532d11c35
+      computeResources:
+        limits:
+          memory: 128Mi
+        requests:
+          cpu: 250m
+          memory: 128Mi
+      env:
+      - name: HOME
+        value: /root
+      securityContext:
+        runAsUser: 0
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        set -x
+
+        # get values stored from previous task
+        echo "vars file"
+        cat /var/workdir/vars
+        # shellcheck source=/dev/null
+        source /var/workdir/vars
+        echo "Vars:"
+        echo BOOTC_BUILDER_IMAGE $BOOTC_BUILDER_IMAGE
+        echo SOURCE_IMAGE $SOURCE_IMAGE
+
+        mkdir -p ~/.ssh
+        if [ -e "/ssh/error" ]; then
+          #no server could be provisioned
+          cat /ssh/error
+          exit 1
+        elif [ -e "/ssh/otp" ]; then
+          curl --cacert /ssh/otp-ca -XPOST -d @/ssh/otp $(cat /ssh/otp-server) >~/.ssh/id_rsa
+          echo "" >> ~/.ssh/id_rsa
+        else
+          cp /ssh/id_rsa ~/.ssh
+        fi
+        chmod 0400 ~/.ssh/id_rsa
+        export SSH_HOST=$(cat /ssh/host)
+        export BUILD_DIR=$(cat /ssh/user-dir)
+        export SSH_ARGS=(-o StrictHostKeyChecking=no -o ServerAliveInterval=60 -i ~/.ssh/id_rsa)
+        mkdir -p scripts
+        echo "$BUILD_DIR"
+        ssh -v "${SSH_ARGS[@]}" "$SSH_HOST"  mkdir -p "$BUILD_DIR/workspaces" "$BUILD_DIR/scripts" "$BUILD_DIR/tmp" "$BUILD_DIR/tekton-results"
+
+        rsync -e "ssh ${SSH_ARGS[*]}" -ra "$HOME/.docker/" "$SSH_HOST:$BUILD_DIR/.docker/"
+        # The task directory comes from prefetch-disk-image-taskflow, one per
+        # platform: init and prefetch ran there with network, so this VM
+        # needs neither the registry nor a local container store.
+        TASK_ARCH="${PLATFORM##*/}"
+        if ! retry rsync -e "ssh ${SSH_ARGS[*]}" -ra "/var/workdir/task/${TASK_ARCH}" "$SSH_HOST:$BUILD_DIR/task"
+        then
+            echo "Failed to copy the prefetched task directory for ${TASK_ARCH} to the VM"
+            exit 1
+        fi
+        # Entitlements are not needed on this VM: init/prefetch (the only
+        # step that ever downloaded RPMs) runs pod-side, and build-image
+        # installs nothing. The prefetch task does not take entitlement
+        # volumes yet, so image types that depsolve RPMs are rejected there
+        # instead of failing opaquely here.
+        if [ "${IMAGE_APPEND_PLATFORM}" == "true" ]; then
+          OUTPUT_IMAGE="${OUTPUT_IMAGE}-${PLATFORM//[^a-zA-Z0-9]/-}"
+          export OUTPUT_IMAGE
+        fi
+
+        ARCH=$(sed 's/.*\///' <<<"$PLATFORM")
+        echo "ARCH: '${ARCH}'"
+
+        # Record the OCI platform for this single-arch task run. Disk-image
+        # artifacts carry an empty config (application/vnd.oci.empty.v1+json),
+        # so the multi-arch index built later by build-image-index cannot infer
+        # each child's platform. Emitting it here lets build-image-index set the
+        # platform on each descriptor explicitly. The OS is always linux for VM
+        # disk images; the arch comes from the PLATFORM param (OCI names, e.g.
+        # amd64/arm64), never from uname/$(arch) on the remote builder.
+        echo -n "linux/${ARCH}" | tee "$(results.PLATFORM.path)"
+
+        valid_pullspec_characters="0-9a-zA-Z@:/._-"
+        if [[ "${OUTPUT_IMAGE}" =~ [^$valid_pullspec_characters] ]]; then
+          echo "OUTPUT_IMAGE contains invalid characters" >&2; exit 1
+        fi
+
+        # form the --type arguments
+        IMAGE_TYPE_ARGUMENT=" --type $IMAGE_TYPE "
+
+        # this unquoted heredoc allows expansions for the image name
+        cat >scripts/script-build.sh <<REMOTESSHEOF
+        #!/bin/bash
+        set -euo pipefail
+
+        # keep podman from applying host subscription-manager state inside
+        # the builder container; the build installs nothing that needs it
+        sudo rm /usr/share/containers/mounts.conf
+
+        export BUILD_DIR="$BUILD_DIR"
+        export OUTPUT_IMAGE="$OUTPUT_IMAGE"
+        export BOOTC_BUILDER_IMAGE="$BOOTC_BUILDER_IMAGE"
+        export SOURCE_IMAGE="$SOURCE_IMAGE"
+        export STORAGE_DRIVER="$STORAGE_DRIVER"
+        export BUILDAH_IMAGE="$BUILDAH_IMAGE"
+        export IMAGE_TYPE="$IMAGE_TYPE"
+        export HERMETIC="$HERMETIC"
+
+        REMOTESSHEOF
+
+        # import retry function
+        # remove line with bash
+        # shellcheck disable=SC2002
+        cat /usr/local/bin/retry | sed 1d >> scripts/script-build.sh
+
+        # this quoted heredoc prevents expansions and command substitutions. the env vars are evaluated on the remote vm
+        cat >>scripts/script-build.sh <<'REMOTESSHEOF'
+
+        mkdir output
+        buildah_retries=3
+
+        echo "PULLING BUILDER IMAGE"
+        if ! time retry sudo podman pull --authfile=$BUILD_DIR/.docker/config.json --retry "$buildah_retries" $BOOTC_BUILDER_IMAGE
+        then
+            echo "Failed to pull image ${BOOTC_BUILDER_IMAGE} from registry"
+            exit 1
+        fi
+        echo "RUNNING BUILD (task flow)"
+        # Only "task build-image" runs here. init and prefetch already ran in
+        # the prefetch task, in the pod with network, and their task directory
+        # arrived as a trusted artifact; this VM has no container store to
+        # consult and pulls nothing but the builder image (by digest). With
+        # HERMETIC=true the build itself runs with the network cut, so it
+        # consumes only prefetched, content-locked inputs -- the disk-image
+        # analogue of a cachi2 build. Verified end to end with the SAW bootc
+        # image: pod-side init/prefetch, build-image under --network none
+        # produced a valid qcow2 (RHAI-15893).
+        #
+        # Note: the builder image must be invoked through its new entrypoint
+        # (image-builder); as bootc-image-builder it serves the legacy CLI.
+        TASK_DIR=$BUILD_DIR/task
+        # No sudo here: the VM's sudoers allows passwordless sudo only for
+        # podman (the first live run failed at exactly this line with
+        # "sudo: a password is required"). The build dir is owned by the
+        # ssh user, and root-owned exports written into the task dir by
+        # sudo podman only need to be readable by the copy below -- the
+        # same shape as the legacy flow's pigz over root-owned /output.
+        mkdir -p "$TASK_DIR"
+
+        NETWORK_ARGUMENT=""
+        if [ "${HERMETIC}" == "true" ]; then
+            NETWORK_ARGUMENT="--network none"
+            echo "Build will be executed with network isolation"
+        fi
+
+        echo "TASK BUILD"
+        # -v /dev:/dev is required on the builder VM as well: osbuild in the
+        # new image opens /dev/loop<N> by name and the privileged container's
+        # private /dev carries no loop nodes (first live run failed with
+        # FileNotFoundError: 'loop0'). The legacy centos-bootc builder image
+        # did not hit this; the Fedora 44 image with osbuild 196 does.
+        if ! time sudo podman run --rm --privileged $NETWORK_ARGUMENT --security-opt label=type:unconfined_t \
+          -v /dev:/dev \
+          -v $TASK_DIR:/task \
+          $BOOTC_BUILDER_IMAGE task build-image /task
+        then
+            echo "Failed to build the image"
+            exit 1
+        fi
+
+        # The task flow writes its exports flat into the task directory
+        # (e.g. bootc-rhel-9.8-qcow2-x86_64.qcow2), while the push script
+        # below expects the legacy layout /output/<type>/<file>. Normalise
+        # here so the push step stays unchanged.
+        mkdir -p $(pwd)/output
+        case "$IMAGE_TYPE" in
+          qcow2)         mkdir -p $(pwd)/output/qcow2;         cp $TASK_DIR/*.qcow2 $(pwd)/output/qcow2/disk.qcow2 ;;
+          raw)           mkdir -p $(pwd)/output/image;         cp $TASK_DIR/*.raw   $(pwd)/output/image/disk.raw ;;
+          vhd)           mkdir -p $(pwd)/output/vpc;           cp $TASK_DIR/*.vhd   $(pwd)/output/vpc/disk.vhd ;;
+          vmdk)          mkdir -p $(pwd)/output/vmdk;          cp $TASK_DIR/*.vmdk  $(pwd)/output/vmdk/disk.vmdk ;;
+          ami)           mkdir -p $(pwd)/output/image;         cp $TASK_DIR/*.raw   $(pwd)/output/image/disk.raw ;;
+          iso|anaconda-iso|bootc-installer)
+                         mkdir -p $(pwd)/output/bootiso;        cp $TASK_DIR/*.iso   $(pwd)/output/bootiso/install.iso ;;
+          ova)           mkdir -p $(pwd)/output/archive;        cp $TASK_DIR/*.ova   $(pwd)/output/archive/image.ova ;;
+          gce)           mkdir -p $(pwd)/output/gce;           cp $TASK_DIR/*.tar.gz $(pwd)/output/gce/image.tar.gz ;;
+          pxe-tar-xz)    mkdir -p $(pwd)/output/xz;            cp $TASK_DIR/*.tar.xz $(pwd)/output/xz/pxe.tar.xz ;;
+          *) echo "Unhandled IMAGE_TYPE $IMAGE_TYPE for task-flow output" >&2; exit 1 ;;
+        esac
+        ls -alR $(pwd)/output
+
+        time sudo podman run --authfile=$BUILD_DIR/.docker/config.json --rm -it --privileged --pull=missing --security-opt label=type:unconfined_t \
+          -v $BUILD_DIR/.docker:/.docker -v $(pwd)/output:/output \
+          -v /var/lib/containers/storage:/var/lib/containers/storage \
+          -v $BUILD_DIR/scripts/script-push.sh:/script-push.sh \
+          -v $BUILD_DIR/tekton-results:/tekton-results \
+          "$BUILDAH_IMAGE" \
+          /script-push.sh
+
+        REMOTESSHEOF
+
+        # script-push.sh script is intended run _inside_ podman on the ssh host and requires sudo
+        # this unquoted heredoc allows expansions for the image name
+        cat >scripts/script-push.sh <<REMOTESSHEOF
+        #!/bin/bash
+        set -euxo pipefail
+
+        export OUTPUT_IMAGE="$OUTPUT_IMAGE"
+        export IMAGE_TYPE="$IMAGE_TYPE"
+
+        REMOTESSHEOF
+
+        # import retry function
+        # remove line with bash
+        # shellcheck disable=SC2002
+        cat /usr/local/bin/retry | sed 1d >> scripts/script-push.sh
+
+        # this quoted heredoc prevents expansions and command substitutions. the env vars are evaluated on the remote vm
+        cat >>scripts/script-push.sh <<'REMOTESSHEOF'
+        # Exact versions for the push tooling: this step publishes the
+        # artifact, so its tools should not drift under a recorded commit.
+        # buildah and tar come from the pinned image; these four are the rest
+        # of the closure. Two limits, stated plainly: transitive dependencies
+        # still resolve from the pinned image's ubi9 repositories, and if a
+        # pinned NEVRA is ever pruned the build fails here rather than
+        # resolving something else. A real dnf lockfile is the next step.
+        dnf -y install \
+          skopeo-1.22.2-9.el9_8 \
+          pigz-2.8-1.el9 \
+          jq-1.6-21.el9_9 \
+          xz-5.2.5-8.el9_9.1
+
+        # Build an image index of length 1 referring to an image manifest with the content
+        buildah manifest create "$OUTPUT_IMAGE"
+
+        # show contents of /output
+        ls -alR /output
+
+        if [ -f "/output/qcow2/disk.qcow2" ]; then
+          echo -e "Found qcow2 image."
+          # don't zip qcow2 images, it is already compressed.
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.qcow2 $OUTPUT_IMAGE /output/qcow2/disk.qcow2
+        elif [ -f "/output/image/disk.raw" ]; then
+          echo -e "Found raw image."
+          pigz /output/image/disk.raw
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.raw.gzip $OUTPUT_IMAGE /output/image/disk.raw.gz
+        elif [ -f "/output/bootiso/install.iso" ]; then
+          echo -e "Found iso image."
+          pigz /output/bootiso/install.iso
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.iso.gzip $OUTPUT_IMAGE /output/bootiso/install.iso.gz
+        elif [ -f "/output/vpc/disk.vhd" ]; then
+          echo -e "Found vhd image."
+          pigz /output/vpc/disk.vhd
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.vhd.gzip $OUTPUT_IMAGE /output/vpc/disk.vhd.gz
+        elif [ -f "/output/gce/image.tar.gz" ]; then
+          echo -e "Found gce image."
+          # already compressed.
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.gce.tgz $OUTPUT_IMAGE /output/gce/image.tar.gz
+        elif [ -f "/output/vmdk/disk.vmdk" ]; then
+          echo -e "Found vmdk image."
+          pigz /output/vmdk/disk.vmdk
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.vmdk.gzip $OUTPUT_IMAGE /output/vmdk/disk.vmdk.gz
+        elif [ -f "/output/archive/image.ova" ]; then
+          echo -e "Found ova image."
+          pigz /output/archive/image.ova
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.ova.gzip $OUTPUT_IMAGE /output/archive/image.ova.gz
+        # NOTE: pxe-tar-xz handling covers two different bootc-image-builder versions:
+        #
+        # 1. New image-builder multicall binary (osbuild/image-builder):
+        #    Exports the "xz" pipeline → /output/xz/pxe.tar.xz (pre-compressed)
+        #    No container builds exist for this variant yet (as of July 2026).
+        #
+        # 2. Old bootc-image-builder (osbuild/bootc-image-builder, archived June 2026):
+        #    Exports the "bootc-pxe-tree" pipeline → /output/bootc-pxe-tree/ which is
+        #    a raw directory tree containing vmlinuz, initrd.img, rootfs.img, EFI/,
+        #    grub.cfg, and README. This is what current BIB containers actually produce.
+        #    The task must create the tar.xz archive itself before pushing.
+        #
+        # Check for the new pre-compressed output first, fall back to creating
+        # the archive from the old raw tree.
+        elif [ -f "/output/xz/pxe.tar.xz" ]; then
+          echo -e "Found pxe-tar-xz image (new image-builder)."
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.pxe.tar.xz $OUTPUT_IMAGE /output/xz/pxe.tar.xz
+        elif [ -d "/output/bootc-pxe-tree" ]; then
+          echo -e "Found pxe tree directory (old BIB), creating tar.xz archive."
+          tar -cJf /output/bootc-pxe-tree.tar.xz -C /output/bootc-pxe-tree .
+          buildah manifest add --arch $(arch) --os linux --artifact --artifact-type application/vnd.diskimage.pxe.tar.xz $OUTPUT_IMAGE /output/bootc-pxe-tree.tar.xz
+        else
+          echo "No output artifact found for IMAGE_TYPE=${IMAGE_TYPE}. Check BIB output in /output." >&2
+          ls -alR /output >&2
+          exit 1
+        fi
+
+        buildah_retries=3
+        echo "Pushing image $OUTPUT_IMAGE to registry"
+        if ! retry buildah manifest push --digestfile image-digest --authfile /.docker/config.json --retry "$buildah_retries" --all $OUTPUT_IMAGE
+        then
+            echo "Failed to push image ${OUTPUT_IMAGE} to registry"
+            exit 1
+        fi
+
+        # At this point, we have pushed an image index of length 1 to the registry.
+        # Next, extract a reference to the image manifest and expose that, throwing away the image index.
+        IMAGE_INDEX_DIGEST=$(cat image-digest)
+        REPO=${OUTPUT_IMAGE%:*}
+        MANIFEST_DIGEST=$(buildah manifest inspect --authfile /.docker/config.json $REPO@$IMAGE_INDEX_DIGEST | jq -r '.manifests[0].digest')
+
+        # Overwrite the image index pullspec tag with the image manifest one
+        echo "Overwriting image $OUTPUT_IMAGE in registry"
+        if ! retry skopeo copy --authfile /.docker/config.json docker://$REPO@$MANIFEST_DIGEST docker://$OUTPUT_IMAGE
+        then
+            echo "Failed to overwrite image ${OUTPUT_IMAGE} in registry"
+            exit 1
+        fi
+
+        # Finally, record all that in our results
+        echo -n "$OUTPUT_IMAGE" | tee /tekton-results/IMAGE_URL
+        echo -n "$MANIFEST_DIGEST" | tee /tekton-results/IMAGE_DIGEST
+        # Saving also these two output in one unique variable. This task is using a matrix reference.
+        # Unfortunately it seems that in Tekton, when using a matrix, each task run is executed in isolation,
+        # and result values can't be dynamically constructed or reused across matrix combinations.
+        # In order to prevent that, we are preparing in the task itself what we'll call as `IMAGE_REFERENCE`
+        # so that we can reference that safely in the pipeline.
+        IMAGE_URL_CLEANED=$(echo -n "$OUTPUT_IMAGE" | tr -d '\n')
+        echo -n "${IMAGE_URL_CLEANED}@${MANIFEST_DIGEST}" | tee /tekton-results/IMAGE_REFERENCE
+        REMOTESSHEOF
+
+
+        # make scripts executable and sync them to the cloud VM.
+        chmod +x scripts/script-build.sh
+        chmod +x scripts/script-push.sh
+        rsync -e "ssh ${SSH_ARGS[*]}" -ra scripts "$SSH_HOST:$BUILD_DIR"
+        rsync -e "ssh ${SSH_ARGS[*]}" -ra /var/workdir/source/ "$SSH_HOST:$BUILD_DIR/workspaces/source/"
+
+        ssh -v "${SSH_ARGS[@]}" "$SSH_HOST" "$BUILD_DIR/scripts/script-build.sh"
+        rsync -e "ssh ${SSH_ARGS[*]}" -ra "$SSH_HOST:$BUILD_DIR/tekton-results/" "/tekton/results/"
+
+        # Combine the just-synced IMAGE_REFERENCE with this leg's platform into
+        # a single "imageRef=os/arch" entry for build-image-index's
+        # IMAGE_PLATFORM_MAP param. ARCH was computed above from the PLATFORM
+        # param. Done here (pod-side, post-sync) rather than inside the remote
+        # script, since both inputs are already available and it keeps the
+        # remote build script unchanged.
+        echo -n "$(cat /tekton/results/IMAGE_REFERENCE)=linux/${ARCH}" | tee "$(results.IMAGE_PLATFORM_MAP.path)"
+
+      volumeMounts:
+        - mountPath: /ssh
+          name: ssh
+          readOnly: true
+
+    - name: download-sbom
+      image: quay.io/konflux-ci/task-runner:3.1.2@sha256:e272c1e1c60a4ecc72ff9c8d65bc48da534de6f1ce0d5aba79db3ac532d11c35
+      computeResources:
+        limits:
+          memory: 256Mi
+        requests:
+          cpu: 50m
+          memory: 128Mi
+      securityContext:
+        runAsUser: 0
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+
+        if [ "${SKIP_SBOM_GENERATION}" = "true" ]; then
+          echo "Skipping SBOM generation"
+          exit 0
+        fi
+
+        if [ "${IMAGE_APPEND_PLATFORM}" = "true" ]; then
+          OUTPUT_IMAGE="${OUTPUT_IMAGE}-${PLATFORM//[^a-zA-Z0-9]/-}"
+        fi
+
+        # shellcheck source=/dev/null
+        source /var/workdir/vars
+        ARCH="${PLATFORM##*/}"
+
+        echo "Downloading SBOM from source container: ${SOURCE_IMAGE}"
+
+        mkdir -p /tmp/auth && select-oci-auth "${SOURCE_IMAGE}" > /tmp/auth/config.json
+
+        # INSECURE_REGISTRY is only set for task tests (see pre-apply-task-hook.sh)
+        COSIGN_TLS_OPTS=()
+        SKOPEO_TLS_OPTS=()
+        if [ "${INSECURE_REGISTRY:-false}" = "true" ]; then
+          COSIGN_TLS_OPTS=(--allow-insecure-registry)
+          SKOPEO_TLS_OPTS=(--tls-verify=false)
+        fi
+
+        COSIGN_ARGS=()
+        if DOCKER_CONFIG=/tmp/auth skopeo inspect "${SKOPEO_TLS_OPTS[@]}" --raw "docker://${SOURCE_IMAGE}" 2>/dev/null \
+          | jq -e '.manifests' > /dev/null 2>&1; then
+          echo "Source is a multi-arch index, downloading SBOM for linux/${ARCH}"
+          COSIGN_ARGS=(--platform="linux/${ARCH}")
+        fi
+
+        if DOCKER_CONFIG=/tmp/auth retry cosign download sbom "${COSIGN_TLS_OPTS[@]}" "${COSIGN_ARGS[@]}" \
+            "${SOURCE_IMAGE}" > /var/workdir/sbom.json 2>/tmp/cosign-err.log \
+          && jq empty /var/workdir/sbom.json 2>/dev/null; then
+          SBOM_SIZE=$(wc -c < /var/workdir/sbom.json)
+          SBOM_PKGS=$(jq '(.packages // .components // []) | length' /var/workdir/sbom.json 2>/dev/null || echo "unknown")
+          echo "SBOM downloaded successfully (${SBOM_SIZE} bytes, ${SBOM_PKGS} packages)"
+        else
+          echo "WARNING: Failed to download SBOM from source container"
+          cat /tmp/cosign-err.log
+          echo "Generating minimal SBOM placeholder"
+          if ! IMAGE_DIGEST="$(cat "$(results.IMAGE_DIGEST.path)" 2>/dev/null)"; then
+            echo "WARNING: IMAGE_DIGEST result not available, using 'unknown'"
+            IMAGE_DIGEST="unknown"
+          fi
+          TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          if [ "${SBOM_TYPE}" = "cyclonedx" ]; then
+            jq -n \
+              --arg name "${OUTPUT_IMAGE}" \
+              --arg ts "${TS}" \
+              '{
+                bomFormat: "CycloneDX",
+                specVersion: "1.5",
+                version: 1,
+                metadata: {
+                  timestamp: $ts,
+                  tools: [{name: "aipcc-konflux-data/build-vm-image-taskflow"}],
+                  component: {type: "application", name: $name}
+                },
+                components: []
+              }' > /var/workdir/sbom.json
+          else
+            jq -n \
+              --arg name "${OUTPUT_IMAGE}" \
+              --arg ns "https://konflux-ci.dev/disk-image-sbom/${OUTPUT_IMAGE}@${IMAGE_DIGEST}" \
+              --arg ts "${TS}" \
+              '{
+                spdxVersion: "SPDX-2.3",
+                dataLicense: "CC0-1.0",
+                SPDXID: "SPDXRef-DOCUMENT",
+                name: $name,
+                documentNamespace: $ns,
+                comment: "SBOM download from source container failed. This is a placeholder document with no package data.",
+                creationInfo: {
+                  creators: ["Tool: aipcc-konflux-data/build-vm-image-taskflow"],
+                  created: $ts,
+                  comment: "placeholder: source SBOM unavailable"
+                },
+                packages: []
+              }' > /var/workdir/sbom.json
+          fi
+        fi
+
+    - name: upload-sbom
+      image: quay.io/konflux-ci/task-runner:3.1.2@sha256:e272c1e1c60a4ecc72ff9c8d65bc48da534de6f1ce0d5aba79db3ac532d11c35
+      computeResources:
+        limits:
+          memory: 256Mi
+        requests:
+          cpu: 50m
+          memory: 128Mi
+      securityContext:
+        runAsUser: 0
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+
+        if [ "${SKIP_SBOM_GENERATION}" = "true" ]; then
+          echo "Skipping SBOM upload"
+          echo -n "" | tee "$(results.SBOM_BLOB_URL.path)"
+          exit 0
+        fi
+
+        if [ ! -f /var/workdir/sbom.json ]; then
+          echo "No SBOM file found, skipping upload"
+          echo -n "" | tee "$(results.SBOM_BLOB_URL.path)"
+          exit 0
+        fi
+
+        if [ "${IMAGE_APPEND_PLATFORM}" = "true" ]; then
+          OUTPUT_IMAGE="${OUTPUT_IMAGE}-${PLATFORM//[^a-zA-Z0-9]/-}"
+        fi
+
+        IMAGE_URL="$(cat "$(results.IMAGE_URL.path)")"
+        IMAGE_DIGEST="$(cat "$(results.IMAGE_DIGEST.path)")"
+        IMAGE_REF="${IMAGE_URL}@${IMAGE_DIGEST}"
+
+        mkdir -p /tmp/auth && select-oci-auth "${IMAGE_REF}" > /tmp/auth/config.json
+
+        # INSECURE_REGISTRY is only set for task tests (see pre-apply-task-hook.sh)
+        COSIGN_TLS_OPTS=()
+        if [ "${INSECURE_REGISTRY:-false}" = "true" ]; then
+          COSIGN_TLS_OPTS=(--allow-insecure-registry)
+        fi
+
+        echo "Attaching SBOM to disk image: ${IMAGE_REF}"
+        if ! DOCKER_CONFIG=/tmp/auth retry cosign attach sbom "${COSIGN_TLS_OPTS[@]}" --sbom /var/workdir/sbom.json --type "${SBOM_TYPE}" "${IMAGE_REF}"; then
+          echo "Failed to attach SBOM to disk image"
+          exit 1
+        fi
+
+        echo "SBOM attached successfully"
+
+        REPO="${OUTPUT_IMAGE%:*}"
+        SBOM_DIGEST=$(sha256sum /var/workdir/sbom.json | awk '{ print $1 }')
+        echo -n "${REPO}@sha256:${SBOM_DIGEST}" | tee "$(results.SBOM_BLOB_URL.path)"
+
+  volumes:
+    - emptyDir: {}
+      name: workdir
+    - emptyDir: {}
+      name: varlibcontainers
+    - name: ssh
+      secret:
+        optional: false
+        secretName: multi-platform-ssh-$(context.taskRun.name)
