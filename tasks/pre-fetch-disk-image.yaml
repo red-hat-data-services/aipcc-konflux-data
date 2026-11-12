@@ -69,7 +69,7 @@ spec:
       description: Secret holding the registry credentials used to pull the disk images
   steps:
     - name: use-trusted-artifact
-      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:23953da08db809f841120214055aeb238bc553368e366feb58495d5a5493b19a
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:d7e9f457d819b91d5f4b62effea105d54c6e54bedcc3afb2a7a9fcaaf752076b
       args:
         - use
         - $(params.SOURCE_ARTIFACT)=/var/workdir/source
@@ -172,7 +172,7 @@ spec:
           cpu: "1"
           memory: 4Gi
     - name: create-trusted-artifact
-      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:23953da08db809f841120214055aeb238bc553368e366feb58495d5a5493b19a
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:d7e9f457d819b91d5f4b62effea105d54c6e54bedcc3afb2a7a9fcaaf752076b
       args:
         - create
         - --store
