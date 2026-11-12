@@ -80,7 +80,7 @@ spec:
           cpu: 250m
           memory: 512Mi
     - name: pull-disk-images
-      image: registry.access.redhat.com/ubi9/ubi:9.8-1793580630@sha256:8f989cc9270da6abec0144c22846ed1e6e92e462dc7768ce0981c4ac1d574733
+      image: registry.access.redhat.com/ubi9/ubi:9.9-1794466612@sha256:1e9f0ed9fceafb40878bc1705ff124aa150e3fed873f18c42cdc2dded319e0a8
       workingDir: /var/workdir/source
       env:
         - name: BUILD_ARGS_FILE
