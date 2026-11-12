@@ -442,17 +442,19 @@ spec:
         value: $(tasks.build-image-index.results.IMAGE_DIGEST)
       - name: image-url
         value: $(tasks.build-image-index.results.IMAGE_URL)
+      - name: client-timeout
+        value: "30m"
       runAfter:
       - build-image-index
       taskRef:
         params:
-        - name: name
-          value: roxctl-scan
-        - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-roxctl-scan:0.2@sha256:78e49dd18ed8e438d28cbd27e7d93f98b3dab35dd77df7930810b747c6033d6e
-        - name: kind
-          value: task
-        resolver: bundles
+        - name: url
+          value: https://github.com/jrusz/konflux-test-tasks
+        - name: revision
+          value: 2583e4f1a0e6ab9a978a5641c0b2ec9abb68a410
+        - name: pathInRepo
+          value: task/roxctl-scan/0.2/roxctl-scan.yaml
+        resolver: git
       when:
       - input: $(params.skip-checks)
         operator: in
