@@ -57,6 +57,12 @@ spec:
     description: Execute the build with network isolation
     name: hermetic
     type: string
+  - description: |
+      image-builder image pinned by digest. The prefetch task runs it as its
+      step image, and checks it against .bootc-builder-image in the bib file,
+      so the pipeline and the repository pin cannot drift.
+    name: builder-image
+    type: string
   - description: path to bib yaml file
     default: "bib.yaml"
     name: bib-file
@@ -184,6 +190,36 @@ spec:
       workspace: git-auth
     - name: netrc
       workspace: netrc
+  - name: prefetch-disk-image-taskflow
+    runAfter:
+    - clone-repository
+    params:
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+    - name: ociStorage
+      value: "$(params.output-image).diskimage-prefetch"
+    - name: ociArtifactExpiresAfter
+      value: "$(params.image-expires-after)"
+    - name: BUILDER_IMAGE
+      value: $(params.builder-image)
+    - name: BIB_CONFIG_FILE
+      value: $(params.bib-file)
+    - name: IMAGE_TYPE
+      value: $(params.image-type)
+    - name: IMAGE_SIZE
+      value: $(params.image-size)
+    - name: BUILD_PLATFORMS
+      value:
+      - $(params.build-platforms)
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/red-hat-data-services/aipcc-konflux-data
+      - name: revision
+        value: RHAI-15893/taskflow-wiring
+      - name: pathInRepo
+        value: tasks/prefetch-disk-image-taskflow.yaml
   - name: build-vm-image
     timeout: "3h0m00s"
     matrix:
@@ -194,6 +230,8 @@ spec:
     params:
     - name: SOURCE_ARTIFACT
       value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+    - name: TASK_ARTIFACT
+      value: $(tasks.prefetch-disk-image-taskflow.results.TASK_ARTIFACT)
     - name: IMAGE_TYPE
       value: $(params.image-type)
     - name: OUTPUT_IMAGE
@@ -204,14 +242,12 @@ spec:
       value: $(params.bib-file)
     - name: IMAGE_APPEND_PLATFORM
       value: "true"
-    - name: ACTIVATION_KEY
-      value: $(params.activation-key)
     - name: IMAGE_SIZE
       value: $(params.image-size)
     - name: HERMETIC
       value: $(params.hermetic)
     runAfter:
-    - prefetch-dependencies
+    - prefetch-disk-image-taskflow
     taskRef:
       resolver: git
       params:

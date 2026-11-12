@@ -1,0 +1,225 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/pipelines.minVersion: 0.12.1
+    tekton.dev/tags: image-build, konflux
+  labels:
+    app.kubernetes.io/version: "0.1"
+    build.appstudio.redhat.com/build_type: disk-image
+  name: prefetch-disk-image-taskflow
+spec:
+  description: |
+    Prefetch the inputs of a hermetic disk-image build.
+
+    image-builder's "task init" and "task prefetch" run here, in the task pod,
+    with network access, against the bootc container pinned in the bib file
+    (pull by digest, skopeo source, no local container store). The resulting
+    task directory -- manifest plus downloaded sources -- is published as a
+    trusted artifact. The build task restores it and runs "task build-image"
+    with the network cut, so the build consumes only prefetched,
+    content-locked inputs. This is the disk-image analogue of the cachi2
+    artifact in container builds.
+
+    The builder image is used as this task's step image, so the pod must be
+    able to pull it. An upstream public builder image needs nothing extra; a
+    private mirror needs a matching imagePullSecret on the PipelineRun.
+
+    One task directory is produced per requested build platform, so a
+    multi-platform pipeline can share a single prefetch pod.
+  params:
+    - name: SOURCE_ARTIFACT
+      description: The trusted artifact holding the cloned source
+      type: string
+    - name: ociStorage
+      description: The OCI repository where the trusted artifact is stored
+      type: string
+    - name: ociArtifactExpiresAfter
+      description: Expiration of the trusted artifact
+      type: string
+    - name: BUILDER_IMAGE
+      description: |
+        image-builder image pinned by digest. Used as this task's step image
+        and checked against .bootc-builder-image in the bib file, so the
+        pipeline param and the repository pin cannot drift apart.
+      type: string
+    - name: BIB_CONFIG_FILE
+      description: The bib yaml, relative to the source root
+      type: string
+      default: bib.yaml
+    - name: IMAGE_TYPE
+      description: The image type to build (qcow2, iso, ...)
+      type: string
+    - name: IMAGE_SIZE
+      description: |
+        Disk image size (e.g. 20GiB). Empty keeps the manifest default.
+        Replaces the config.toml filesystem sizing, which the new CLI
+        rejects for bootc qcow2 images.
+      type: string
+      default: ""
+    - name: BUILD_PLATFORMS
+      description: |
+        Build platforms, in the pipeline's format (e.g. linux-root/amd64).
+        Each one gets its own task directory under the published artifact.
+      type: array
+  results:
+    - name: TASK_ARTIFACT
+      description: |
+        Trusted artifact holding the image-builder task directory per
+        platform (task/<arch>).
+  volumes:
+    - name: workdir
+      emptyDir: {}
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /var/workdir
+        name: workdir
+  steps:
+    - name: use-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:23953da08db809f841120214055aeb238bc553368e366feb58495d5a5493b19a
+      args:
+        - use
+        - $(params.SOURCE_ARTIFACT)=/var/workdir/source
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          cpu: "1"
+          memory: 4Gi
+
+    - name: resolve-config
+      image: quay.io/konflux-ci/task-runner:3.1.2@sha256:e272c1e1c60a4ecc72ff9c8d65bc48da534de6f1ce0d5aba79db3ac532d11c35
+      env:
+        - name: BIB_CONFIG_FILE
+          value: $(params.BIB_CONFIG_FILE)
+        - name: BUILDER_IMAGE
+          value: $(params.BUILDER_IMAGE)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        set -x
+
+        BIB_CONFIG_FILE=${BIB_CONFIG_FILE#/}
+        BIB_CONFIG_PATH="/var/workdir/source/${BIB_CONFIG_FILE}"
+        BIB_CONFIG_REAL="$(realpath -m "${BIB_CONFIG_PATH}")"
+        if [[ "${BIB_CONFIG_REAL}" != /var/workdir/source/* ]]; then
+            echo "BIB_CONFIG_FILE escapes source directory: ${BIB_CONFIG_FILE}" >&2
+            exit 1
+        fi
+        if [ ! -f "${BIB_CONFIG_PATH}" ]; then
+            echo "BIB_CONFIG_FILE not found: ${BIB_CONFIG_FILE}" >&2
+            exit 1
+        fi
+
+        BIB_IMAGE=$(yq -r .bootc-builder-image "${BIB_CONFIG_PATH}")
+        SOURCE_IMAGE=$(yq -r .source-image "${BIB_CONFIG_PATH}")
+
+        valid_pullspec_characters="0-9a-zA-Z@:/._-"
+        for value in "${BIB_IMAGE}" "${SOURCE_IMAGE}"; do
+            if [[ "${value}" =~ [^$valid_pullspec_characters] || "${value}" == "null" ]]; then
+                echo "invalid or missing pullspec in ${BIB_CONFIG_FILE}: ${value}" >&2
+                exit 1
+            fi
+        done
+
+        # The builder image is this task's step image, which must be known when
+        # the pod is created, so the pipeline passes it as a param. Fail loudly
+        # if that param and the repository pin disagree.
+        if [[ "${BIB_IMAGE}" != "${BUILDER_IMAGE}" ]]; then
+            echo "Builder image mismatch: .bootc-builder-image is ${BIB_IMAGE} but the pipeline passed ${BUILDER_IMAGE}" >&2
+            exit 1
+        fi
+
+        # Registry credentials for the prefetch step: the bootc image is
+        # private, and init/prefetch pull it by digest.
+        mkdir -p /var/workdir/auth
+        select-oci-auth "${SOURCE_IMAGE}" > /var/workdir/auth/config.json
+
+        # printf %q keeps a single value safe to source; multi-valued params
+        # are passed to the next step as env, never through this file.
+        printf 'declare SOURCE_IMAGE=%q\n' "${SOURCE_IMAGE}" > /var/workdir/prefetch-env
+      computeResources:
+        limits:
+          memory: 256Mi
+        requests:
+          cpu: 50m
+          memory: 128Mi
+
+    - name: task-init-prefetch
+      image: $(params.BUILDER_IMAGE)
+      env:
+        - name: IMAGE_TYPE
+          value: $(params.IMAGE_TYPE)
+        - name: IMAGE_SIZE
+          value: $(params.IMAGE_SIZE)
+      args:
+        - "$(params.BUILD_PLATFORMS[*])"
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        set -x
+
+        case "${IMAGE_TYPE}" in
+            qcow2|raw|ami|vhd|vmdk|ova|gce) ;;
+            *)
+                echo "IMAGE_TYPE=${IMAGE_TYPE} is not wired through the task-flow prefetch yet." >&2
+                echo "Supported types: qcow2 raw ami vhd vmdk ova gce" >&2
+                exit 1
+                ;;
+        esac
+
+        source /var/workdir/prefetch-env
+        export REGISTRY_AUTH_FILE=/var/workdir/auth/config.json
+
+        IMAGE_SIZE_ARGUMENT=()
+        if [ -n "${IMAGE_SIZE}" ]; then
+            IMAGE_SIZE_ARGUMENT=(--image-size "${IMAGE_SIZE}")
+        fi
+
+        # Array params reach a step through args, never env; one element per
+        # requested platform.
+        for platform in "$@"; do
+            # Directory names keep the pipeline's container-style arch
+            # (amd64/arm64) because the build task derives the same token
+            # from PLATFORM; --arch wants osbuild's names.
+            platform_arch="${platform##*/}"
+            case "${platform_arch}" in
+                amd64) osbuild_arch="x86_64" ;;
+                arm64) osbuild_arch="aarch64" ;;
+                *)     osbuild_arch="${platform_arch}" ;;
+            esac
+            task_dir="/var/workdir/task/${platform_arch}"
+            mkdir -p "${task_dir}"
+
+            # --bootc-pull-container keeps the manifest's container source a
+            # remote skopeo source, so the build needs no local container
+            # store: prefetch downloads the image into the task directory and
+            # the offline build reads it from there.
+            image-builder task init --image-type "${IMAGE_TYPE}" \
+                --bootc-ref "${SOURCE_IMAGE}" --bootc-pull-container \
+                --arch "${osbuild_arch}" "${IMAGE_SIZE_ARGUMENT[@]}" "${task_dir}"
+            image-builder task prefetch "${task_dir}"
+        done
+      computeResources:
+        limits:
+          memory: 8Gi
+        requests:
+          cpu: "2"
+          memory: 4Gi
+
+    - name: create-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:23953da08db809f841120214055aeb238bc553368e366feb58495d5a5493b19a
+      args:
+        - create
+        - --store
+        - $(params.ociStorage)
+        - $(results.TASK_ARTIFACT.path)=/var/workdir/task
+      env:
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.ociArtifactExpiresAfter)
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          cpu: "1"
+          memory: 4Gi
