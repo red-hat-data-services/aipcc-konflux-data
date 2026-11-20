@@ -1,0 +1,159 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: acs-scan-diff
+spec:
+  description: |
+    Compare exact image digests with matching Linux platforms. Run manually
+    or as a stage finalPipeline; never use as a tenantPipeline or release gate.
+    Pin task-revision to the pipeline's commit. Use the release account by
+    default and override only scan with the ACS-authorized component account.
+    Only successful fresh-mode runs can annotate a supplied Snapshot.
+    See pipelineruns/acs-scan-diff.md for usage and evidence limits.
+  params:
+    - name: task-revision
+      description: Same immutable Git commit SHA used to resolve this pipeline.
+    - name: release
+      default: ""
+    - name: releasePlan
+      default: ""
+    - name: snapshot
+      default: ""
+    - name: baseline-snapshot
+      default: ""
+    - name: prod-release-plan
+      default: ""
+    - name: component
+      default: ""
+    - name: baseline-ref
+      default: ""
+    - name: candidate-ref
+      default: ""
+    - name: scan-mode
+      description: >-
+        fresh (default) forces a new scan per manifest and requires in-window
+        timestamps. build permits cached scans with a 30m client timeout,
+        default retries and never annotates the Snapshot.
+      default: fresh
+    - name: ociStorage
+      description: Existing OCI repository for temporary comparison artifacts, without tag/digest.
+      default: quay.io/aipcc-cicd/aipcc-konflux-trusted-artifacts
+    - name: ociArtifactExpiresAfter
+      default: "1d"
+  results:
+    - name: baseline-release
+      value: $(tasks.resolve.results.baseline-release)
+    - name: baseline-image
+      value: $(tasks.resolve.results.baseline-image)
+    - name: candidate-image
+      value: $(tasks.resolve.results.candidate-image)
+    - name: baseline-cve-count
+      value: $(tasks.scan.results.baseline-cve-count)
+    - name: candidate-cve-count
+      value: $(tasks.scan.results.candidate-cve-count)
+    - name: fixed-cve-count
+      description: Observed baseline-only CVEs, not verified remediation.
+      value: $(tasks.scan.results.fixed-cve-count)
+    - name: new-cve-count
+      value: $(tasks.scan.results.new-cve-count)
+  tasks:
+    - name: resolve
+      timeout: 15m
+      params:
+        - name: task-revision
+          value: $(params.task-revision)
+        - name: release
+          value: $(params.release)
+        - name: releasePlan
+          value: $(params.releasePlan)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: baseline-snapshot
+          value: $(params.baseline-snapshot)
+        - name: prod-release-plan
+          value: $(params.prod-release-plan)
+        - name: component
+          value: $(params.component)
+        - name: baseline-ref
+          value: $(params.baseline-ref)
+        - name: candidate-ref
+          value: $(params.candidate-ref)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: $(params.task-revision)
+          - name: pathInRepo
+            value: tasks/acs-scan-diff-resolve.yaml
+    - name: scan
+      timeout: 2h
+      params:
+        - name: task-revision
+          value: $(params.task-revision)
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
+        - name: component
+          value: $(tasks.resolve.results.component)
+        - name: prev-release
+          value: $(tasks.resolve.results.baseline-release)
+        - name: prev-snapshot
+          value: $(tasks.resolve.results.prev-snapshot)
+        - name: baseline-ref
+          value: $(tasks.resolve.results.baseline-image)
+        - name: candidate-ref
+          value: $(tasks.resolve.results.candidate-image)
+        - name: scan-mode
+          value: $(params.scan-mode)
+        - name: scan-baseline-refs
+          value: $(tasks.resolve.results.scan-baseline-refs)
+        - name: scan-candidate-refs
+          value: $(tasks.resolve.results.scan-candidate-refs)
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: ociArtifactExpiresAfter
+          value: $(params.ociArtifactExpiresAfter)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: $(params.task-revision)
+          - name: pathInRepo
+            value: tasks/acs-scan-diff.yaml
+    - name: annotate
+      timeout: 5m
+      when:
+        - input: $(params.snapshot)
+          operator: notin
+          values: [""]
+        # Build-parity comparison data must never become fresh annotations.
+        - input: $(params.scan-mode)
+          operator: in
+          values: ["fresh"]
+      params:
+        - name: sourceDataArtifact
+          value: $(tasks.scan.results.sourceDataArtifact)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: task-revision
+          value: $(params.task-revision)
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
+        - name: component
+          value: $(tasks.resolve.results.component)
+        - name: baseline-ref
+          value: $(tasks.resolve.results.baseline-image)
+        - name: candidate-ref
+          value: $(tasks.resolve.results.candidate-image)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: $(params.task-revision)
+          - name: pathInRepo
+            value: tasks/acs-scan-diff-annotate.yaml
