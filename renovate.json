@@ -54,6 +54,14 @@
           "quay.io/konflux-ci/tekton-catalog/task-apply-tags"
         ],
         "enabled": false
+      },
+      {
+        "description": "Keep rhacs-roxctl tag/digest/major updates as PRs for human review instead of automerge",
+        "matchPackageNames": [
+          "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9"
+        ],
+        "automerge": false,
+        "platformAutomerge": false
       }
     ]
   }
