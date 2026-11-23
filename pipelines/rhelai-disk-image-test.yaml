@@ -125,7 +125,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.6"
+            value: "v0.14.7"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
     - name: extract-and-upload-cloud-image
@@ -209,7 +209,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.6"
+            value: "v0.14.7"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel-ai.yaml"
     - name: create-vm-azure
@@ -257,7 +257,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.6"
+            value: "v0.14.7"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel-ai.yaml"
     - name: configure-vm
@@ -331,7 +331,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.6"
+            value: "v0.14.7"
           - name: pathInRepo
             value: "tkn/infra-aws-rhel-ai.yaml"
       when:
@@ -353,7 +353,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.6"
+            value: "v0.14.7"
           - name: pathInRepo
             value: "tkn/infra-azure-rhel-ai.yaml"
       when:
@@ -375,7 +375,7 @@ spec:
           - name: url
             value: "https://github.com/redhat-developer/mapt"
           - name: revision
-            value: "v0.14.6"
+            value: "v0.14.7"
           - name: pathInRepo
             value: "tkn/infra-aws-fedora.yaml"
       when:
