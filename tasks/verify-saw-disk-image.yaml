@@ -79,8 +79,11 @@ spec:
           value: $(params.container-image)
         - name: NAMESPACE
           value: $(params.namespace)
-        - name: PULL_SECRET_NAME
-          value: $(params.pull-secret-name)
+        - name: PULL_SECRET_JSON
+          valueFrom:
+            secretKeyRef:
+              name: $(params.pull-secret-name)
+              key: .dockerconfigjson
         - name: GUEST_CPUS
           value: $(params.guest-cpus)
         - name: GUEST_MEMORY
@@ -120,10 +123,11 @@ spec:
         kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
         echo "=== Copying the registry credentials to the cluster ==="
-        jq -r '.data[".dockerconfigjson"] // .data["config.json"] // empty' <<< \
-          "$(kubectl get secret "${PULL_SECRET_NAME}" -o json)" | base64 -d > /workspace/pull-secret.json
+        # The value comes from the secretKeyRef environment variable. A kubectl
+        # read would reach the SNC cluster, because KUBECONFIG is already set.
+        printf '%s' "${PULL_SECRET_JSON}" > /workspace/pull-secret.json
         if [ ! -s /workspace/pull-secret.json ]; then
-          echo "ERROR: secret ${PULL_SECRET_NAME} holds no registry credentials"
+          echo "ERROR: the pull secret holds no registry credentials"
           exit 1
         fi
         kubectl create secret generic saw-pull-secret -n "${NAMESPACE}" \
@@ -132,6 +136,7 @@ spec:
           --dry-run=client -o yaml | kubectl apply -f -
 
         echo "=== Creating the guest SSH key ==="
+        rm -f /workspace/id_ed25519 /workspace/id_ed25519.pub
         ssh-keygen -q -t ed25519 -N '' -C saw-its -f /workspace/id_ed25519
         pubkey=$(cat /workspace/id_ed25519.pub)
         echo "public key: ${pubkey}"
@@ -160,7 +165,6 @@ spec:
                 source:
                   registry:
                     url: docker://${CONTAINER_IMAGE}
-                    pullMethod: node
                     secretRef: saw-pull-secret
           template:
             metadata:
@@ -265,8 +269,6 @@ spec:
           value: $(params.container-image)
         - name: NAMESPACE
           value: $(params.namespace)
-        - name: PULL_SECRET_NAME
-          value: $(params.pull-secret-name)
         - name: BOOT_TIMEOUT
           value: $(params.boot-timeout)
         - name: DEBUG

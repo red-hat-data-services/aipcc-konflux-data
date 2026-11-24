@@ -147,6 +147,17 @@ def test_the_guest_starts_from_the_artifact():
     assert "contentType: kubevirt" in script
 
 
+def test_the_pull_secret_comes_from_the_pod_environment():
+    # The deploy step switches KUBECONFIG to the SNC cluster. A kubectl read of
+    # the tenant secret would then reach the wrong cluster.
+    deploy = _step("deploy")
+    env = {item["name"]: item for item in deploy["env"]}
+    ref = env["PULL_SECRET_JSON"]["valueFrom"]["secretKeyRef"]
+    assert ref["name"] == "$(params.pull-secret-name)"
+    assert ref["key"] == ".dockerconfigjson"
+    assert 'kubectl get secret "${PULL_SECRET_NAME}"' not in deploy["script"]
+
+
 def test_the_guest_is_reachable_through_the_api_server():
     # The task pod lives outside the SNC cluster, so SSH goes through a tunnel.
     script = _step("verify")["script"]
