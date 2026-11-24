@@ -5,11 +5,15 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 PIPELINE = ROOT / "pipelines" / "saw-golden-image-its.yaml"
-SELECT_TASK = ROOT / "tasks" / "select-snapshot-image.yaml"
-VERIFY_TASK = ROOT / "tasks" / "verify-saw-golden-image.yaml"
+CONFIG_TASK = ROOT / "tasks" / "config-from-snapshot.yaml"
+VERIFY_TASK = ROOT / "tasks" / "verify-saw-disk-image.yaml"
 
 LOCAL_REPO = "https://github.com/red-hat-data-services/aipcc-konflux-data"
 MAPT_REPO = "https://github.com/redhat-developer/mapt"
+
+# The cluster must come from the mapt SNC task, at a revision that provides it.
+MAPT_SNC_PATH = "tkn/infra-aws-ocp-snc.yaml"
+MAPT_SNC_REVISION = "v0.14.7"
 
 
 def _load(path):
@@ -36,6 +40,13 @@ def _params(task):
     return {param["name"]: param.get("value") for param in task.get("params", [])}
 
 
+def _step(name):
+    for step in _load(VERIFY_TASK)["spec"]["steps"]:
+        if step["name"] == name:
+            return step
+    raise AssertionError(f"no step {name}")
+
+
 def test_local_resolver_paths_exist():
     for task in _pipeline()["spec"]["tasks"] + _pipeline()["spec"]["finally"]:
         resolver = _resolver_params(task)
@@ -43,17 +54,30 @@ def test_local_resolver_paths_exist():
             assert (ROOT / resolver["pathInRepo"]).is_file(), resolver["pathInRepo"]
 
 
-def test_mapt_tasks_pin_a_revision():
+def test_the_cluster_comes_from_the_mapt_snc_task():
     for task in _pipeline()["spec"]["tasks"] + _pipeline()["spec"]["finally"]:
         resolver = _resolver_params(task)
-        if resolver["url"] == MAPT_REPO:
-            assert resolver["revision"].startswith("v"), resolver
+        if resolver["url"] != MAPT_REPO:
+            continue
+        assert resolver["pathInRepo"] == MAPT_SNC_PATH, resolver
+        assert resolver["revision"] == MAPT_SNC_REVISION, resolver
+
+
+def test_the_profile_installs_virtualization():
+    # The virtualization profile installs OpenShift Virtualization and makes
+    # mapt select a bare metal instance, so a guest can run on the cluster.
+    create = _params(_tasks()["create-snc-cluster"])
+    assert create["profile"] == "$(tasks.create-configuration.results.snc-profile)"
+
+    script = _load(CONFIG_TASK)["spec"]["steps"][0]["script"]
+    assert 'snc_profile="virtualization"' in script
+    assert "*-disk-image*)" in script
 
 
 def test_pipeline_provides_every_required_local_task_param():
     specs = {
-        "select-image": _load(SELECT_TASK)["spec"],
-        "verify-saw-golden-image": _load(VERIFY_TASK)["spec"],
+        "create-configuration": _load(CONFIG_TASK)["spec"],
+        "verify-saw-disk-image": _load(VERIFY_TASK)["spec"],
     }
     for name, spec in specs.items():
         passed = _params(_tasks()[name])
@@ -64,43 +88,89 @@ def test_pipeline_provides_every_required_local_task_param():
         assert set(passed) <= set(declared), f"{name} passes an unknown param"
 
 
+def test_pipeline_provides_every_param_the_mapt_task_requires():
+    # The remote task is not in this repository, so guard the names the pipeline
+    # depends on: mapt marks id, operation and the credential secrets as required.
+    create = _params(_tasks()["create-snc-cluster"])
+    destroy = _params(_finally()["delete-snc-cluster"])
+    for param in ("id", "operation", "secret-aws-credentials", "secret-ocp-snc-credentials"):
+        assert param in create, param
+        assert param in destroy, param
+
+
 def test_create_and_destroy_share_the_mapt_id_and_secret():
-    tasks = _tasks()
-    finalizers = _finally()
-    create = _params(tasks["create-vm"])
-    verify = _params(tasks["verify-saw-golden-image"])
-    destroy = _params(finalizers["delete-vm"])
+    create = _params(_tasks()["create-snc-cluster"])
+    destroy = _params(_finally()["delete-snc-cluster"])
 
     assert create["id"] == destroy["id"] == "$(context.pipelineRun.name)"
-    assert create["host-access-secret-name"] == verify["host-access-secret-name"]
-    assert create["host-access-secret-name"] == "mapt-$(context.pipelineRun.name)"
+    assert (
+        create["secret-ocp-snc-credentials"]
+        == destroy["secret-ocp-snc-credentials"]
+        == "$(params.ocp-snc-credentials-secret)"
+    )
+    assert create["secret-aws-credentials"] == destroy["secret-aws-credentials"]
     assert create["operation"] == "create"
     assert destroy["operation"] == "destroy"
 
 
-def test_verify_waits_for_the_host():
-    assert _tasks()["verify-saw-golden-image"]["runAfter"] == ["create-vm"]
+def test_destroy_always_runs():
+    # A failed run must not leave a bare metal instance on the account.
+    finalizers = _finally()
+    assert "delete-snc-cluster" in finalizers
+    assert _params(finalizers["delete-snc-cluster"])["force-destroy"] == "true"
+
+
+def test_verify_waits_for_the_cluster():
+    verify = _tasks()["verify-saw-disk-image"]
+    assert verify["runAfter"] == ["create-snc-cluster"]
+    assert _params(verify)["cluster-access-secret-name"] == (
+        "$(tasks.create-snc-cluster.results.cluster-access-secret)"
+    )
 
 
 def test_pipeline_results_are_wired_to_the_verify_task():
     results = {r["name"]: r["value"] for r in _pipeline()["spec"]["results"]}
     declared = {r["name"] for r in _load(VERIFY_TASK)["spec"]["results"]}
 
-    for name in ("TEST_OUTPUT", "GUEST_IP", "ACCELERATION"):
-        assert name in declared
-        assert results[name] == f"$(tasks.verify-saw-golden-image.results.{name})"
-    assert results["CONTAINER_IMAGE"] == "$(tasks.select-image.results.container-image)"
+    assert "TEST_OUTPUT" in declared
+    assert results["TEST_OUTPUT"] == "$(tasks.verify-saw-disk-image.results.TEST_OUTPUT)"
+    assert results["container-image"] == "$(tasks.create-configuration.results.container-image)"
 
 
-def test_verify_task_maps_the_architecture_for_skopeo():
-    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
-    assert "x86_64|amd64) SKOPEO_ARCH=\"amd64\"" in script
-    assert "aarch64|arm64) SKOPEO_ARCH=\"arm64\"" in script
-    assert '--override-arch "${SKOPEO_ARCH}"' in script
+def test_the_guest_starts_from_the_artifact():
+    # The production path: CDI imports the OCI artifact, KubeVirt boots it.
+    script = _step("deploy")["script"]
+    assert "kind: VirtualMachine" in script
+    assert "dataVolumeTemplates:" in script
+    assert "url: docker://${CONTAINER_IMAGE}" in script
+    assert "secretRef: saw-pull-secret" in script
+    assert "contentType: kubevirt" in script
+
+
+def test_the_guest_is_reachable_through_the_api_server():
+    # The task pod lives outside the SNC cluster, so SSH goes through a tunnel.
+    script = _step("verify")["script"]
+    assert "kubectl port-forward" in script
+    assert "svc/saw-golden-ssh 2222:22" in script
+    assert "127.0.0.1" in script
+
+
+def test_the_guest_waits_for_the_cdi_import():
+    script = _step("deploy")["script"]
+    assert 'Failed) echo "ERROR: the CDI import failed"' in script
+    assert 'if [ "${phase:-}" != "Succeeded" ]' in script
+
+
+def test_verify_task_maps_the_architecture_of_the_node():
+    # The artifact is a multi-arch list. skopeo must read the node manifest,
+    # else it inspects the list and finds no labels.
+    script = _step("verify")["script"]
+    assert "nodeInfo.architecture" in script
+    assert '--override-arch "${arch}"' in script
 
 
 def test_report_step_is_fail_closed():
-    script = _load(VERIFY_TASK)["spec"]["steps"][2]["script"]
+    script = _step("report")["script"]
 
     # A run without a check line must not report success.
     assert "if passed + failed == 0:" in script
@@ -110,40 +180,46 @@ def test_report_step_is_fail_closed():
     assert 'result = "WARNING"' in script
 
 
-def test_guest_memory_is_converted_to_mib():
-    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
+def test_the_report_step_reads_the_step_log():
+    # Tekton steps do not share stdout, so the checks travel through a file.
+    deploy = _step("deploy")
+    verify = _step("verify")
+    report = _step("report")
 
-    # virt-install reads a bare --memory value as MiB, so 8 would give an 8 MiB guest.
-    assert "guest_memory_mib=$((GUEST_MEMORY * 1024))" in script
-    assert '--memory "${guest_memory_mib}"' in script
-    assert '--memory "${GUEST_MEMORY}"' not in script
-
-
-def test_console_output_goes_to_a_serial_file():
-    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
-
-    # virt-install has no --console log,file= form. The serial backend does it.
-    assert "--serial file,path=/var/log/saw-console.log" in script
-    assert "log,file=" not in script
-
-
-def test_layer_selection_ignores_directories():
-    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
-
-    # The OCI layout directory sums every file, so a du sort can pick the directory.
-    assert "find /var/saw-test/oci -type f -printf '%s %p\\n'" in script
-    assert "du -aBM /var/saw-test/oci" not in script
+    for step in (deploy, verify, report):
+        mounts = {m["name"]: m["mountPath"] for m in step.get("volumeMounts", [])}
+        assert mounts.get("workspace") == "/workspace", step["name"]
+    assert "LOG=/workspace/verify.log" in verify["script"]
+    assert 'os.environ["VERIFY_LOG"]' in report["script"]
+    # Every check line goes through log(), which also appends to the file.
+    assert verify["script"].count('log "CHECK|') >= 3
+    # A plain wait would block on the tunnel supervisor until the step timeout.
+    assert "\n        wait\n" not in verify["script"]
 
 
-def test_report_step_survives_a_missing_acceleration_file():
-    script = _load(VERIFY_TASK)["spec"]["steps"][2]["script"]
-
-    assert "acceleration = \"unknown\"" in script
+def test_the_report_step_survives_a_missing_log():
+    script = _step("report")["script"]
     assert "except OSError:" in script
+    assert 'guest_ip = "unknown"' in script
+
+
+def test_the_guest_memory_is_a_kubernetes_quantity():
+    # KubeVirt reads the guest memory from the domain, as a quantity.
+    deploy = _step("deploy")["script"]
+    verify_params = {p["name"]: p for p in _load(VERIFY_TASK)["spec"]["params"]}
+    assert verify_params["guest-memory"]["default"] == "8Gi"
+    assert "memory: ${GUEST_MEMORY}" in deploy
+
+
+def test_the_disk_size_covers_the_raw_conversion():
+    # CDI converts the 20 GiB qcow2 to raw, so the PVC must be larger.
+    verify_params = {p["name"]: p for p in _load(VERIFY_TASK)["spec"]["params"]}
+    assert verify_params["guest-disk-size"]["default"] == "25Gi"
+    assert "storage: ${GUEST_DISK_SIZE}" in _step("deploy")["script"]
 
 
 def test_checks_cover_the_golden_image_contract():
-    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
+    script = _step("verify")["script"]
     for check in (
         "os-release",
         "system-state",
@@ -165,7 +241,7 @@ def test_checks_cover_the_golden_image_contract():
 
 
 def test_checks_the_artifact_label():
-    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
+    script = _step("verify")["script"]
     assert "io.openshell.saw.bootc-version" in script
-    assert 'CHECK|artifact-label|PASS|' in script
-    assert 'CHECK|artifact-label|FAIL|' in script
+    assert "CHECK|artifact-label|PASS|" in script
+    assert "CHECK|artifact-label|FAIL|" in script

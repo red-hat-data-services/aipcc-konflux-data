@@ -4,98 +4,72 @@ metadata:
   name: saw-golden-image-its
 spec:
   description: |
-    Integration Test Scenario pipeline for the SAW golden image.
+    Integration Test Suite pipeline for the SAW golden image.
 
-    It proves that the released artifact boots and that the image holds what the
-    OpenShell gateway needs. The chain is the same one CDI uses in production:
+    Provisions an OpenShift Single Node Cluster on AWS with mapt, with the
+    virtualization profile. That profile installs OpenShift Virtualization and
+    selects a bare metal instance, so the cluster can run virtual machines.
 
-      saw-disk-image-container (OCI artifact, one qcow2 per architecture)
-        -> extract the qcow2
-        -> boot it on an ephemeral virt host
-        -> check the image contract inside the guest
+    The pipeline then boots the released disk-image container as a KubeVirt
+    guest. It follows the production path of the OpenShell gateway: CDI imports
+    the OCI artifact into a DataVolume, and KubeVirt starts the image from that
+    DataVolume. Finally, the pipeline checks the image contract inside the guest.
 
-    The host comes from mapt and lives for one PipelineRun. The pipeline runs the
-    guest under KVM when the host has /dev/kvm, and under the TCG emulator
-    otherwise. TCG works on a plain VM and boots slowly, so nested-virt stays off
-    by default to keep the cost low. Set nested-virt to "true" to get a metal
-    instance and native speed.
+    The disk-image container is a single multi-arch manifest list, so one
+    scenario covers every architecture.
 
-    The checks cover the golden image contract: the os-release variant, a clean
-    system state, cloud-init, the guest agent, the four OpenShell RPMs, the
-    disabled installer units, the trust root, podman, python3, and the bootc
-    deployment. A failed check sets TEST_OUTPUT.result to FAILURE. Set enforce to
-    "false" to report warnings instead.
-
-    Requirements in the tenant namespace:
-      - aws-konflux-tests: AWS credentials for mapt (EC2, spot, Pulumi state).
-        konflux-release-data carries the ExternalSecret for this tenant.
-      - components-namespace-pull: registry credentials for the disk image.
-    Tracking: RHAIRFE-3509.
+    Every run costs a bare metal instance on AWS and takes about one hour. Keep
+    the scenario optional.
   params:
     - name: SNAPSHOT
-      description: Snapshot spec JSON, provided by the ITS.
-    - name: component
-      description: Component under test. Empty uses the PipelineRun component label.
-      default: "saw-disk-image-container"
+      description: |
+        Snapshot of the application (automatically provided by Konflux ITS).
+        Example: {"components":[{"containerImage":"quay.io/red-hat-data-services/saw-disk-image-container@sha256:...","name":"saw-disk-image-container"}]}
     - name: architecture
-      description: Architecture to test. mapt uses x86_64 or arm64. The verify task also accepts aarch64.
       default: "x86_64"
+      description: Architecture of the guest. mapt SNC supports x86_64 only.
+    - name: ocp-version
+      default: "4.21.0"
+      description: OpenShift version for the SNC cluster.
+    - name: snc-cpus
+      default: "16"
+      description: |
+        vCPU count for the SNC instance. The virtualization profile needs at
+        least 16 vCPUs, and mapt raises the value when the profile asks for more.
+    - name: snc-memory
+      default: "64"
+      description: Memory in GiB for the SNC instance.
+    - name: snc-disk-size
+      default: "200"
+      description: Disk size in GB for the SNC instance.
+    - name: spot
+      default: "true"
+      description: Use a spot instance for the SNC cluster.
+    - name: ocp-snc-credentials-secret
+      default: "ocp-snc-credentials"
+      description: |
+        Secret with the Red Hat pull secret for the SNC installation, key
+        pull-secret. mapt treats the secret as optional.
     - name: enforce
+      default: "true"
       description: |
         "true" makes a failed check fail the scenario. "false" reports a warning.
-      default: "true"
-    - name: nested-virt
-      description: |
-        "true" asks mapt for a host with nested virtualization (a metal instance)
-        and runs the guest under KVM at native speed.
-        "false" uses a cheaper host and the TCG emulator.
-      default: "false"
-    - name: guest-cpus
-      default: "4"
-    - name: guest-memory
-      description: Guest memory in GiB.
-      default: "8"
-    - name: host-cpus
-      default: "8"
-    - name: host-memory
-      description: Host memory in GiB. Must hold the guest and the extracted qcow2.
-      default: "32"
-    - name: host-disk-size
-      description: Host disk in GB. Must hold the OCI copy and the qcow2.
-      default: "100"
-    - name: rhel-version
-      description: RHEL version of the mapt host.
-      default: "9.8"
-    - name: boot-timeout
-      description: Seconds to wait for the guest to receive an address.
-      default: "1800"
-    - name: aws-credentials-secret
-      default: "aws-konflux-tests"
-    - name: pull-secret-name
-      description: Secret with the registry credentials for the disk-image container.
-      default: "components-namespace-pull"
     - name: debug
       default: "false"
+      description: Enable verbose logs.
   results:
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
     - name: TEST_OUTPUT
-      description: Konflux standardized test output.
-      value: $(tasks.verify-saw-golden-image.results.TEST_OUTPUT)
-    - name: CONTAINER_IMAGE
-      description: The disk-image container under test.
-      value: $(tasks.select-image.results.container-image)
-    - name: GUEST_IP
-      value: $(tasks.verify-saw-golden-image.results.GUEST_IP)
-    - name: ACCELERATION
-      description: kvm or tcg.
-      value: $(tasks.verify-saw-golden-image.results.ACCELERATION)
+      value: $(tasks.verify-saw-disk-image.results.TEST_OUTPUT)
+
   tasks:
-    - name: select-image
-      timeout: "5m"
+    - name: create-configuration
       params:
+        - name: architecture
+          value: $(params.architecture)
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
-        - name: component
-          value: $(params.component)
       taskRef:
         resolver: git
         params:
@@ -104,82 +78,75 @@ spec:
           - name: revision
             value: main
           - name: pathInRepo
-            value: tasks/select-snapshot-image.yaml
+            value: tasks/config-from-snapshot.yaml
 
-    - name: create-vm
-      description: Create the ephemeral RHEL host that runs the guest.
-      runAfter:
-        - select-image
+    - name: create-snc-cluster
       params:
         - name: id
           value: "$(context.pipelineRun.name)"
         - name: operation
           value: "create"
-        - name: host-access-secret-name
-          value: "mapt-$(context.pipelineRun.name)"
+        # virtualization installs OpenShift Virtualization and CNV, and makes
+        # mapt select a bare metal instance with nested virtualization.
+        - name: profile
+          value: "$(tasks.create-configuration.results.snc-profile)"
+        - name: arch
+          value: "$(tasks.create-configuration.results.mapt-architecture)"
+        - name: cpus
+          value: "$(params.snc-cpus)"
+        - name: memory
+          value: "$(params.snc-memory)"
+        - name: disk-size
+          value: "$(params.snc-disk-size)"
+        - name: version
+          value: "$(params.ocp-version)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.snc-compute-sizes)"
+        - name: spot
+          value: "$(params.spot)"
+        - name: spot-eviction-tolerance
+          value: "high"
+        - name: spot-increase-rate
+          value: "30"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: secret-ocp-snc-credentials
+          value: "$(params.ocp-snc-credentials-secret)"
         - name: ownerKind
           value: "PipelineRun"
         - name: ownerName
           value: "$(context.pipelineRun.name)"
         - name: ownerUid
           value: "$(context.pipelineRun.uid)"
-        - name: secret-aws-credentials
-          value: "$(params.aws-credentials-secret)"
-        - name: arch
-          value: "$(params.architecture)"
-        - name: cpus
-          value: "$(params.host-cpus)"
-        - name: memory
-          value: "$(params.host-memory)"
-        - name: disk-size
-          value: "$(params.host-disk-size)"
-        - name: nested-virt
-          value: "$(params.nested-virt)"
-        - name: spot
-          value: "true"
-        - name: spot-eviction-tolerance
-          value: "high"
-        - name: spot-increase-rate
-          value: "100"
-        - name: version
-          value: "$(params.rhel-version)"
-        - name: tags
-          value: "konflux=true,ci=true,product=saw-golden-image,purpose=virt-host,pipeline-run-name=$(context.pipelineRun.name)"
         - name: debug
           value: "$(params.debug)"
+        - name: tags
+          value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=saw-golden-image-its,pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
+      runAfter:
+        - create-configuration
       taskRef:
         resolver: git
         params:
           - name: url
-            value: "https://github.com/redhat-developer/mapt"
+            value: https://github.com/redhat-developer/mapt
           - name: revision
-            value: "v0.14.6"
+            value: v0.14.7
           - name: pathInRepo
-            value: "tkn/infra-aws-rhel.yaml"
+            value: tkn/infra-aws-ocp-snc.yaml
 
-    - name: verify-saw-golden-image
-      timeout: "1h0m0s"
-      runAfter:
-        - create-vm
+    - name: verify-saw-disk-image
+      timeout: 1h0m0s
       params:
+        - name: cluster-access-secret-name
+          value: "$(tasks.create-snc-cluster.results.cluster-access-secret)"
         - name: container-image
-          value: $(tasks.select-image.results.container-image)
-        - name: image-architecture
-          value: "$(params.architecture)"
-        - name: host-access-secret-name
-          value: "mapt-$(context.pipelineRun.name)"
-        - name: pull-secret-name
-          value: "$(params.pull-secret-name)"
+          value: "$(tasks.create-configuration.results.container-image)"
         - name: enforce
           value: "$(params.enforce)"
-        - name: guest-cpus
-          value: "$(params.guest-cpus)"
-        - name: guest-memory
-          value: "$(params.guest-memory)"
-        - name: boot-timeout
-          value: "$(params.boot-timeout)"
         - name: debug
           value: "$(params.debug)"
+      runAfter:
+        - create-snc-cluster
       taskRef:
         resolver: git
         params:
@@ -188,25 +155,29 @@ spec:
           - name: revision
             value: main
           - name: pathInRepo
-            value: tasks/verify-saw-golden-image.yaml
+            value: tasks/verify-saw-disk-image.yaml
+
   finally:
-    - name: delete-vm
-      description: Delete the ephemeral host.
+    # Cleanup must run on success and on failure alike, else the bare metal
+    # instance stays on the account.
+    - name: delete-snc-cluster
       params:
         - name: id
           value: "$(context.pipelineRun.name)"
         - name: operation
           value: "destroy"
-        - name: secret-aws-credentials
-          value: "$(params.aws-credentials-secret)"
         - name: force-destroy
           value: "true"
+        - name: secret-aws-credentials
+          value: "aws-konflux-tests"
+        - name: secret-ocp-snc-credentials
+          value: "$(params.ocp-snc-credentials-secret)"
       taskRef:
         resolver: git
         params:
           - name: url
-            value: "https://github.com/redhat-developer/mapt"
+            value: https://github.com/redhat-developer/mapt
           - name: revision
-            value: "v0.14.6"
+            value: v0.14.7
           - name: pathInRepo
-            value: "tkn/infra-aws-rhel.yaml"
+            value: tkn/infra-aws-ocp-snc.yaml

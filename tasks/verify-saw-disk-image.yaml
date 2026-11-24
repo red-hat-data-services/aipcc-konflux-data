@@ -1,0 +1,430 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: verify-saw-disk-image
+spec:
+  description: |
+    Boot the SAW disk-image container on the SNC cluster and check the image
+    contract inside the guest.
+
+    The task follows the production path of the OpenShell gateway:
+
+      disk-image container (OCI artifact, one qcow2 per architecture)
+        -> CDI registry import into a DataVolume
+        -> KubeVirt VirtualMachine
+        -> SSH into the guest and check the image contract
+
+    The SNC cluster comes from the mapt infra-aws-ocp-snc task with the
+    virtualization profile, so OpenShift Virtualization and CDI are installed and
+    the node is a bare metal instance.
+
+    Every check prints one line: CHECK|<name>|PASS|FAIL|<detail>. The report step
+    turns those lines into TEST_OUTPUT.
+  params:
+    - name: cluster-access-secret-name
+      description: Secret in the PipelineRun namespace that holds the kubeconfig.
+    - name: container-image
+      description: Disk-image container under test, with its digest.
+    - name: namespace
+      description: Namespace for the test resources on the SNC cluster.
+      default: "saw-golden-image-test"
+    - name: pull-secret-name
+      description: |
+        Secret in the PipelineRun namespace with the registry credentials for the
+        disk-image container. CDI uses the same credentials on the SNC cluster.
+      default: "components-namespace-pull"
+    - name: guest-cpus
+      description: vCPUs for the guest.
+      default: "2"
+    - name: guest-memory
+      description: Memory for the guest, as a Kubernetes quantity.
+      default: "8Gi"
+    - name: guest-disk-size
+      description: |
+        PVC size for the imported disk. CDI converts the qcow2 to raw for KubeVirt,
+        so the value must exceed the virtual size of the image (20 GiB).
+      default: "25Gi"
+    - name: cnv-timeout
+      description: Seconds to wait for OpenShift Virtualization to become ready.
+      default: "1800"
+    - name: dv-timeout
+      description: Seconds to wait for the CDI import to finish.
+      default: "1800"
+    - name: boot-timeout
+      description: Seconds to wait for SSH on the guest.
+      default: "1800"
+    - name: enforce
+      description: |
+        "true" makes a failed check fail the scenario. "false" reports a warning.
+      default: "true"
+    - name: debug
+      default: "false"
+  results:
+    - name: TEST_OUTPUT
+      description: Konflux standardized test output.
+    - name: GUEST_IP
+      description: Address of the guest inside the cluster network.
+    - name: NAMESPACE
+      description: Namespace of the test resources on the SNC cluster.
+  volumes:
+    - name: workspace
+      emptyDir: {}
+  steps:
+    - name: deploy
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      env:
+        - name: CLUSTER_ACCESS_SECRET
+          value: $(params.cluster-access-secret-name)
+        - name: CONTAINER_IMAGE
+          value: $(params.container-image)
+        - name: NAMESPACE
+          value: $(params.namespace)
+        - name: PULL_SECRET_NAME
+          value: $(params.pull-secret-name)
+        - name: GUEST_CPUS
+          value: $(params.guest-cpus)
+        - name: GUEST_MEMORY
+          value: $(params.guest-memory)
+        - name: GUEST_DISK_SIZE
+          value: $(params.guest-disk-size)
+        - name: CNV_TIMEOUT
+          value: $(params.cnv-timeout)
+        - name: DV_TIMEOUT
+          value: $(params.dv-timeout)
+        - name: DEBUG
+          value: $(params.debug)
+        - name: GUEST_IP_RESULT
+          value: $(results.GUEST_IP.path)
+        - name: NAMESPACE_RESULT
+          value: $(results.NAMESPACE.path)
+      workingDir: /workspace
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        [ "${DEBUG}" = "true" ] && set -x
+
+        echo "=== Reading the kubeconfig from ${CLUSTER_ACCESS_SECRET} ==="
+        kubectl get secret "${CLUSTER_ACCESS_SECRET}" -o jsonpath='{.data.kubeconfig}' | base64 -d > /workspace/kubeconfig
+        export KUBECONFIG=/workspace/kubeconfig
+        kubectl get nodes
+
+        echo "=== Waiting for OpenShift Virtualization ==="
+        kubectl wait --for=condition=Available --timeout="${CNV_TIMEOUT}s" \
+          -n openshift-cnv hyperconverged/kubevirt-hyperconverged
+        kubectl get crd virtualmachines.kubevirt.io datavolumes.cdi.kubevirt.io
+
+        echo "=== Preparing the namespace ${NAMESPACE} ==="
+        kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "=== Copying the registry credentials to the cluster ==="
+        jq -r '.data[".dockerconfigjson"] // .data["config.json"] // empty' <<< \
+          "$(kubectl get secret "${PULL_SECRET_NAME}" -o json)" | base64 -d > /workspace/pull-secret.json
+        if [ ! -s /workspace/pull-secret.json ]; then
+          echo "ERROR: secret ${PULL_SECRET_NAME} holds no registry credentials"
+          exit 1
+        fi
+        kubectl create secret generic saw-pull-secret -n "${NAMESPACE}" \
+          --type=kubernetes.io/dockerconfigjson \
+          --from-file=.dockerconfigjson=/workspace/pull-secret.json \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "=== Creating the guest SSH key ==="
+        ssh-keygen -q -t ed25519 -N '' -C saw-its -f /workspace/id_ed25519
+        pubkey=$(cat /workspace/id_ed25519.pub)
+        echo "public key: ${pubkey}"
+
+        echo "=== Creating the VirtualMachine ==="
+        # CDI imports the artifact with the registry source, then converts the
+        # qcow2 to raw for KubeVirt. The template labels reach the virt-launcher
+        # pod, so the SSH Service selects the guest.
+        cat <<EOF | kubectl apply -f -
+        apiVersion: kubevirt.io/v1
+        kind: VirtualMachine
+        metadata:
+          name: saw-golden
+          namespace: ${NAMESPACE}
+        spec:
+          runStrategy: Always
+          dataVolumeTemplates:
+            - metadata:
+                name: saw-golden-disk
+              spec:
+                contentType: kubevirt
+                storage:
+                  resources:
+                    requests:
+                      storage: ${GUEST_DISK_SIZE}
+                source:
+                  registry:
+                    url: docker://${CONTAINER_IMAGE}
+                    pullMethod: node
+                    secretRef: saw-pull-secret
+          template:
+            metadata:
+              labels:
+                app: saw-golden
+                kubevirt.io/domain: saw-golden
+            spec:
+              terminationGracePeriodSeconds: 0
+              domain:
+                cpu:
+                  cores: ${GUEST_CPUS}
+                resources:
+                  requests:
+                    memory: ${GUEST_MEMORY}
+                devices:
+                  disks:
+                    - name: disk
+                      disk:
+                        bus: virtio
+                    - name: cloudinit
+                      disk:
+                        bus: virtio
+                  interfaces:
+                    - name: default
+                      masquerade: {}
+              networks:
+                - name: default
+                  pod: {}
+              volumes:
+                - name: disk
+                  dataVolume:
+                    name: saw-golden-disk
+                - name: cloudinit
+                  cloudInitNoCloud:
+                    userData: |
+                      #cloud-config
+                      users:
+                        - name: saw
+                          sudo: ALL=(ALL) NOPASSWD:ALL
+                          shell: /bin/bash
+                          lock_passwd: true
+                          ssh_authorized_keys:
+                            - ${pubkey}
+                      ssh_pwauth: false
+                      disable_root: true
+                      package_update: false
+                      package_upgrade: false
+        EOF
+
+        echo "=== Exposing SSH on the guest ==="
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: saw-golden-ssh
+          namespace: ${NAMESPACE}
+        spec:
+          selector:
+            app: saw-golden
+          ports:
+            - name: ssh
+              port: 22
+              targetPort: 22
+        EOF
+
+        echo "=== Waiting for the CDI import ==="
+        for _ in $(seq 1 $((DV_TIMEOUT / 15))); do
+          phase=$(kubectl get datavolume saw-golden-disk -n "${NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+          case "${phase}" in
+            Succeeded) break ;;
+            Failed) echo "ERROR: the CDI import failed"; kubectl describe datavolume saw-golden-disk -n "${NAMESPACE}"; exit 1 ;;
+          esac
+          echo "datavolume phase: ${phase:-pending}"
+          sleep 15
+        done
+        if [ "${phase:-}" != "Succeeded" ]; then
+          echo "ERROR: the CDI import did not finish in ${DV_TIMEOUT}s"
+          kubectl describe datavolume saw-golden-disk -n "${NAMESPACE}" | tail -30
+          exit 1
+        fi
+        kubectl get pvc -n "${NAMESPACE}"
+
+        echo "=== Waiting for the guest ==="
+        kubectl wait --for=condition=Ready --timeout="${BOOT_TIMEOUT}s" \
+          -n "${NAMESPACE}" vmi/saw-golden || {
+          kubectl describe vmi saw-golden -n "${NAMESPACE}" | tail -40
+          exit 1
+        }
+        guest_ip=$(kubectl get vmi saw-golden -n "${NAMESPACE}" -o jsonpath='{.status.interfaces[0].ipAddress}')
+        echo "guest address: ${guest_ip:-unknown}"
+        kubectl get vmi -n "${NAMESPACE}"
+
+        printf '%s' "${guest_ip:-unknown}" > /workspace/guest-ip.txt
+        printf '%s' "${guest_ip:-unknown}" > "${GUEST_IP_RESULT}"
+        printf '%s' "${NAMESPACE}" > "${NAMESPACE_RESULT}"
+        echo "✓ The guest runs"
+
+    - name: verify
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      env:
+        - name: CONTAINER_IMAGE
+          value: $(params.container-image)
+        - name: NAMESPACE
+          value: $(params.namespace)
+        - name: PULL_SECRET_NAME
+          value: $(params.pull-secret-name)
+        - name: BOOT_TIMEOUT
+          value: $(params.boot-timeout)
+        - name: DEBUG
+          value: $(params.debug)
+      workingDir: /workspace
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      script: |
+        #!/bin/bash
+        set -uo pipefail
+        [ "${DEBUG}" = "true" ] && set -x
+        export KUBECONFIG=/workspace/kubeconfig
+        # Steps do not share stdout, so every CHECK line also lands in the shared
+        # workspace and the report step reads it from there.
+        LOG=/workspace/verify.log
+        : > "${LOG}"
+        log() {
+          echo "$*" | tee -a "${LOG}"
+        }
+
+        echo "=== Opening a tunnel to the guest ==="
+        # The task pod lives outside the SNC cluster, so reach the guest through
+        # the API server. The tunnel dies with this step.
+        # Restart the tunnel when it drops, until the step ends.
+        ( while true; do
+            kubectl port-forward -n "${NAMESPACE}" svc/saw-golden-ssh 2222:22 >> /workspace/port-forward.log 2>&1
+            sleep 5
+          done ) &
+        forward_pid=$!
+        trap 'kill "${forward_pid}" 2>/dev/null || true' EXIT
+
+        GUEST_SSH="ssh -i /workspace/id_ed25519 -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 saw@127.0.0.1"
+        ready=""
+        for _ in $(seq 1 60); do
+          if ${GUEST_SSH} true >/dev/null 2>&1; then ready="yes"; break; fi
+          sleep 10
+        done
+        if [ -z "${ready}" ]; then
+          echo "ERROR: SSH did not answer on the guest"
+          cat /workspace/port-forward.log || true
+          kubectl get vmi saw-golden -n "${NAMESPACE}" -o yaml | tail -40 || true
+          log "CHECK|boot|FAIL|SSH did not answer on the guest"
+          exit 0
+        fi
+
+        echo "=== Reading the artifact label ==="
+        # The artifact is a multi-arch manifest list. Read the manifest of the
+        # node architecture, else skopeo inspects the list and finds no labels.
+        arch=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}')
+        echo "node architecture: ${arch}"
+        label=$(skopeo inspect --override-os linux --override-arch "${arch}" \
+          --authfile /workspace/pull-secret.json "docker://${CONTAINER_IMAGE}" \
+          | jq -r '.Labels["io.openshell.saw.bootc-version"] // empty' || true)
+        echo "bootc version label: ${label:-missing}"
+
+        echo "=== Guest checks ==="
+        if [ -n "${label}" ]; then
+          log "CHECK|artifact-label|PASS|bootc version ${label}"
+        else
+          log "CHECK|artifact-label|FAIL|the container has no io.openshell.saw.bootc-version label"
+        fi
+        rcheck() {
+          local name="$1"
+          shift
+          local out
+          if out=$(${GUEST_SSH} "$*" 2>&1); then
+            log "CHECK|${name}|PASS|$(echo "${out}" | tr '\n' ' ' | cut -c1-160)"
+          else
+            log "CHECK|${name}|FAIL|$(echo "${out}" | tr '\n' ' ' | cut -c1-160)"
+          fi
+        }
+
+        rcheck os-release "grep -q '^VARIANT_ID=saw$' /etc/os-release && grep '^PRETTY_NAME=' /etc/os-release"
+        rcheck system-state "systemctl is-system-running --wait | grep -Eq '^(running|degraded)$'"
+        rcheck cloud-init "cloud-init status --wait >/dev/null && cloud-init status --format json | jq -r .status | grep -qx done"
+        rcheck guest-agent "systemctl is-active qemu-guest-agent"
+        rcheck openshell-rpms "rpm -q openshell-cli openshell-gateway openshell-sandbox openshell-supervisor"
+        rcheck saw-install-disabled "test \"\$(systemctl is-enabled saw-install.service)\" = disabled && test \"\$(systemctl is-active saw-install.service)\" = inactive"
+        rcheck saw-apply-disabled "test \"\$(systemctl is-enabled saw-apply.service)\" = disabled && test \"\$(systemctl is-active saw-apply.service)\" = inactive"
+        rcheck trust-root "test -d /etc/saw/trust && ls /etc/saw/trust"
+        rcheck registry-template "test -f /etc/containers/registries.conf.d/999-saw-mirrors.conf.example"
+        rcheck podman "podman --version"
+        rcheck python3 "python3 -c 'import sys; print(sys.version.split()[0])'"
+        rcheck pip "python3 -m pip --version"
+        rcheck bootc-deployment "bootc status --json | jq -r .status.booted.image.image.image | grep -q ."
+        rcheck root-size "test \"\$(df -BG --output=size / | tail -1 | tr -dc 0-9)\" -ge 15"
+        rcheck no-docker "! command -v docker"
+
+        echo "=== Guest facts ==="
+        ${GUEST_SSH} 'uname -r; bootc status --json | jq -r .status.booted.image.image.image; rpm -q --qf "%{NAME} %{VERSION}-%{RELEASE}\n" openshell-cli openshell-gateway openshell-sandbox openshell-supervisor; df -h / | tail -1' || true
+
+    - name: report
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      env:
+        - name: ENFORCE
+          value: $(params.enforce)
+        - name: TEST_OUTPUT_PATH
+          value: $(results.TEST_OUTPUT.path)
+        - name: VERIFY_LOG
+          value: /workspace/verify.log
+        - name: GUEST_IP_FILE
+          value: /workspace/guest-ip.txt
+      workingDir: /workspace
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      script: |
+        #!/usr/bin/env python3
+        import datetime
+        import json
+        import os
+        import re
+
+        line = re.compile(r"^CHECK\|(?P<name>[^|]+)\|(?P<result>PASS|FAIL)\|(?P<detail>.*)$")
+
+        passed, failed, names = 0, 0, []
+        with open(os.environ["VERIFY_LOG"], encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                found = line.match(raw.rstrip("\n"))
+                if not found:
+                    continue
+                if found.group("result") == "PASS":
+                    passed += 1
+                else:
+                    failed += 1
+                    names.append(found.group("name"))
+
+        # A failed deploy or a dead tunnel stops the checks before they run.
+        # Report that case as one failure instead of a silent success.
+        if passed + failed == 0:
+            failed = 1
+            names = ["boot"]
+
+        result = "SUCCESS" if failed == 0 else "FAILURE"
+        if failed and os.environ.get("ENFORCE", "true") != "true":
+            result = "WARNING"
+
+        try:
+            with open(os.environ["GUEST_IP_FILE"], encoding="utf-8") as fh:
+                guest_ip = fh.read().strip() or "unknown"
+        except OSError:
+            guest_ip = "unknown"
+        note = "SAW golden image on SNC (guest %s): %d checks passed, %d failed." % (
+            guest_ip, passed, failed)
+        if names:
+            note += " Failed checks: " + ", ".join(names[:8])
+            if len(names) > 8:
+                note += " and %d more" % (len(names) - 8)
+
+        output = {
+            "result": result,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "successes": passed,
+            "failures": failed,
+            "warnings": 0,
+            "note": note,
+        }
+        with open(os.environ["TEST_OUTPUT_PATH"], "w", encoding="utf-8") as fh:
+            json.dump(output, fh, separators=(",", ":"))
+        print("TEST_OUTPUT: " + json.dumps(output, separators=(",", ":")))
