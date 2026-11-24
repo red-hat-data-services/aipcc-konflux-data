@@ -278,6 +278,10 @@ def test_an_interrupted_check_list_is_a_failure():
     assert 'log "CHECK-END|all|PASS|the check list finished"' in _step("verify")["script"]
 
 
+def test_a_guest_call_never_reads_the_step_stdin():
+    assert 'GUEST_SSH="ssh -n -i' in _step("verify")["script"]
+
+
 def test_the_report_step_survives_a_missing_log():
     script = _step("report")["script"]
     # The log is absent when the deploy step fails. The step must still write

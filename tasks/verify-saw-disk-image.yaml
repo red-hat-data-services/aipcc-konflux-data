@@ -323,7 +323,8 @@ spec:
         forward_pid=$!
         trap 'kill "${forward_pid}" 2>/dev/null || true' EXIT
 
-        GUEST_SSH="ssh -i /workspace/id_ed25519 -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 saw@127.0.0.1"
+        # -n: a guest call must never read the step script from stdin.
+        GUEST_SSH="ssh -n -i /workspace/id_ed25519 -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 saw@127.0.0.1"
         ready=""
         for _ in $(seq 1 60); do
           if ${GUEST_SSH} true >/dev/null 2>&1; then ready="yes"; break; fi
