@@ -71,6 +71,9 @@ spec:
       emptyDir: {}
   steps:
     - name: deploy
+      # The report step writes TEST_OUTPUT. A failed step would skip it, so the
+      # integration test would fail without a message. Continue and report.
+      onError: continue
       image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
       env:
         - name: CLUSTER_ACCESS_SECRET
@@ -94,6 +97,8 @@ spec:
           value: $(params.cnv-timeout)
         - name: DV_TIMEOUT
           value: $(params.dv-timeout)
+        - name: BOOT_TIMEOUT
+          value: $(params.boot-timeout)
         - name: DEBUG
           value: $(params.debug)
         - name: GUEST_IP_RESULT
@@ -125,7 +130,11 @@ spec:
         echo "=== Copying the registry credentials to the cluster ==="
         # The value comes from the secretKeyRef environment variable. A kubectl
         # read would reach the SNC cluster, because KUBECONFIG is already set.
+        # Tracing is off from here: with debug=true, set -x would print the
+        # credentials to the task log.
+        { set +x; } 2>/dev/null
         printf '%s' "${PULL_SECRET_JSON}" > /workspace/pull-secret.json
+        chmod 600 /workspace/pull-secret.json
         if [ ! -s /workspace/pull-secret.json ]; then
           echo "ERROR: the pull secret holds no registry credentials"
           exit 1
@@ -190,6 +199,12 @@ spec:
                   interfaces:
                     - name: default
                       masquerade: {}
+                      # KubeVirt forwards a declared port from the pod to the
+                      # guest. Without this list, a Service cannot reach sshd.
+                      ports:
+                        - name: ssh
+                          port: 22
+                          protocol: TCP
               networks:
                 - name: default
                   pod: {}
@@ -257,12 +272,14 @@ spec:
         echo "guest address: ${guest_ip:-unknown}"
         kubectl get vmi -n "${NAMESPACE}"
 
+        touch /workspace/deployed
         printf '%s' "${guest_ip:-unknown}" > /workspace/guest-ip.txt
         printf '%s' "${guest_ip:-unknown}" > "${GUEST_IP_RESULT}"
         printf '%s' "${NAMESPACE}" > "${NAMESPACE_RESULT}"
         echo "✓ The guest runs"
 
     - name: verify
+      onError: continue
       image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
       env:
         - name: CONTAINER_IMAGE
@@ -289,6 +306,11 @@ spec:
         log() {
           echo "$*" | tee -a "${LOG}"
         }
+
+        if [ ! -f /workspace/deployed ]; then
+          echo "SKIP: the deploy step failed, so there is no guest to check"
+          exit 0
+        fi
 
         echo "=== Opening a tunnel to the guest ==="
         # The task pod lives outside the SNC cluster, so reach the guest through
@@ -358,6 +380,8 @@ spec:
         rcheck root-size "test \"\$(df -BG --output=size / | tail -1 | tr -dc 0-9)\" -ge 15"
         rcheck no-docker "! command -v docker"
 
+        log "CHECK-END|all|PASS|the check list finished"
+
         echo "=== Guest facts ==="
         ${GUEST_SSH} 'uname -r; bootc status --json | jq -r .status.booted.image.image.image; rpm -q --qf "%{NAME} %{VERSION}-%{RELEASE}\n" openshell-cli openshell-gateway openshell-sandbox openshell-supervisor; df -h / | tail -1' || true
 
@@ -386,6 +410,7 @@ spec:
         line = re.compile(r"^CHECK\|(?P<name>[^|]+)\|(?P<result>PASS|FAIL)\|(?P<detail>.*)$")
 
         passed, failed, names = 0, 0, []
+        complete = False
         # A failed deploy stops the run before the verify step writes the log.
         # Read the log only when it exists, so TEST_OUTPUT always appears.
         try:
@@ -393,6 +418,8 @@ spec:
                 for raw in fh:
                     found = line.match(raw.rstrip("\n"))
                     if not found:
+                        if raw.startswith("CHECK-END|"):
+                            complete = True
                         continue
                     if found.group("result") == "PASS":
                         passed += 1
@@ -407,6 +434,11 @@ spec:
         if passed + failed == 0:
             failed = 1
             names = ["boot"]
+        elif not complete:
+            # The run stopped between the first and the last check. The step
+            # exits on the first hard error, so the rest never reported.
+            failed += 1
+            names.append("incomplete")
 
         result = "SUCCESS" if failed == 0 else "FAILURE"
         if failed and os.environ.get("ENFORCE", "true") != "true":

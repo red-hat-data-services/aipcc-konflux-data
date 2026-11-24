@@ -228,6 +228,56 @@ def test_the_run_has_a_timeout_budget():
     assert timeouts["tasks"] == "2h0m0s"
 
 
+def test_every_step_binds_the_variables_it_uses():
+    # set -u stops the step on an unbound variable. BOOT_TIMEOUT was missing.
+    for step in _load(VERIFY_TASK)["spec"]["steps"]:
+        script = step["script"]
+        bound = {item["name"] for item in step.get("env", [])}
+        for name in ("BOOT_TIMEOUT", "DV_TIMEOUT", "CNV_TIMEOUT", "GUEST_CPUS",
+                     "GUEST_MEMORY", "GUEST_DISK_SIZE", "NAMESPACE"):
+            if "${%s" % name in script or "$%s" % name in script.replace("${", "\0"):
+                assert name in bound, (step["name"], name)
+
+
+def test_a_failed_step_still_reports():
+    # Tekton skips the remaining steps after a failure, so the report step
+    # would never write TEST_OUTPUT.
+    steps = {step["name"]: step for step in _load(VERIFY_TASK)["spec"]["steps"]}
+    assert steps["deploy"]["onError"] == "continue"
+    assert steps["verify"]["onError"] == "continue"
+    assert steps["report"].get("onError") is None
+
+
+def test_the_verify_step_skips_a_guest_that_does_not_exist():
+    script = _step("verify")["script"]
+    assert "if [ ! -f /workspace/deployed ]" in script
+    assert _step("deploy")["script"].count("touch /workspace/deployed") == 1
+
+
+def test_the_registry_credentials_are_never_traced():
+    script = _step("deploy")["script"]
+    write = script.index('printf \'%s\' "${PULL_SECRET_JSON}"')
+    assert "{ set +x; } 2>/dev/null" in script[:write]
+    # Tracing must stay off, so no re-enable follows the write.
+    assert "set -x" not in script[write:]
+
+
+def test_the_masquerade_interface_forwards_the_ssh_port():
+    # Masquerade needs a declared port, else nothing on the pod reaches sshd.
+    vm = _step("deploy")["script"]
+    assert "masquerade: {}" in vm
+    assert "ports:" in vm
+    assert "port: 22" in vm
+    assert "protocol: TCP" in vm
+
+
+def test_an_interrupted_check_list_is_a_failure():
+    script = _step("report")["script"]
+    assert 'raw.startswith("CHECK-END|")' in script
+    assert 'names.append("incomplete")' in script
+    assert 'log "CHECK-END|all|PASS|the check list finished"' in _step("verify")["script"]
+
+
 def test_the_report_step_survives_a_missing_log():
     script = _step("report")["script"]
     # The log is absent when the deploy step fails. The step must still write
