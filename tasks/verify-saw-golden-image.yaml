@@ -1,0 +1,397 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: verify-saw-golden-image
+spec:
+  description: |
+    Boot the SAW golden image from the disk-image container and check the image
+    contract inside the guest.
+
+    The task runs on an ephemeral RHEL host from mapt. On that host it installs the
+    virtualization stack, pulls the disk-image container with skopeo, extracts the
+    qcow2, and starts the guest with virt-install. It then connects to the guest over
+    SSH and runs the checks.
+
+    The host needs /dev/kvm to run the guest at native speed. When /dev/kvm is
+    missing the task uses the TCG emulator. TCG works on any host and boots slowly.
+
+    Every check prints one line: CHECK|<name>|PASS or FAIL|<detail>. The report step
+    turns those lines into TEST_OUTPUT.
+  params:
+    - name: container-image
+      description: Full reference to the SAW disk-image container, including the digest.
+    - name: image-architecture
+      description: Platform to select from the disk-image container. Accepts amd64 or arm64.
+      default: "amd64"
+    - name: host-access-secret-name
+      description: Secret with the host, the user, and the SSH key of the mapt host.
+    - name: pull-secret-name
+      description: Secret with the registry credentials for the disk-image container.
+      default: "components-namespace-pull"
+    - name: enforce
+      description: |
+        "true" makes a failed check set TEST_OUTPUT.result to FAILURE.
+        "false" makes it set WARNING.
+      default: "true"
+    - name: guest-cpus
+      default: "4"
+    - name: guest-memory
+      description: Guest memory in GiB.
+      default: "8"
+    - name: boot-timeout
+      description: Seconds to wait for the guest to receive an address.
+      default: "1800"
+    - name: debug
+      default: "false"
+  results:
+    - name: TEST_OUTPUT
+      description: Konflux standardized test output.
+    - name: GUEST_IP
+      description: Address the guest received on the libvirt default network.
+    - name: ACCELERATION
+      description: kvm or tcg. Shows how the host ran the guest.
+  volumes:
+    - name: ssh-key
+      secret:
+        secretName: "$(params.host-access-secret-name)"
+        items:
+          - key: id_rsa
+            path: id_rsa
+    - name: pull-secret
+      secret:
+        secretName: "$(params.pull-secret-name)"
+  steps:
+    - name: prepare
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      volumeMounts:
+        - name: pull-secret
+          mountPath: /mnt/pull-secret
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Preparing the registry credentials ==="
+        cp /mnt/pull-secret/.dockerconfigjson /workspace/auth.json
+        chmod 600 /workspace/auth.json
+        jq -r '.auths | keys[]' /workspace/auth.json
+
+        echo "=== Generating the guest SSH key pair ==="
+        rm -f /workspace/id_ed25519 /workspace/id_ed25519.pub
+        ssh-keygen -t ed25519 -N "" -C "saw-its" -f /workspace/id_ed25519 >/dev/null
+        chmod 600 /workspace/id_ed25519
+        echo "✓ Prepared"
+
+    - name: boot-and-verify
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              key: host
+              name: "$(params.host-access-secret-name)"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: "$(params.host-access-secret-name)"
+        - name: CONTAINER_IMAGE
+          value: $(params.container-image)
+        - name: IMAGE_ARCH
+          value: $(params.image-architecture)
+        - name: GUEST_CPUS
+          value: $(params.guest-cpus)
+        - name: GUEST_MEMORY
+          value: $(params.guest-memory)
+        - name: BOOT_TIMEOUT
+          value: $(params.boot-timeout)
+        - name: DEBUG
+          value: $(params.debug)
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh-key
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Preparing the host SSH key ==="
+        cp /mnt/ssh-key/id_rsa /workspace/id_rsa
+        chmod 400 /workspace/id_rsa
+
+        HOST=$(echo "${HOST}" | tr -d '\n\r')
+        USERNAME=$(echo "${USERNAME}" | tr -d '\n\r')
+        HOST_SSH="ssh -i /workspace/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ServerAliveInterval=60 -o ConnectTimeout=10 ${USERNAME}@${HOST}"
+        GUEST_PUBKEY=$(cat /workspace/id_ed25519.pub)
+
+        echo "=== Sending the registry credentials to the host ==="
+        cat /workspace/auth.json | ${HOST_SSH} "sudo mkdir -p /root/.config/containers && sudo tee /root/.config/containers/auth.json >/dev/null && sudo chmod 600 /root/.config/containers/auth.json"
+
+        echo "=== Controlling the guest from the host ==="
+        # The guest sits on the libvirt default network, so the host reaches it
+        # directly. The step sends the guest key and runs the script as root.
+        cat /workspace/id_ed25519 | ${HOST_SSH} "sudo mkdir -p /root/.ssh && sudo tee /root/.ssh/saw-guest >/dev/null && sudo chmod 600 /root/.ssh/saw-guest"
+
+        {
+          # skopeo wants amd64 or arm64. mapt and the ITS use x86_64 and aarch64.
+          case "${IMAGE_ARCH}" in
+            x86_64|amd64) SKOPEO_ARCH="amd64" ;;
+            aarch64|arm64) SKOPEO_ARCH="arm64" ;;
+            *) echo "ERROR: unsupported architecture ${IMAGE_ARCH}"; exit 1 ;;
+          esac
+          printf 'CONTAINER_IMAGE=%q\n' "${CONTAINER_IMAGE}"
+          printf 'SKOPEO_ARCH=%q\n' "${SKOPEO_ARCH}"
+          printf 'GUEST_CPUS=%q\n' "${GUEST_CPUS}"
+          printf 'GUEST_MEMORY=%q\n' "${GUEST_MEMORY}"
+          printf 'BOOT_TIMEOUT=%q\n' "${BOOT_TIMEOUT}"
+          printf 'GUEST_PUBKEY=%q\n' "${GUEST_PUBKEY}"
+          printf 'DEBUG=%q\n' "${DEBUG}"
+          cat <<'REMOTE'
+        set -euo pipefail
+        [ "${DEBUG}" = "true" ] && set -x
+        export HOME=/root
+        cd /root
+
+        echo "=== Host ==="
+        cat /etc/redhat-release
+        nproc
+        free -g | head -2
+        df -h /var | tail -1
+
+        echo "=== Installing the virtualization stack ==="
+        dnf install -y --setopt=install_weak_deps=False \
+          qemu-kvm qemu-img libvirt-daemon-kvm virt-install genisoimage skopeo jq
+        systemctl enable --now libvirtd
+        virsh net-start default >/dev/null 2>&1 || true
+        virsh net-autostart default >/dev/null 2>&1 || true
+        virsh net-list
+
+        echo "=== Pulling the disk-image container ==="
+        rm -rf /var/saw-test
+        mkdir -p /var/saw-test
+        cd /var/saw-test
+        skopeo copy --override-os linux --override-arch "${SKOPEO_ARCH}" \
+          --authfile /root/.config/containers/auth.json \
+          "docker://${CONTAINER_IMAGE}" dir:/var/saw-test/oci
+
+        echo "=== Reading the artifact labels ==="
+        label=$(skopeo inspect --override-os linux --override-arch "${SKOPEO_ARCH}" \
+          --authfile /root/.config/containers/auth.json \
+          "docker://${CONTAINER_IMAGE}" | jq -r '.Labels["io.openshell.saw.bootc-version"] // empty')
+        echo "bootc version label: ${label:-missing}"
+
+        echo "=== Extracting the qcow2 ==="
+        # The layer with the largest size holds the disk image.
+        layer=$(du -aBM /var/saw-test/oci | sort -nr | head -1 | awk '{print $2}')
+        echo "layer: ${layer}"
+
+        # The layer is a compressed tar archive, or the disk image itself. Read
+        # the magic bytes and the tar magic to tell the two shapes apart.
+        if [ "$(head -c 2 "${layer}" | od -An -tx1 | tr -d ' \n')" = "1f8b" ]; then
+          gunzip -c "${layer}" > /var/saw-test/payload
+        else
+          cp "${layer}" /var/saw-test/payload
+        fi
+        if [ "$(dd if=/var/saw-test/payload bs=1 skip=257 count=5 2>/dev/null)" = "ustar" ]; then
+          echo "the layer is a tar archive, extracting it"
+          mkdir -p /var/saw-test/extracted
+          tar -xf /var/saw-test/payload -C /var/saw-test/extracted
+          image=$(find /var/saw-test/extracted -type f -printf '%s %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
+        else
+          image=/var/saw-test/payload
+        fi
+        if [ -z "${image}" ] || [ ! -f "${image}" ]; then
+          echo "ERROR: the container holds no disk image"
+          exit 1
+        fi
+        echo "image: ${image}"
+
+        if qemu-img info "${image}" | grep -q "file format: qcow2"; then
+          mv "${image}" /var/saw-test/disk.qcow2
+        else
+          qemu-img convert -f raw -O qcow2 "${image}" /var/saw-test/disk.qcow2
+        fi
+        qemu-img info /var/saw-test/disk.qcow2
+        ls -lh /var/saw-test/disk.qcow2
+
+        echo "=== Building the cloud-init seed ==="
+        mkdir -p seed
+        printf 'instance-id: saw-its-%s\nlocal-hostname: saw-golden\n' "$(date +%s)" > seed/meta-data
+        cat > seed/user-data <<EOF
+        #cloud-config
+        users:
+          - name: saw
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            shell: /bin/bash
+            lock_passwd: true
+            ssh_authorized_keys:
+              - ${GUEST_PUBKEY}
+        ssh_pwauth: false
+        disable_root: true
+        package_update: false
+        package_upgrade: false
+        EOF
+        genisoimage -quiet -output seed.iso -volid cidata -joliet -rock seed/user-data seed/meta-data
+
+        echo "=== Starting the guest ==="
+        if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+          ACCEL="--accelerate"
+          ACCELERATION="kvm"
+        else
+          ACCEL="--no-accelerate"
+          ACCELERATION="tcg"
+        fi
+        echo "acceleration: ${ACCELERATION}"
+        virsh destroy saw-golden >/dev/null 2>&1 || true
+        virsh undefine saw-golden --nvram >/dev/null 2>&1 || true
+
+        virt-install --name saw-golden --import \
+          --memory "${GUEST_MEMORY}" --vcpus "${GUEST_CPUS}" \
+          --disk /var/saw-test/disk.qcow2,format=qcow2,bus=virtio \
+          --disk /var/saw-test/seed.iso,device=cdrom \
+          --network network=default,model=virtio \
+          --osinfo detect=on,require=off \
+          --graphics none --noautoconsole \
+          --console log,file=/var/log/saw-console.log \
+          ${ACCEL}
+
+        echo "=== Waiting for the guest address ==="
+        GUEST_IP=""
+        for _ in $(seq 1 $((BOOT_TIMEOUT / 10))); do
+          GUEST_IP=$(virsh domifaddr saw-golden 2>/dev/null | awk '/ipv4/ {print $4}' | cut -d/ -f1 | head -1)
+          [ -n "${GUEST_IP}" ] && break
+          sleep 10
+        done
+        if [ -z "${GUEST_IP}" ]; then
+          echo "ERROR: the guest received no address"
+          virsh domstate saw-golden || true
+          tail -n 120 /var/log/saw-console.log || true
+          exit 1
+        fi
+        echo "guest address: ${GUEST_IP}"
+
+        echo "=== Waiting for SSH on the guest ==="
+        GUEST_SSH="ssh -i /root/.ssh/saw-guest -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 saw@${GUEST_IP}"
+        # The guest answers on SSH seconds after it receives the address, so this
+        # wait is short and the address wait takes the large budget.
+        ready=""
+        for _ in $(seq 1 60); do
+          if ${GUEST_SSH} true >/dev/null 2>&1; then ready="yes"; break; fi
+          sleep 10
+        done
+        if [ -z "${ready}" ]; then
+          echo "ERROR: SSH did not answer on the guest"
+          virsh domstate saw-golden || true
+          tail -n 120 /var/log/saw-console.log || true
+          exit 1
+        fi
+
+        echo "=== Guest checks ==="
+        if [ -n "${label}" ]; then
+          echo "CHECK|artifact-label|PASS|bootc version ${label}"
+        else
+          echo "CHECK|artifact-label|FAIL|the container has no io.openshell.saw.bootc-version label"
+        fi
+        rcheck() {
+          local name="$1"
+          shift
+          local out
+          if out=$(${GUEST_SSH} "$*" 2>&1); then
+            echo "CHECK|${name}|PASS|$(echo "${out}" | tr '\n' ' ' | cut -c1-160)"
+          else
+            echo "CHECK|${name}|FAIL|$(echo "${out}" | tr '\n' ' ' | cut -c1-160)"
+          fi
+        }
+
+        rcheck os-release "grep -q '^VARIANT_ID=saw$' /etc/os-release && grep '^PRETTY_NAME=' /etc/os-release"
+        rcheck system-state "systemctl is-system-running --wait | grep -Eq '^(running|degraded)$'"
+        rcheck cloud-init "cloud-init status --wait >/dev/null && cloud-init status --format json | jq -r .status | grep -qx done"
+        rcheck guest-agent "systemctl is-active qemu-guest-agent"
+        rcheck openshell-rpms "rpm -q openshell-cli openshell-gateway openshell-sandbox openshell-supervisor"
+        rcheck saw-install-disabled "test \"\$(systemctl is-enabled saw-install.service)\" = disabled && test \"\$(systemctl is-active saw-install.service)\" = inactive"
+        rcheck saw-apply-disabled "test \"\$(systemctl is-enabled saw-apply.service)\" = disabled && test \"\$(systemctl is-active saw-apply.service)\" = inactive"
+        rcheck trust-root "test -d /etc/saw/trust && ls /etc/saw/trust"
+        rcheck registry-template "test -f /etc/containers/registries.conf.d/999-saw-mirrors.conf.example"
+        rcheck podman "podman --version"
+        rcheck python3 "python3 -c 'import sys; print(sys.version.split()[0])'"
+        rcheck pip "python3 -m pip --version"
+        rcheck bootc-deployment "bootc status --json | jq -r .status.booted.image.image.image | grep -q ."
+        rcheck root-size "test \"\$(df -BG --output=size / | tail -1 | tr -dc 0-9)\" -ge 15"
+        rcheck no-docker "! command -v docker"
+
+        echo "=== Guest facts ==="
+        ${GUEST_SSH} 'uname -r; bootc status --json | jq -r .status.booted.image.image.image; rpm -q --qf "%{NAME} %{VERSION}-%{RELEASE}\n" openshell-cli openshell-gateway openshell-sandbox openshell-supervisor; df -h / | tail -1'
+        REMOTE
+        } | ${HOST_SSH} "sudo bash -s 2>&1" | tee /workspace/verify.log
+        # A boot or SSH failure stops the remote script. Record it as a failed
+        # check, so the report step explains the failure in TEST_OUTPUT.
+        rc=${PIPESTATUS[1]}
+        if [ "${rc}" != "0" ]; then
+          echo "CHECK|boot|FAIL|the remote script stopped with exit ${rc}, see the boot-and-verify log" >> /workspace/verify.log
+        fi
+
+        ACCELERATION=$(grep -o "acceleration: [a-z]*" /workspace/verify.log | tail -1 | awk '{print $2}' || true)
+        GUEST_IP=$(grep -o "guest address: .*" /workspace/verify.log | tail -1 | awk '{print $3}' || true)
+        printf '%s' "${ACCELERATION:-unknown}" > "$(results.ACCELERATION.path)"
+        printf '%s' "${GUEST_IP:-unknown}" > "$(results.GUEST_IP.path)"
+        echo "✓ Checks finished"
+
+    - name: report
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      env:
+        - name: ENFORCE
+          value: $(params.enforce)
+        - name: TEST_OUTPUT_PATH
+          value: $(results.TEST_OUTPUT.path)
+        - name: ACCELERATION
+          value: $(results.ACCELERATION.path)
+      script: |
+        #!/usr/bin/env python3
+        import datetime
+        import json
+        import os
+        import re
+
+        LOG = "/workspace/verify.log"
+        line = re.compile(r"^CHECK\|(?P<name>[^|]+)\|(?P<result>PASS|FAIL)\|(?P<detail>.*)$")
+
+        passed, failed, names = 0, 0, []
+        if os.path.exists(LOG):
+            with open(LOG, encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    found = line.match(raw.rstrip("\n"))
+                    if not found:
+                        continue
+                    if found.group("result") == "PASS":
+                        passed += 1
+                    else:
+                        failed += 1
+                        names.append(found.group("name"))
+
+        # A boot or SSH failure stops the step before any check runs. Report that
+        # case as one failure instead of a silent success with zero checks.
+        if passed + failed == 0:
+            failed = 1
+            names = ["boot"]
+
+        result = "SUCCESS" if failed == 0 else "FAILURE"
+        if failed and os.environ.get("ENFORCE", "true") != "true":
+            result = "WARNING"
+
+        acceleration = open(os.environ["ACCELERATION"], encoding="utf-8").read().strip()
+        note = "SAW golden image test under %s: %d checks passed, %d failed." % (
+            acceleration or "unknown", passed, failed)
+        if names:
+            note += " Failed checks: " + ", ".join(names[:8])
+            if len(names) > 8:
+                note += " and %d more" % (len(names) - 8)
+
+        output = {
+            "result": result,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "successes": passed,
+            "failures": failed,
+            "warnings": 0,
+            "note": note,
+        }
+        with open(os.environ["TEST_OUTPUT_PATH"], "w", encoding="utf-8") as fh:
+            json.dump(output, fh, separators=(",", ":"))
+        print("TEST_OUTPUT: " + json.dumps(output, separators=(",", ":")))

@@ -1,0 +1,208 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: saw-golden-image-its
+spec:
+  description: |
+    Integration Test Scenario pipeline for the SAW golden image.
+
+    It proves that the released artifact boots and that the image holds what the
+    OpenShell gateway needs. The chain is the same one CDI uses in production:
+
+      saw-disk-image-container (OCI artifact, one qcow2 per architecture)
+        -> extract the qcow2
+        -> boot it on an ephemeral virt host
+        -> check the image contract inside the guest
+
+    The host comes from mapt and lives for one PipelineRun. The pipeline runs the
+    guest under KVM when the host has /dev/kvm, and under the TCG emulator
+    otherwise. TCG works on a plain VM and boots slowly, so nested-virt stays off
+    by default to keep the cost low. Set nested-virt to "true" to get a metal
+    instance and native speed.
+
+    The checks cover the golden image contract: the os-release variant, a clean
+    system state, cloud-init, the guest agent, the four OpenShell RPMs, the
+    disabled installer units, the trust root, podman, python3, and the bootc
+    deployment. A failed check sets TEST_OUTPUT.result to FAILURE. Set enforce to
+    "false" to report warnings instead.
+
+    Tracking: RHAIRFE-3509.
+  params:
+    - name: SNAPSHOT
+      description: Snapshot spec JSON, provided by the ITS.
+    - name: component
+      description: Component under test. Empty uses the PipelineRun component label.
+      default: "saw-disk-image-container"
+    - name: architecture
+      description: Architecture to test. mapt uses x86_64 or arm64. The verify task also accepts aarch64.
+      default: "x86_64"
+    - name: enforce
+      description: |
+        "true" makes a failed check fail the scenario. "false" reports a warning.
+      default: "true"
+    - name: nested-virt
+      description: |
+        "true" asks mapt for a host with nested virtualization (a metal instance)
+        and runs the guest under KVM at native speed.
+        "false" uses a cheaper host and the TCG emulator.
+      default: "false"
+    - name: guest-cpus
+      default: "4"
+    - name: guest-memory
+      description: Guest memory in GiB.
+      default: "8"
+    - name: host-cpus
+      default: "8"
+    - name: host-memory
+      description: Host memory in GiB. Must hold the guest and the extracted qcow2.
+      default: "32"
+    - name: host-disk-size
+      description: Host disk in GB. Must hold the OCI copy and the qcow2.
+      default: "100"
+    - name: rhel-version
+      description: RHEL version of the mapt host.
+      default: "9.8"
+    - name: boot-timeout
+      description: Seconds to wait for the guest to receive an address.
+      default: "1800"
+    - name: aws-credentials-secret
+      default: "aws-konflux-tests"
+    - name: pull-secret-name
+      description: Secret with the registry credentials for the disk-image container.
+      default: "components-namespace-pull"
+    - name: debug
+      default: "false"
+  results:
+    - name: TEST_OUTPUT
+      description: Konflux standardized test output.
+      value: $(tasks.verify-saw-golden-image.results.TEST_OUTPUT)
+    - name: CONTAINER_IMAGE
+      description: The disk-image container under test.
+      value: $(tasks.select-image.results.container-image)
+    - name: GUEST_IP
+      value: $(tasks.verify-saw-golden-image.results.GUEST_IP)
+    - name: ACCELERATION
+      description: kvm or tcg.
+      value: $(tasks.verify-saw-golden-image.results.ACCELERATION)
+  tasks:
+    - name: select-image
+      timeout: "5m"
+      params:
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: component
+          value: $(params.component)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/select-snapshot-image.yaml
+
+    - name: create-vm
+      description: Create the ephemeral RHEL host that runs the guest.
+      runAfter:
+        - select-image
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: secret-aws-credentials
+          value: "$(params.aws-credentials-secret)"
+        - name: arch
+          value: "$(params.architecture)"
+        - name: cpus
+          value: "$(params.host-cpus)"
+        - name: memory
+          value: "$(params.host-memory)"
+        - name: disk-size
+          value: "$(params.host-disk-size)"
+        - name: nested-virt
+          value: "$(params.nested-virt)"
+        - name: spot
+          value: "true"
+        - name: spot-eviction-tolerance
+          value: "high"
+        - name: spot-increase-rate
+          value: "100"
+        - name: version
+          value: "$(params.rhel-version)"
+        - name: tags
+          value: "konflux=true,ci=true,product=saw-golden-image,purpose=virt-host,pipeline-run-name=$(context.pipelineRun.name)"
+        - name: debug
+          value: "$(params.debug)"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.6"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel.yaml"
+
+    - name: verify-saw-golden-image
+      timeout: "1h0m0s"
+      runAfter:
+        - create-vm
+      params:
+        - name: container-image
+          value: $(tasks.select-image.results.container-image)
+        - name: image-architecture
+          value: "$(params.architecture)"
+        - name: host-access-secret-name
+          value: "mapt-$(context.pipelineRun.name)"
+        - name: pull-secret-name
+          value: "$(params.pull-secret-name)"
+        - name: enforce
+          value: "$(params.enforce)"
+        - name: guest-cpus
+          value: "$(params.guest-cpus)"
+        - name: guest-memory
+          value: "$(params.guest-memory)"
+        - name: boot-timeout
+          value: "$(params.boot-timeout)"
+        - name: debug
+          value: "$(params.debug)"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/verify-saw-golden-image.yaml
+  finally:
+    - name: delete-vm
+      description: Delete the ephemeral host.
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: secret-aws-credentials
+          value: "$(params.aws-credentials-secret)"
+        - name: force-destroy
+          value: "true"
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: "https://github.com/redhat-developer/mapt"
+          - name: revision
+            value: "v0.14.6"
+          - name: pathInRepo
+            value: "tkn/infra-aws-rhel.yaml"
