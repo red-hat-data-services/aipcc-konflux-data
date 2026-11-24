@@ -36,7 +36,7 @@ spec:
     - name: guest-cpus
       default: "4"
     - name: guest-memory
-      description: Guest memory in GiB.
+      description: Guest memory in GiB. The task converts it to MiB for virt-install.
       default: "8"
     - name: boot-timeout
       description: Seconds to wait for the guest to receive an address.
@@ -179,8 +179,14 @@ spec:
         echo "bootc version label: ${label:-missing}"
 
         echo "=== Extracting the qcow2 ==="
-        # The layer with the largest size holds the disk image.
-        layer=$(du -aBM /var/saw-test/oci | sort -nr | head -1 | awk '{print $2}')
+        # The largest regular file in the OCI layout holds the disk image. Find
+        # only files: the layout directory sums every file and would win the sort.
+        layer=$(find /var/saw-test/oci -type f -printf '%s %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
+        if [ -z "${layer}" ] || [ ! -f "${layer}" ]; then
+          echo "ERROR: the OCI layout holds no layer"
+          find /var/saw-test/oci -type f | head -20 || true
+          exit 1
+        fi
         echo "layer: ${layer}"
 
         # The layer is a compressed tar archive, or the disk image itself. Read
@@ -232,6 +238,9 @@ spec:
         genisoimage -quiet -output seed.iso -volid cidata -joliet -rock seed/user-data seed/meta-data
 
         echo "=== Starting the guest ==="
+        # virt-install reads a bare --memory value as MiB, so convert the GiB param.
+        guest_memory_mib=$((GUEST_MEMORY * 1024))
+        echo "guest memory: ${guest_memory_mib} MiB"
         if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
           ACCEL="--accelerate"
           ACCELERATION="kvm"
@@ -244,13 +253,13 @@ spec:
         virsh undefine saw-golden --nvram >/dev/null 2>&1 || true
 
         virt-install --name saw-golden --import \
-          --memory "${GUEST_MEMORY}" --vcpus "${GUEST_CPUS}" \
+          --memory "${guest_memory_mib}" --vcpus "${GUEST_CPUS}" \
           --disk /var/saw-test/disk.qcow2,format=qcow2,bus=virtio \
           --disk /var/saw-test/seed.iso,device=cdrom \
           --network network=default,model=virtio \
           --osinfo detect=on,require=off \
           --graphics none --noautoconsole \
-          --console log,file=/var/log/saw-console.log \
+          --serial file,path=/var/log/saw-console.log \
           ${ACCEL}
 
         echo "=== Waiting for the guest address ==="
@@ -376,9 +385,16 @@ spec:
         if failed and os.environ.get("ENFORCE", "true") != "true":
             result = "WARNING"
 
-        acceleration = open(os.environ["ACCELERATION"], encoding="utf-8").read().strip()
+        # The result file can be absent when an earlier failure skipped the write.
+        # TEST_OUTPUT must still appear, so fall back to an unknown acceleration.
+        acceleration = "unknown"
+        try:
+            with open(os.environ["ACCELERATION"], encoding="utf-8") as fh:
+                acceleration = fh.read().strip() or "unknown"
+        except OSError:
+            pass
         note = "SAW golden image test under %s: %d checks passed, %d failed." % (
-            acceleration or "unknown", passed, failed)
+            acceleration, passed, failed)
         if names:
             note += " Failed checks: " + ", ".join(names[:8])
             if len(names) > 8:

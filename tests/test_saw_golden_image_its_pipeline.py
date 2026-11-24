@@ -110,6 +110,38 @@ def test_report_step_is_fail_closed():
     assert 'result = "WARNING"' in script
 
 
+def test_guest_memory_is_converted_to_mib():
+    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
+
+    # virt-install reads a bare --memory value as MiB, so 8 would give an 8 MiB guest.
+    assert "guest_memory_mib=$((GUEST_MEMORY * 1024))" in script
+    assert '--memory "${guest_memory_mib}"' in script
+    assert '--memory "${GUEST_MEMORY}"' not in script
+
+
+def test_console_output_goes_to_a_serial_file():
+    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
+
+    # virt-install has no --console log,file= form. The serial backend does it.
+    assert "--serial file,path=/var/log/saw-console.log" in script
+    assert "log,file=" not in script
+
+
+def test_layer_selection_ignores_directories():
+    script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
+
+    # The OCI layout directory sums every file, so a du sort can pick the directory.
+    assert "find /var/saw-test/oci -type f -printf '%s %p\\n'" in script
+    assert "du -aBM /var/saw-test/oci" not in script
+
+
+def test_report_step_survives_a_missing_acceleration_file():
+    script = _load(VERIFY_TASK)["spec"]["steps"][2]["script"]
+
+    assert "acceleration = \"unknown\"" in script
+    assert "except OSError:" in script
+
+
 def test_checks_cover_the_golden_image_contract():
     script = _load(VERIFY_TASK)["spec"]["steps"][1]["script"]
     for check in (

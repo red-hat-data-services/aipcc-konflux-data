@@ -26,6 +26,10 @@ spec:
     deployment. A failed check sets TEST_OUTPUT.result to FAILURE. Set enforce to
     "false" to report warnings instead.
 
+    Requirements in the tenant namespace:
+      - aws-konflux-tests: AWS credentials for mapt (EC2, spot, Pulumi state).
+        konflux-release-data carries the ExternalSecret for this tenant.
+      - components-namespace-pull: registry credentials for the disk image.
     Tracking: RHAIRFE-3509.
   params:
     - name: SNAPSHOT
