@@ -216,7 +216,7 @@ spec:
         - name: image-platform
           value:
           - $(params.olot-platforms)
-      name: roxctl-scan
+      name: clair-scan
       timeout: 24h
       params:
       - name: image-digest
@@ -228,9 +228,9 @@ spec:
       taskRef:
         params:
         - name: name
-          value: roxctl-scan
+          value: clair-scan
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-roxctl-scan:0.1@sha256:165cd41f65393a7892040fa2a6d750891b07dc96a4e63bddeec1d44828698c64
+          value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.4.1@sha256:025e6f83abd30725c7ff53da6120c23bcbfe0718f5c3d411f02016736fdbd918
         - name: kind
           value: task
         resolver: bundles
