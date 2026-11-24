@@ -20,6 +20,11 @@ spec:
 
     Every run costs a bare metal instance on AWS and takes about one hour. Keep
     the scenario optional.
+  # The cluster creation alone takes about 45 minutes. Set the budget here, so
+  # the run does not depend on the cluster default timeout.
+  timeouts:
+    pipeline: 3h0m0s
+    tasks: 2h0m0s
   params:
     - name: SNAPSHOT
       description: |
@@ -135,7 +140,9 @@ spec:
             value: tkn/infra-aws-ocp-snc.yaml
 
     - name: verify-saw-disk-image
-      timeout: 1h0m0s
+      # Longer than the sum of the waits inside the task (3 x 30 min), so a slow
+      # import or a slow boot fails with the task message, not a bare timeout.
+      timeout: 2h0m0s
       params:
         - name: cluster-access-secret-name
           value: "$(tasks.create-snc-cluster.results.cluster-access-secret)"

@@ -386,16 +386,21 @@ spec:
         line = re.compile(r"^CHECK\|(?P<name>[^|]+)\|(?P<result>PASS|FAIL)\|(?P<detail>.*)$")
 
         passed, failed, names = 0, 0, []
-        with open(os.environ["VERIFY_LOG"], encoding="utf-8", errors="replace") as fh:
-            for raw in fh:
-                found = line.match(raw.rstrip("\n"))
-                if not found:
-                    continue
-                if found.group("result") == "PASS":
-                    passed += 1
-                else:
-                    failed += 1
-                    names.append(found.group("name"))
+        # A failed deploy stops the run before the verify step writes the log.
+        # Read the log only when it exists, so TEST_OUTPUT always appears.
+        try:
+            with open(os.environ["VERIFY_LOG"], encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    found = line.match(raw.rstrip("\n"))
+                    if not found:
+                        continue
+                    if found.group("result") == "PASS":
+                        passed += 1
+                    else:
+                        failed += 1
+                        names.append(found.group("name"))
+        except OSError:
+            pass
 
         # A failed deploy or a dead tunnel stops the checks before they run.
         # Report that case as one failure instead of a silent success.

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import yaml
@@ -208,10 +209,33 @@ def test_the_report_step_reads_the_step_log():
     assert "\n        wait\n" not in verify["script"]
 
 
+def test_the_task_outlives_its_own_waits():
+    # A bare timeout hides which wait failed.
+    verify_params = {p["name"]: p for p in _load(VERIFY_TASK)["spec"]["params"]}
+    waits = sum(int(verify_params[name]["default"]) for name in
+                ("cnv-timeout", "dv-timeout", "boot-timeout"))
+    timeout = _tasks()["verify-saw-disk-image"]["timeout"]
+    duration = re.fullmatch(r"(\d+)h(\d+)m\d+s", timeout)
+    assert duration, timeout
+    seconds = int(duration.group(1)) * 3600 + int(duration.group(2)) * 60
+    assert seconds > waits, timeout
+
+
+def test_the_run_has_a_timeout_budget():
+    # The cluster creation alone takes about 45 minutes.
+    timeouts = _pipeline()["spec"]["timeouts"]
+    assert timeouts["pipeline"] == "3h0m0s"
+    assert timeouts["tasks"] == "2h0m0s"
+
+
 def test_the_report_step_survives_a_missing_log():
     script = _step("report")["script"]
+    # The log is absent when the deploy step fails. The step must still write
+    # TEST_OUTPUT, so the read is guarded and the run reports one failure.
+    assert 'os.environ["VERIFY_LOG"]' in script
     assert "except OSError:" in script
     assert 'guest_ip = "unknown"' in script
+    assert "if passed + failed == 0:" in script
 
 
 def test_the_guest_memory_is_a_kubernetes_quantity():
