@@ -14,9 +14,10 @@ spec:
         -> KubeVirt VirtualMachine
         -> SSH into the guest and check the image contract
 
-    The SNC cluster comes from the mapt infra-aws-ocp-snc task with the
-    virtualization profile, so OpenShift Virtualization and CDI are installed and
-    the node is a bare metal instance.
+    The SNC cluster comes from the mapt infra-ibmcloud-ocp-snc task with the
+    virtualization profile, so OpenShift Virtualization and CDI are installed.
+    The task stops when the cluster node reports no hardware virtualization,
+    because KubeVirt cannot start a guest on such a node.
 
     Every check prints one line: CHECK|<name>|PASS|FAIL|<detail>. The report step
     turns those lines into TEST_OUTPUT.
@@ -123,6 +124,25 @@ spec:
         kubectl wait --for=condition=Available --timeout="${CNV_TIMEOUT}s" \
           -n openshift-cnv hyperconverged/kubevirt-hyperconverged
         kubectl get crd virtualmachines.kubevirt.io datavolumes.cdi.kubevirt.io
+
+        echo "=== Checking that a node can run virtual machines ==="
+        # KubeVirt sets the schedulable label on a node only when the node
+        # exposes hardware virtualization. A node without it, for example an IBM
+        # Cloud VPC virtual server instance, accepts the VirtualMachine and then
+        # never boots it. Name the cause here, before the boot wait.
+        schedulable=""
+        for _ in $(seq 1 60); do
+          schedulable=$(kubectl get nodes -l kubevirt.io/schedulable=true -o name 2>/dev/null || true)
+          [ -n "${schedulable}" ] && break
+          sleep 5
+        done
+        if [ -z "${schedulable}" ]; then
+          echo "ERROR: no node is kubevirt.io/schedulable=true, so the cluster cannot start a guest"
+          kubectl get nodes --show-labels || true
+          kubectl get kubevirt -A || true
+          exit 1
+        fi
+        echo "schedulable node: ${schedulable}"
 
         echo "=== Preparing the namespace ${NAMESPACE} ==="
         kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -

@@ -13,8 +13,42 @@ LOCAL_REPO = "https://github.com/red-hat-data-services/aipcc-konflux-data"
 MAPT_REPO = "https://github.com/redhat-developer/mapt"
 
 # The cluster must come from the mapt SNC task, at a revision that provides it.
-MAPT_SNC_PATH = "tkn/infra-aws-ocp-snc.yaml"
-MAPT_SNC_REVISION = "v0.14.7"
+# The IBM Cloud task is not in a release tag yet, so the revision is the commit
+# that introduced it on main.
+MAPT_SNC_PATH = "tkn/infra-ibmcloud-ocp-snc.yaml"
+MAPT_SNC_REVISION = "60acb4d878c2ec1089c1b22c8743c42672d0011b"
+
+# Params of the IBM Cloud task. Tekton rejects a param the task does not
+# declare, so the pipeline must stay inside this set.
+MAPT_IBMCLOUD_PARAMS = {
+    "cluster-access-secret-name",
+    "catalog-source",
+    "compute-families",
+    "compute-sizes",
+    "cpus",
+    "debug",
+    "disable-cluster-readiness",
+    "disk-size",
+    "force-destroy",
+    "gpu-manufacturer",
+    "gpus",
+    "id",
+    "keep-state",
+    "memory",
+    "operation",
+    "operator-channel",
+    "ownerKind",
+    "ownerName",
+    "ownerUid",
+    "profile",
+    "secret-ibmcloud-credentials",
+    "secret-ocp-snc-credentials",
+    "spot",
+    "tags",
+    "version",
+    "vpc-id",
+    "zone",
+}
 
 
 def _load(path):
@@ -65,13 +99,14 @@ def test_the_cluster_comes_from_the_mapt_snc_task():
 
 
 def test_the_profile_installs_virtualization():
-    # The virtualization profile installs OpenShift Virtualization and makes
-    # mapt select a bare metal instance, so a guest can run on the cluster.
+    # The virtualization profile installs OpenShift Virtualization, so a guest
+    # can run on the cluster.
     create = _params(_tasks()["create-snc-cluster"])
     assert create["profile"] == "$(tasks.create-configuration.results.snc-profile)"
 
     script = _load(CONFIG_TASK)["spec"]["steps"][0]["script"]
     assert 'snc_profile="virtualization"' in script
+    assert 'cloud_provider="ibm"' in script
     assert "*-disk-image*)" in script
 
 
@@ -94,9 +129,27 @@ def test_pipeline_provides_every_param_the_mapt_task_requires():
     # depends on: mapt marks id, operation and the credential secrets as required.
     create = _params(_tasks()["create-snc-cluster"])
     destroy = _params(_finally()["delete-snc-cluster"])
-    for param in ("id", "operation", "secret-aws-credentials", "secret-ocp-snc-credentials"):
+    for param in ("id", "operation", "secret-ibmcloud-credentials", "secret-ocp-snc-credentials"):
         assert param in create, param
         assert param in destroy, param
+
+
+def test_the_pipeline_only_passes_declared_ibmcloud_params():
+    # The IBM Cloud task replaced the AWS one. A leftover AWS param, for example
+    # arch or spot-eviction-tolerance, would make the task refuse to start.
+    for name in ("create-snc-cluster", "delete-snc-cluster"):
+        task = (_tasks() if name in _tasks() else _finally())[name]
+        unknown = set(_params(task)) - MAPT_IBMCLOUD_PARAMS
+        assert not unknown, (name, unknown)
+
+
+def test_the_creation_sets_the_ibmcloud_zone():
+    # mapt reads IC_ZONE from the environment and stops without it, so the
+    # create operation needs the zone. The destroy operation reads the state
+    # from Object Storage and needs no zone.
+    create = _params(_tasks()["create-snc-cluster"])
+    assert create["zone"] == "$(params.ibmcloud-zone)"
+    assert "zone" not in _params(_finally()["delete-snc-cluster"])
 
 
 def test_create_and_destroy_share_the_mapt_id_and_secret():
@@ -109,13 +162,13 @@ def test_create_and_destroy_share_the_mapt_id_and_secret():
         == destroy["secret-ocp-snc-credentials"]
         == "$(params.ocp-snc-credentials-secret)"
     )
-    assert create["secret-aws-credentials"] == destroy["secret-aws-credentials"]
+    assert create["secret-ibmcloud-credentials"] == destroy["secret-ibmcloud-credentials"]
     assert create["operation"] == "create"
     assert destroy["operation"] == "destroy"
 
 
 def test_destroy_always_runs():
-    # A failed run must not leave a bare metal instance on the account.
+    # A failed run must not leave a virtual server instance on the account.
     finalizers = _finally()
     assert "delete-snc-cluster" in finalizers
     assert _params(finalizers["delete-snc-cluster"])["force-destroy"] == "true"
@@ -136,6 +189,15 @@ def test_pipeline_results_are_wired_to_the_verify_task():
     assert "TEST_OUTPUT" in declared
     assert results["TEST_OUTPUT"] == "$(tasks.verify-saw-disk-image.results.TEST_OUTPUT)"
     assert results["container-image"] == "$(tasks.create-configuration.results.container-image)"
+
+
+def test_the_node_must_support_hardware_virtualization():
+    # A node without hardware virtualization accepts the VirtualMachine and then
+    # never boots it. Fail with the cause, before the boot wait.
+    script = _step("deploy")["script"]
+    assert "kubevirt.io/schedulable=true" in script
+    assert "no node is kubevirt.io/schedulable=true" in script
+    assert script.index("kubevirt.io/schedulable=true") < script.index("Creating the VirtualMachine")
 
 
 def test_the_guest_starts_from_the_artifact():

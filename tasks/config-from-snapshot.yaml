@@ -266,11 +266,11 @@ spec:
             ;;
           *-disk-image*)
             # Bootable disk artefact (the SAW golden image). The virtualization
-            # profile installs OpenShift Virtualization and selects a bare metal
-            # instance, so the disk boots as a KubeVirt guest.
+            # profile installs OpenShift Virtualization, so the disk boots as a
+            # KubeVirt guest. mapt runs the SNC on IBM Cloud virtual servers.
             variant="disk-image"
             snc_profile="virtualization"
-            cloud_provider="aws"
+            cloud_provider="ibm"
             ;;
           *-cpu*)
             variant="cpu-ubi9"

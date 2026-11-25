@@ -6,9 +6,9 @@ spec:
   description: |
     Integration Test Suite pipeline for the SAW golden image.
 
-    Provisions an OpenShift Single Node Cluster on AWS with mapt, with the
-    virtualization profile. That profile installs OpenShift Virtualization and
-    selects a bare metal instance, so the cluster can run virtual machines.
+    Provisions an OpenShift Single Node Cluster on IBM Cloud with mapt, with the
+    virtualization profile. That profile installs OpenShift Virtualization, so
+    the cluster can run virtual machines.
 
     The pipeline then boots the released disk-image container as a KubeVirt
     guest. It follows the production path of the OpenShell gateway: CDI imports
@@ -18,10 +18,17 @@ spec:
     The disk-image container is a single multi-arch manifest list, so one
     scenario covers every architecture.
 
-    Every run costs a bare metal instance on AWS and takes about one hour. Keep
-    the scenario optional.
-  # The cluster creation alone takes about 45 minutes. Set the budget here, so
-  # the run does not depend on the cluster default timeout.
+    Prerequisites on the IBM Cloud account:
+      - a private catalog image built from the OpenShift Local bundle, named
+        openshift-local-<version>-x86-64 (cloud-importer openshift-local
+        ibmcloud)
+      - a secret with the IBM Cloud API key, the region, an availability zone,
+        the Object Storage keys and a bucket for the mapt state
+
+    Every run costs an IBM Cloud virtual server instance and takes about one
+    hour. Keep the scenario optional.
+  # Cluster creation and the profile installation take most of the run. Set the
+  # budget here, so the run does not depend on the cluster default timeout.
   timeouts:
     pipeline: 3h0m0s
     tasks: 2h0m0s
@@ -32,21 +39,36 @@ spec:
         Example: {"components":[{"containerImage":"quay.io/red-hat-data-services/saw-disk-image-container@sha256:...","name":"saw-disk-image-container"}]}
     - name: architecture
       default: "x86_64"
-      description: Architecture of the guest. mapt SNC supports x86_64 only.
+      description: |
+        Architecture of the guest. The mapt IBM Cloud SNC task runs x86_64 only,
+        so this value selects the image variant and not the instance.
     - name: ocp-version
-      default: "4.21.0"
-      description: OpenShift version for the SNC cluster.
+      default: ""
+      description: |
+        OpenShift version of the SNC catalog image on IBM Cloud, for example
+        4.22.14. Empty selects the latest catalog image of the account.
     - name: snc-cpus
       default: "16"
       description: |
-        vCPU count for the SNC instance. The virtualization profile needs at
-        least 16 vCPUs, and mapt raises the value when the profile asks for more.
+        vCPU count for the SNC instance. mapt raises the value when the profile
+        asks for more.
     - name: snc-memory
       default: "64"
       description: Memory in GiB for the SNC instance.
     - name: snc-disk-size
       default: "200"
       description: Disk size in GB for the SNC instance.
+    - name: ibmcloud-zone
+      default: ""
+      description: |
+        IBM Cloud availability zone, for example us-south-2. The create
+        operation needs it, and it must belong to the region of the credentials
+        secret.
+    - name: ibmcloud-credentials-secret
+      default: "ibmcloud-konflux-tests"
+      description: |
+        Secret with the IBM Cloud credentials, keys api-key, region,
+        cos-access-key, cos-secret-key and bucket.
     - name: spot
       default: "true"
       description: Use a spot instance for the SNC cluster.
@@ -91,12 +113,9 @@ spec:
           value: "$(context.pipelineRun.name)"
         - name: operation
           value: "create"
-        # virtualization installs OpenShift Virtualization and CNV, and makes
-        # mapt select a bare metal instance with nested virtualization.
+        # virtualization installs OpenShift Virtualization and CNV.
         - name: profile
           value: "$(tasks.create-configuration.results.snc-profile)"
-        - name: arch
-          value: "$(tasks.create-configuration.results.mapt-architecture)"
         - name: cpus
           value: "$(params.snc-cpus)"
         - name: memory
@@ -109,12 +128,10 @@ spec:
           value: "$(tasks.create-configuration.results.snc-compute-sizes)"
         - name: spot
           value: "$(params.spot)"
-        - name: spot-eviction-tolerance
-          value: "high"
-        - name: spot-increase-rate
-          value: "30"
-        - name: secret-aws-credentials
-          value: "aws-konflux-tests"
+        - name: zone
+          value: "$(params.ibmcloud-zone)"
+        - name: secret-ibmcloud-credentials
+          value: "$(params.ibmcloud-credentials-secret)"
         - name: secret-ocp-snc-credentials
           value: "$(params.ocp-snc-credentials-secret)"
         - name: ownerKind
@@ -134,10 +151,13 @@ spec:
         params:
           - name: url
             value: https://github.com/redhat-developer/mapt
+          # The IBM Cloud task exists only on main since 2026-11-25. Pin the
+          # commit, so a change on main cannot alter the pipeline. Replace the
+          # commit with a release tag when mapt publishes one that holds it.
           - name: revision
-            value: v0.14.7
+            value: 60acb4d878c2ec1089c1b22c8743c42672d0011b
           - name: pathInRepo
-            value: tkn/infra-aws-ocp-snc.yaml
+            value: tkn/infra-ibmcloud-ocp-snc.yaml
 
     - name: verify-saw-disk-image
       # Longer than the sum of the waits inside the task (3 x 30 min), so a slow
@@ -165,8 +185,9 @@ spec:
             value: tasks/verify-saw-disk-image.yaml
 
   finally:
-    # Cleanup must run on success and on failure alike, else the bare metal
-    # instance stays on the account.
+    # Cleanup must run on success and on failure alike, else the virtual server
+    # instance stays on the account. The destroy operation reads the state from
+    # the Object Storage bucket of the credentials secret, so it needs no zone.
     - name: delete-snc-cluster
       params:
         - name: id
@@ -175,8 +196,8 @@ spec:
           value: "destroy"
         - name: force-destroy
           value: "true"
-        - name: secret-aws-credentials
-          value: "aws-konflux-tests"
+        - name: secret-ibmcloud-credentials
+          value: "$(params.ibmcloud-credentials-secret)"
         - name: secret-ocp-snc-credentials
           value: "$(params.ocp-snc-credentials-secret)"
       taskRef:
@@ -185,6 +206,6 @@ spec:
           - name: url
             value: https://github.com/redhat-developer/mapt
           - name: revision
-            value: v0.14.7
+            value: 60acb4d878c2ec1089c1b22c8743c42672d0011b
           - name: pathInRepo
-            value: tkn/infra-aws-ocp-snc.yaml
+            value: tkn/infra-ibmcloud-ocp-snc.yaml
