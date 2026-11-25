@@ -82,10 +82,11 @@ spec:
         from that region. Bare metal capacity is per zone, so another zone can
         succeed where this one stops.
     - name: ibmcloud-credentials-secret
-      default: "ibmcloud-konflux-tests"
+      default: "ibmcloud-ai-incubator"
       description: |
         Secret with the IBM Cloud credentials, keys api-key, region,
-        cos-access-key, cos-secret-key and bucket.
+        cos-access-key, cos-secret-key and bucket. The tenant creates it from
+        vault with an ExternalSecret of the same name.
     - name: ocp-snc-credentials-secret
       default: "ocp-snc-credentials"
       description: |

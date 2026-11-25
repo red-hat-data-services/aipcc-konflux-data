@@ -13,9 +13,14 @@ supplies the secrets. This repository never holds a secret value.
 
 | Secret | Read by | Keys | Required | `ai-incubator-tenant` on 2026-11-25 |
 | --- | --- | --- | --- | --- |
-| `ibmcloud-konflux-tests` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | absent |
+| `ibmcloud-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | created from vault by `konflux-release-data` (RHAIRFE-3509) |
 | `ocp-snc-credentials` | `create-snc-cluster`, `delete-snc-cluster` | `pull-secret` | yes | absent |
 | `components-namespace-pull` | `verify-saw-disk-image` | `.dockerconfigjson` | yes | present |
+
+The tenant reads `ibmcloud-ai-incubator` from vault. The Vault path is
+`apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/ibmcloud`,
+and the record maps each secret key to a vault property. A change to the vault
+values reaches the cluster on the next refresh, one hour at most.
 
 Name the first two secrets in the pipeline params `ibmcloud-credentials-secret`
 and `ocp-snc-credentials-secret` when the defaults do not fit. Name the third in
@@ -29,7 +34,7 @@ the pod starts, but the create step then exits with
 
 ```bash
 export KUBECONFIG=~/.config/kube/config
-kubectl create secret generic ibmcloud-konflux-tests -n ai-incubator-tenant \
+kubectl create secret generic ibmcloud-ai-incubator -n ai-incubator-tenant \
   --from-literal=api-key=<api key> \
   --from-literal=region=us-south \
   --from-literal=cos-access-key=<access key> \
@@ -62,7 +67,7 @@ Secrets, because both tasks make a secret. It needs no secret of its own.
 ## Check the secrets
 
 ```bash
-kubectl get secret ibmcloud-konflux-tests ocp-snc-credentials \
+kubectl get secret ibmcloud-ai-incubator ocp-snc-credentials \
   components-namespace-pull -n ai-incubator-tenant
 ```
 

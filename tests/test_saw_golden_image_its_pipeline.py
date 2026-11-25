@@ -390,9 +390,11 @@ def test_the_secret_doc_does_not_name_a_secret_the_pipeline_never_reads():
     doc = SECRET_DOC.read_text()
     required = doc.split("## Required secrets", 1)[1].split("\n## ", 1)[0]
     body = PIPELINE.read_text() + VERIFY_TASK.read_text()
-    names = re.findall(r"`([a-z0-9-]*(?:konflux-tests|namespace-pull))`", required)
-    assert names, "the required table names no secret"
-    for name in names:
+    # The first column of each table row is the secret name.
+    rows = [row for row in required.splitlines() if row.startswith("| `")]
+    assert rows, "the required table names no secret"
+    for row in rows:
+        name = row.split("`")[1]
         assert name in body, name
 
 
