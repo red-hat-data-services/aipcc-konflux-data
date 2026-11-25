@@ -39,9 +39,8 @@ the pod starts, but the create step then exits with
 
 ## Create the secrets
 
-`ibmcloud-ai-incubator` needs no command. The ExternalSecret creates it. Only a
-check against a cluster that holds no `konflux-release-data` uses the manual
-form, and then the ExternalSecret must not exist there:
+`ibmcloud-ai-incubator` needs no command. The ExternalSecret creates it. The
+manual form below applies only to a cluster with no ExternalSecret:
 
 ```bash
 kubectl create secret generic ibmcloud-ai-incubator -n ai-incubator-tenant \
@@ -57,8 +56,7 @@ record `ocp/pullsecret` and copies the whole dockerconfigjson into the key
 `pull-secret`. mapt mounts the key at `/opt/ocp-snc-secret/pull-secret` and
 passes that path to the installer.
 
-Run the manual form below only on a cluster that holds no ExternalSecret for
-these two names:
+Its manual form, for the same case:
 
 ```bash
 export KUBECONFIG=~/.config/kube/config
