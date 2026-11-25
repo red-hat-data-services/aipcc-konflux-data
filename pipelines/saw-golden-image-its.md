@@ -13,14 +13,19 @@ supplies the secrets. This repository never holds a secret value.
 
 | Secret | Read by | Keys | Required | `ai-incubator-tenant` on 2026-11-25 |
 | --- | --- | --- | --- | --- |
-| `ibmcloud-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | created from vault by `konflux-release-data` (RHAIRFE-3509) |
+| `ibmcloud-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | vault backed, merge request `konflux-release-data!25561` pending |
 | `ocp-snc-credentials` | `create-snc-cluster`, `delete-snc-cluster` | `pull-secret` | yes | absent |
 | `components-namespace-pull` | `verify-saw-disk-image` | `.dockerconfigjson` | yes | present |
 
-The tenant reads `ibmcloud-ai-incubator` from vault. The Vault path is
-`apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/ibmcloud`,
-and the record maps each secret key to a vault property. A change to the vault
-values reaches the cluster on the next refresh, one hour at most.
+`konflux-release-data` holds the ExternalSecret of `ibmcloud-ai-incubator`. It
+reads the Vault path
+`apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/ibmcloud`
+and maps each secret key to a vault property. A change to the vault values
+reaches the cluster on the next refresh, one hour at most.
+
+The ExternalSecret owns that Secret, so a `kubectl create secret` of the same
+name is overwritten at the next refresh. Put a new value in vault, never in the
+cluster.
 
 Name the first two secrets in the pipeline params `ibmcloud-credentials-secret`
 and `ocp-snc-credentials-secret` when the defaults do not fit. Name the third in
@@ -32,14 +37,24 @@ the pod starts, but the create step then exits with
 
 ## Create the secrets
 
+`ibmcloud-ai-incubator` needs no command. The ExternalSecret creates it. Only a
+check against a cluster that holds no `konflux-release-data` uses the manual
+form, and then the ExternalSecret must not exist there:
+
 ```bash
-export KUBECONFIG=~/.config/kube/config
 kubectl create secret generic ibmcloud-ai-incubator -n ai-incubator-tenant \
   --from-literal=api-key=<api key> \
   --from-literal=region=us-south \
   --from-literal=cos-access-key=<access key> \
   --from-literal=cos-secret-key=<secret key> \
   --from-literal=bucket=<bucket>
+```
+
+`ocp-snc-credentials` needs this command. The pull secret is a personal file, so
+no record holds it:
+
+```bash
+export KUBECONFIG=~/.config/kube/config
 kubectl create secret generic ocp-snc-credentials -n ai-incubator-tenant \
   --from-file=pull-secret=<path to the pull secret file>
 ```
