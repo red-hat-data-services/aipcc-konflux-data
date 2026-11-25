@@ -6,6 +6,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 PIPELINE = ROOT / "pipelines" / "saw-golden-image-its.yaml"
+SECRET_DOC = ROOT / "pipelines" / "saw-golden-image-its.md"
 CONFIG_TASK = ROOT / "tasks" / "config-from-snapshot.yaml"
 VERIFY_TASK = ROOT / "tasks" / "verify-saw-disk-image.yaml"
 
@@ -305,6 +306,38 @@ def test_the_run_has_a_timeout_budget():
     # Destroy retries against the bucket, so it keeps the same budget.
     finally_tasks = {t["name"]: t for t in spec["finally"]}
     assert finally_tasks["delete-snc-cluster"]["timeout"] == "2h0m0s"
+
+
+def test_the_secret_doc_names_the_secrets_the_pipeline_reads():
+    # A tenant operator reads the doc, not the YAML. Keep the two in step.
+    doc = SECRET_DOC.read_text()
+    pipeline_params = {p["name"]: p for p in _pipeline()["spec"]["params"]}
+    verify_params = {p["name"]: p for p in _load(VERIFY_TASK)["spec"]["params"]}
+    names = [
+        pipeline_params["ibmcloud-credentials-secret"].get("default"),
+        pipeline_params["ocp-snc-credentials-secret"].get("default"),
+        verify_params["pull-secret-name"].get("default"),
+    ]
+    for name in names:
+        assert name, "a secret param has no default name"
+        assert name in doc, f"{name} is not in {SECRET_DOC.name}"
+
+
+def test_the_secret_doc_lists_the_keys_of_each_secret():
+    doc = SECRET_DOC.read_text()
+    for key in ("api-key", "region", "cos-access-key", "cos-secret-key",
+                "bucket", "pull-secret", ".dockerconfigjson"):
+        assert f"`{key}`" in doc, key
+
+
+def test_the_secret_doc_does_not_name_a_secret_the_pipeline_never_reads():
+    doc = SECRET_DOC.read_text()
+    required = doc.split("## Required secrets", 1)[1].split("\n## ", 1)[0]
+    body = PIPELINE.read_text() + VERIFY_TASK.read_text()
+    names = re.findall(r"`([a-z0-9-]*(?:konflux-tests|namespace-pull))`", required)
+    assert names, "the required table names no secret"
+    for name in names:
+        assert name in body, name
 
 
 def test_every_step_binds_the_variables_it_uses():

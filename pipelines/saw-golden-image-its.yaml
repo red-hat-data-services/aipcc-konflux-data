@@ -22,8 +22,10 @@ spec:
       - a private catalog image built from the OpenShift Local bundle, named
         openshift-local-<version>-x86-64, with dots of the version replaced by
         dashes (cloud-importer openshift-local ibmcloud)
-      - a secret with the IBM Cloud API key, the region, an availability zone,
-        the Object Storage keys and a bucket for the mapt state
+      - a secret with the IBM Cloud API key, the region, the Object Storage keys
+        and a bucket for the mapt state
+
+    The cluster secrets are listed in pipelines/saw-golden-image-its.md.
 
     Every run costs an IBM Cloud virtual server instance and takes about one
     hour. Keep the scenario optional.
