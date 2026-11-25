@@ -72,12 +72,26 @@ kubectl get secret ibmcloud-konflux-tests ocp-snc-credentials \
 | --- | --- |
 | `ibmcloud-zone` pipeline param | for example `us-south-2`. mapt stops on create without it. |
 | Catalog image | `openshift-local-<version>-x86-64` in the private catalog of the account. Select it with the `ocp-version` param. |
-| mapt task | `tkn/infra-ibmcloud-ocp-snc.yaml` at commit `60acb4d878c2ec1089c1b22c8743c42672d0011b` |
+| VPC image | The account must hold a VPC image for the catalog offering version. A bare metal server takes an image ID and no catalog offering, so mapt resolves the offering to an image. Without that image the create stops with `no VPC image found for catalog offering`. |
+| mapt task | `tkn/infra-ibmcloud-ocp-snc.yaml` at commit `b78feca1d679328e5bfd806535caa0759fbba9f5` |
+| Compute | the `virtualization` profile requests nested virtualization, so mapt selects the smallest bare metal profile that holds `snc-cpus` and `snc-memory`. It checks the capacity of the zone before the create. |
 
 ## Limits
 
-IBM Cloud does not support nested virtualization on a virtual server instance.
-The `virtualization` profile therefore installs OpenShift Virtualization on a
-machine that exposes no `devices.kubevirt.io/kvm` resource. The verify task
-stops with a clear message until mapt selects a bare metal server
-(redhat-developer/mapt#985).
+IBM Cloud supplies the KVM device on bare metal servers only. The
+`virtualization` profile requests nested virtualization, so mapt selects a bare
+metal server. These points follow from that choice:
+
+- A bare metal server costs more than a virtual server instance. Check the
+  capacity and the price before the run. The `finally` task destroys the
+  cluster.
+- Keep `spot` at `false`. mapt stops when the request needs nested
+  virtualization and asks for spot, because a bare metal server takes no spot
+  capacity.
+- mapt ignores `snc-disk-size`, because the server boots from its local disks.
+- The account must hold a bare metal profile with at least `snc-cpus` cores and
+  `snc-memory` GiB. Empty bare metal capacity in the zone stops the create with
+  a clear message.
+
+The verify task still stops when no node exposes `devices.kubevirt.io/kvm`. It
+holds that check as a guard, not as an expected result.

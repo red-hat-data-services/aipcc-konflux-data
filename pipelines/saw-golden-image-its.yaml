@@ -22,18 +22,24 @@ spec:
       - a private catalog image built from the OpenShift Local bundle, named
         openshift-local-<version>-x86-64, with dots of the version replaced by
         dashes (cloud-importer openshift-local ibmcloud)
+      - a VPC image for that catalog offering version, because a bare metal
+        server takes an image ID and no catalog offering
       - a secret with the IBM Cloud API key, the region, the Object Storage keys
         and a bucket for the mapt state
 
     The cluster secrets are listed in pipelines/saw-golden-image-its.md.
 
-    Every run costs an IBM Cloud virtual server instance and takes about one
-    hour. Keep the scenario optional.
+    Every run costs an IBM Cloud bare metal server and takes about one hour.
+    A bare metal server costs more than a virtual server instance. Keep the
+    scenario optional.
 
-    IBM Cloud does not support nested virtualization on a virtual server
-    instance. The verify task stops when the cluster exposes no
-    devices.kubevirt.io/kvm resource, so the log names the cause and the run
-    does not wait for a guest that cannot start.
+    IBM Cloud supplies the KVM device on bare metal servers only. The
+    virtualization profile makes mapt select a bare metal profile, so the
+    cluster exposes devices.kubevirt.io/kvm and KubeVirt can start the guest.
+    mapt checks the bare metal capacity of the zone before the create. The
+    verify task stops when the cluster exposes no devices.kubevirt.io/kvm
+    resource, so the log names the cause and the run does not wait for a guest
+    that cannot start.
   # Cluster creation and the profile installation take most of the run. The
   # Tekton version of the build cluster rejects spec.timeouts on a Pipeline
   # ("unknown field"), so each long task carries its own budget instead.
@@ -62,7 +68,9 @@ spec:
       description: Memory in GiB for the SNC instance.
     - name: snc-disk-size
       default: "200"
-      description: Disk size in GB for the SNC instance.
+      description: |
+        Disk size in GB for the SNC instance. mapt ignores it for a bare metal
+        server, which boots from its local disks.
     - name: ibmcloud-zone
       default: ""
       description: |
@@ -75,8 +83,11 @@ spec:
         Secret with the IBM Cloud credentials, keys api-key, region,
         cos-access-key, cos-secret-key and bucket.
     - name: spot
-      default: "true"
-      description: Use a spot instance for the SNC cluster.
+      default: "false"
+      description: |
+        Use a spot instance for the SNC cluster. Keep "false". A request that
+        needs nested virtualization gets a bare metal server, and such a server
+        takes no spot capacity, so mapt stops.
     - name: ocp-snc-credentials-secret
       default: "ocp-snc-credentials"
       description: |
@@ -158,11 +169,13 @@ spec:
         params:
           - name: url
             value: https://github.com/redhat-developer/mapt
-          # The IBM Cloud task exists only on main since 2026-11-25. Pin the
-          # commit, so a change on main cannot alter the pipeline. Replace the
-          # commit with a release tag when mapt publishes one that holds it.
+          # The IBM Cloud task exists only on main since 2026-11-25. The
+          # revision holds the bare metal selection that nested virtualization
+          # needs. Pin the commit, so a change on main cannot alter the
+          # pipeline. Replace the commit with a release tag when mapt publishes
+          # one that holds it.
           - name: revision
-            value: 60acb4d878c2ec1089c1b22c8743c42672d0011b
+            value: b78feca1d679328e5bfd806535caa0759fbba9f5
           - name: pathInRepo
             value: tkn/infra-ibmcloud-ocp-snc.yaml
 
@@ -193,8 +206,8 @@ spec:
             value: tasks/verify-saw-disk-image.yaml
 
   finally:
-    # Cleanup must run on success and on failure alike, else the virtual server
-    # instance stays on the account. The destroy operation reads the state from
+    # Cleanup must run on success and on failure alike, else the compute
+    # resource stays on the account. The destroy operation reads the state from
     # the Object Storage bucket of the credentials secret, so it needs no zone.
     - name: delete-snc-cluster
       params:
@@ -217,6 +230,6 @@ spec:
           - name: url
             value: https://github.com/redhat-developer/mapt
           - name: revision
-            value: 60acb4d878c2ec1089c1b22c8743c42672d0011b
+            value: b78feca1d679328e5bfd806535caa0759fbba9f5
           - name: pathInRepo
             value: tkn/infra-ibmcloud-ocp-snc.yaml

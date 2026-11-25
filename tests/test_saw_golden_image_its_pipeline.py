@@ -15,9 +15,9 @@ MAPT_REPO = "https://github.com/redhat-developer/mapt"
 
 # The cluster must come from the mapt SNC task, at a revision that provides it.
 # The IBM Cloud task is not in a release tag yet, so the revision is the commit
-# that introduced it on main.
+# that holds the bare metal selection of nesting virtualization.
 MAPT_SNC_PATH = "tkn/infra-ibmcloud-ocp-snc.yaml"
-MAPT_SNC_REVISION = "60acb4d878c2ec1089c1b22c8743c42672d0011b"
+MAPT_SNC_REVISION = "b78feca1d679328e5bfd806535caa0759fbba9f5"
 
 # Params of the IBM Cloud task. Tekton rejects a param the task does not
 # declare, so the pipeline must stay inside this set.
@@ -36,6 +36,7 @@ MAPT_IBMCLOUD_PARAMS = {
     "id",
     "keep-state",
     "memory",
+    "nested-virt",
     "operation",
     "operator-channel",
     "ownerKind",
@@ -142,6 +143,25 @@ def test_the_pipeline_only_passes_declared_ibmcloud_params():
         task = (_tasks() if name in _tasks() else _finally())[name]
         unknown = set(_params(task)) - MAPT_IBMCLOUD_PARAMS
         assert not unknown, (name, unknown)
+
+
+def test_the_create_never_asks_for_spot():
+    # A request that needs nested virtualization makes mapt select a bare metal
+    # server, and mapt stops when the same request also asks for spot. The
+    # default must stay false, so a plain run does not fail on that pair.
+    params = {p["name"]: p for p in _pipeline()["spec"]["params"]}
+    assert params["spot"]["default"] == "false"
+    assert "bare metal" in params["spot"]["description"]
+    assert _params(_tasks()["create-snc-cluster"])["spot"] == "$(params.spot)"
+
+
+def test_the_pipeline_expects_a_bare_metal_server():
+    # The virtualization profile requests nested virtualization, so the
+    # compute resource is a bare metal server and not a virtual server
+    # instance. A reader of the description must know that.
+    description = _pipeline()["spec"]["description"]
+    assert "bare metal" in description
+    assert "virtual server instance" not in description.split("A bare metal")[0]
 
 
 def test_the_creation_sets_the_ibmcloud_zone():
