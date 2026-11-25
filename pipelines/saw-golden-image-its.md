@@ -14,18 +14,20 @@ supplies the secrets. This repository never holds a secret value.
 | Secret | Read by | Keys | Required | `ai-incubator-tenant` on 2026-11-25 |
 | --- | --- | --- | --- | --- |
 | `ibmcloud-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | vault backed, merge request `konflux-release-data!25561` pending |
-| `ocp-snc-credentials` | `create-snc-cluster`, `delete-snc-cluster` | `pull-secret` | yes | absent |
+| `ocp-snc-credentials` | `create-snc-cluster` | `pull-secret` | yes | vault backed, merge request `konflux-release-data!25563` pending |
 | `components-namespace-pull` | `verify-saw-disk-image` | `.dockerconfigjson` | yes | present |
 
-`konflux-release-data` holds the ExternalSecret of `ibmcloud-ai-incubator`. It
-reads the Vault path
-`apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/ibmcloud`
-and maps each secret key to a vault property. A change to the vault values
-reaches the cluster on the next refresh, one hour at most.
+`konflux-release-data` holds one ExternalSecret per secret:
 
-The ExternalSecret owns that Secret, so a `kubectl create secret` of the same
-name is overwritten at the next refresh. Put a new value in vault, never in the
-cluster.
+| Secret | Vault path |
+| --- | --- |
+| `ibmcloud-ai-incubator` | `apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/ibmcloud` |
+| `ocp-snc-credentials` | `apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/ocp/pullsecret` |
+
+Each record maps its secret keys to vault properties. A change to a vault value
+reaches the cluster on the next refresh, one hour at most. The ExternalSecret
+owns its Secret, so a `kubectl create secret` of the same name is overwritten at
+the next refresh. Put a new value in vault, never in the cluster.
 
 Name the first two secrets in the pipeline params `ibmcloud-credentials-secret`
 and `ocp-snc-credentials-secret` when the defaults do not fit. Name the third in
@@ -50,8 +52,13 @@ kubectl create secret generic ibmcloud-ai-incubator -n ai-incubator-tenant \
   --from-literal=bucket=<bucket>
 ```
 
-`ocp-snc-credentials` needs this command. The pull secret is a personal file, so
-no record holds it:
+`ocp-snc-credentials` needs no command either. Its ExternalSecret reads the
+record `ocp/pullsecret` and copies the whole dockerconfigjson into the key
+`pull-secret`. mapt mounts the key at `/opt/ocp-snc-secret/pull-secret` and
+passes that path to the installer.
+
+Run the manual form below only on a cluster that holds no ExternalSecret for
+these two names:
 
 ```bash
 export KUBECONFIG=~/.config/kube/config
