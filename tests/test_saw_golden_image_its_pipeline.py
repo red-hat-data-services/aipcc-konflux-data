@@ -152,12 +152,31 @@ def test_the_pipeline_only_passes_declared_ibmcloud_params():
 
 def test_the_create_never_asks_for_spot():
     # A request that needs nested virtualization makes mapt select a bare metal
-    # server, and mapt stops when the same request also asks for spot. The
-    # default must stay false, so a plain run does not fail on that pair.
+    # server, and mapt takes no spot capacity for one. The pipeline therefore
+    # offers no spot knob, so the task default "false" stands.
+    params = {p["name"] for p in _pipeline()["spec"]["params"]}
+    assert "spot" not in params
+    assert "spot" not in _params(_tasks()["create-snc-cluster"])
+
+
+def test_the_pipeline_runs_x86_64_only():
+    # The IBM Cloud SNC task sets the architecture itself and IBM Cloud VPC
+    # offers no arm64 profile, so a run covers x86_64 variants only. A param
+    # would promise a coverage that the task cannot give.
+    params = {p["name"] for p in _pipeline()["spec"]["params"]}
+    assert "architecture" not in params
+    create = {p["name"]: p for p in _tasks()["create-configuration"]["params"]}
+    assert create["architecture"]["value"] == "x86_64"
+
+
+def test_the_catalog_image_version_has_a_default():
+    # The catalog name follows the version, so the run must name a version
+    # unless the operator asks for the latest of the private catalog.
     params = {p["name"]: p for p in _pipeline()["spec"]["params"]}
-    assert params["spot"]["default"] == "false"
-    assert "bare metal" in params["spot"]["description"]
-    assert _params(_tasks()["create-snc-cluster"])["spot"] == "$(params.spot)"
+    default = params["ocp-version"]["default"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", default), default
+    assert "latest" in params["ocp-version"]["description"]
+    assert _params(_tasks()["create-snc-cluster"])["version"] == "$(params.ocp-version)"
 
 
 def test_the_pipeline_expects_a_bare_metal_server():

@@ -70,8 +70,9 @@ kubectl get secret ibmcloud-konflux-tests ocp-snc-credentials \
 
 | Item | Value |
 | --- | --- |
-| `ibmcloud-zone` pipeline param | for example `us-south-2`. mapt stops on create without it. |
-| Catalog image | `openshift-local-<version>-x86-64` in the private catalog of the account. Select it with the `ocp-version` param. |
+| `ibmcloud-zone` pipeline param | for example `us-south-2`. The zone must belong to the region of the credentials secret. mapt stops on create without it. |
+| Catalog image | `openshift-local-<version>-x86-64` in the private catalog of the account. `ocp-version` defaults to `5.0.0`, which reads `openshift-local-5-0-0-x86-64`. An empty value selects the latest version of the private catalog. |
+| Architecture | x86_64 only. The IBM Cloud SNC task sets the architecture itself, and IBM Cloud VPC offers no arm64 profile, so the scenario covers the x86_64 variant of the image. |
 | VPC image | The account must hold a VPC image for the catalog offering version. A bare metal server takes an image ID and no catalog offering, so mapt resolves the offering to an image. Without that image the create stops with `no VPC image found for catalog offering`. |
 | mapt task | `tkn/infra-ibmcloud-ocp-snc.yaml` on the `main` branch. No release tag holds the IBM Cloud task or the bare metal selection yet, so the pipeline reads `main`. Point the revision to a tag when mapt publishes one that holds both. |
 | Compute | the `virtualization` profile requests nested virtualization, so mapt selects the smallest bare metal profile that holds `snc-cpus` and `snc-memory`. It checks the capacity of the zone before the create. |
@@ -85,9 +86,9 @@ metal server. These points follow from that choice:
 - A bare metal server costs more than a virtual server instance. Check the
   capacity and the price before the run. The `finally` task destroys the
   cluster.
-- Keep `spot` at `false`. mapt stops when the request needs nested
-  virtualization and asks for spot, because a bare metal server takes no spot
-  capacity.
+- The pipeline passes no spot request. A bare metal server takes no spot
+  capacity, so the task default `false` stands and no operator can turn it on
+  by mistake.
 - mapt ignores `snc-disk-size`, because the server boots from its local disks.
 - The account must hold a bare metal profile with at least `snc-cpus` cores and
   `snc-memory` GiB. Empty bare metal capacity in the zone stops the create with

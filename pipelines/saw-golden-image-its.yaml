@@ -15,8 +15,9 @@ spec:
     the OCI artifact into a DataVolume, and KubeVirt starts the image from that
     DataVolume. Finally, the pipeline checks the image contract inside the guest.
 
-    The disk-image container is a single multi-arch manifest list, so one
-    scenario covers every architecture.
+    The disk-image container is a single multi-arch manifest list, but the
+    mapt IBM Cloud SNC task runs x86_64 only. The scenario therefore covers the
+    x86_64 variant of the image.
 
     Prerequisites on the IBM Cloud account:
       - a private catalog image built from the OpenShift Local bundle, named
@@ -48,16 +49,12 @@ spec:
       description: |
         Snapshot of the application (automatically provided by Konflux ITS).
         Example: {"components":[{"containerImage":"quay.io/red-hat-data-services/saw-disk-image-container@sha256:...","name":"saw-disk-image-container"}]}
-    - name: architecture
-      default: "x86_64"
-      description: |
-        Architecture of the guest. The mapt IBM Cloud SNC task runs x86_64 only,
-        so this value selects the image variant and not the instance.
     - name: ocp-version
-      default: ""
+      default: "5.0.0"
       description: |
-        OpenShift version of the SNC catalog image on IBM Cloud, for example
-        4.22.14. Empty selects the latest catalog image of the account.
+        Version of the OpenShift Local catalog image on IBM Cloud, for example
+        5.0.0. The catalog name becomes openshift-local-5-0-0-x86-64. An empty
+        value makes mapt select the latest version of the private catalog.
     - name: snc-cpus
       default: "16"
       description: |
@@ -78,20 +75,17 @@ spec:
     - name: ibmcloud-zone
       default: ""
       description: |
-        IBM Cloud availability zone, for example us-south-2. The create
-        operation needs it, and it must belong to the region of the credentials
-        secret.
+        IBM Cloud availability zone of the VPC and of the compute resource, for
+        example us-south-2. The credentials secret works in every zone of its
+        region: this value selects where the stack lands. It must belong to the
+        region of the credentials secret, because mapt builds the VPC client
+        from that region. Bare metal capacity is per zone, so another zone can
+        succeed where this one stops.
     - name: ibmcloud-credentials-secret
       default: "ibmcloud-konflux-tests"
       description: |
         Secret with the IBM Cloud credentials, keys api-key, region,
         cos-access-key, cos-secret-key and bucket.
-    - name: spot
-      default: "false"
-      description: |
-        Use a spot instance for the SNC cluster. Keep "false". A request that
-        needs nested virtualization gets a bare metal server, and such a server
-        takes no spot capacity, so mapt stops.
     - name: ocp-snc-credentials-secret
       default: "ocp-snc-credentials"
       description: |
@@ -113,8 +107,10 @@ spec:
   tasks:
     - name: create-configuration
       params:
+        # The mapt IBM Cloud SNC task runs x86_64 only, so the scenario covers
+        # x86_64 variants and no other.
         - name: architecture
-          value: $(params.architecture)
+          value: x86_64
         - name: SNAPSHOT
           value: $(params.SNAPSHOT)
       taskRef:
@@ -146,8 +142,6 @@ spec:
           value: "$(params.ocp-version)"
         - name: compute-sizes
           value: "$(tasks.create-configuration.results.snc-compute-sizes)"
-        - name: spot
-          value: "$(params.spot)"
         - name: zone
           value: "$(params.ibmcloud-zone)"
         - name: secret-ibmcloud-credentials
