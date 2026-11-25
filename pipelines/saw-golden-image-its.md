@@ -73,7 +73,7 @@ kubectl get secret ibmcloud-konflux-tests ocp-snc-credentials \
 | `ibmcloud-zone` pipeline param | for example `us-south-2`. mapt stops on create without it. |
 | Catalog image | `openshift-local-<version>-x86-64` in the private catalog of the account. Select it with the `ocp-version` param. |
 | VPC image | The account must hold a VPC image for the catalog offering version. A bare metal server takes an image ID and no catalog offering, so mapt resolves the offering to an image. Without that image the create stops with `no VPC image found for catalog offering`. |
-| mapt task | `tkn/infra-ibmcloud-ocp-snc.yaml` at commit `b78feca1d679328e5bfd806535caa0759fbba9f5` |
+| mapt task | `tkn/infra-ibmcloud-ocp-snc.yaml` on the `main` branch. No release tag holds the IBM Cloud task or the bare metal selection yet, so the pipeline reads `main`. Point the revision to a tag when mapt publishes one that holds both. |
 | Compute | the `virtualization` profile requests nested virtualization, so mapt selects the smallest bare metal profile that holds `snc-cpus` and `snc-memory`. It checks the capacity of the zone before the create. |
 
 ## Limits

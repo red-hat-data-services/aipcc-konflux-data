@@ -14,10 +14,11 @@ LOCAL_REPO = "https://github.com/red-hat-data-services/aipcc-konflux-data"
 MAPT_REPO = "https://github.com/redhat-developer/mapt"
 
 # The cluster must come from the mapt SNC task, at a revision that provides it.
-# The IBM Cloud task is not in a release tag yet, so the revision is the commit
-# that holds the bare metal selection of nesting virtualization.
+# No release tag holds the IBM Cloud task or the bare metal selection that
+# nested virtualization needs, so the pipeline reads main until mapt publishes
+# a tag with both.
 MAPT_SNC_PATH = "tkn/infra-ibmcloud-ocp-snc.yaml"
-MAPT_SNC_REVISION = "b78feca1d679328e5bfd806535caa0759fbba9f5"
+MAPT_SNC_REVISION = "main"
 
 # Params of the IBM Cloud task. Tekton rejects a param the task does not
 # declare, so the pipeline must stay inside this set.
@@ -92,12 +93,16 @@ def test_local_resolver_paths_exist():
 
 
 def test_the_cluster_comes_from_the_mapt_snc_task():
+    # Create and destroy must read the same revision, else the destroy can run
+    # a task that no longer matches the state the create wrote.
+    seen = set()
     for task in _pipeline()["spec"]["tasks"] + _pipeline()["spec"]["finally"]:
         resolver = _resolver_params(task)
         if resolver["url"] != MAPT_REPO:
             continue
         assert resolver["pathInRepo"] == MAPT_SNC_PATH, resolver
-        assert resolver["revision"] == MAPT_SNC_REVISION, resolver
+        seen.add(resolver["revision"])
+    assert seen == {MAPT_SNC_REVISION}
 
 
 def test_the_profile_installs_virtualization():

@@ -173,13 +173,12 @@ spec:
         params:
           - name: url
             value: https://github.com/redhat-developer/mapt
-          # The IBM Cloud task exists only on main since 2026-11-25. The
-          # revision holds the bare metal selection that nested virtualization
-          # needs. Pin the commit, so a change on main cannot alter the
-          # pipeline. Replace the commit with a release tag when mapt publishes
-          # one that holds it.
+          # The IBM Cloud SNC task and the bare metal selection that nested
+          # virtualization needs live on main. mapt publishes no release tag
+          # with them yet, so the pipeline reads main. Point the revision to a
+          # release tag when mapt publishes one that holds both.
           - name: revision
-            value: b78feca1d679328e5bfd806535caa0759fbba9f5
+            value: main
           - name: pathInRepo
             value: tkn/infra-ibmcloud-ocp-snc.yaml
 
@@ -234,6 +233,6 @@ spec:
           - name: url
             value: https://github.com/redhat-developer/mapt
           - name: revision
-            value: b78feca1d679328e5bfd806535caa0759fbba9f5
+            value: main
           - name: pathInRepo
             value: tkn/infra-ibmcloud-ocp-snc.yaml
