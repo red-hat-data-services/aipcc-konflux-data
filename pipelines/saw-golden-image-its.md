@@ -1,9 +1,10 @@
 # SAW golden image integration test — cluster secrets
 
 `pipelines/saw-golden-image-its.yaml` runs after a Release of
-`saw-disk-image-container`. The release service creates the
-`IntegrationTestScenario` from the product management configs, and the
-integration service starts the PipelineRun.
+`saw-disk-image-container`. PMT renders the `IntegrationTestScenario` from the
+product management configs into the Konflux GitOps repository, ArgoCD applies
+it, and the integration service starts the PipelineRun. The scenario object in
+`ai-incubator-tenant` carries the ArgoCD tracking annotation.
 
 The PipelineRun reads three secrets from the tenant namespace. The tenant
 supplies the secrets. This repository never holds a secret value.
@@ -55,7 +56,8 @@ full pull secret from console.redhat.com.
 | `saw-pull-secret` | `verify-saw-disk-image` | Built from the `PULL_SECRET_JSON` environment variable. The CDI import reads it. |
 
 The service account `its-pipeline-saw-disk-image-container` belongs to the
-component. The integration service creates it. It needs no secret.
+component. The integration service creates it. It must allow `create` on
+Secrets, because both tasks make a secret. It needs no secret of its own.
 
 ## Check the secrets
 
