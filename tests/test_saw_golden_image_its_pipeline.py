@@ -192,12 +192,13 @@ def test_pipeline_results_are_wired_to_the_verify_task():
 
 
 def test_the_node_must_support_hardware_virtualization():
-    # A node without hardware virtualization accepts the VirtualMachine and then
-    # never boots it. Fail with the cause, before the boot wait.
+    # A node without /dev/kvm accepts the VirtualMachine and then never boots it.
+    # The kvm device plugin resource is the evidence of the device. Fail with the
+    # cause, before the boot wait.
     script = _step("deploy")["script"]
-    assert "kubevirt.io/schedulable=true" in script
-    assert "no node is kubevirt.io/schedulable=true" in script
-    assert script.index("kubevirt.io/schedulable=true") < script.index("Creating the VirtualMachine")
+    assert 'devices.kubevirt.io/kvm' in script
+    assert "no node exposes the devices.kubevirt.io/kvm resource" in script
+    assert script.index('devices.kubevirt.io/kvm') < script.index("Creating the VirtualMachine")
 
 
 def test_the_guest_starts_from_the_artifact():

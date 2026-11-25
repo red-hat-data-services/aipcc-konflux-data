@@ -126,23 +126,30 @@ spec:
         kubectl get crd virtualmachines.kubevirt.io datavolumes.cdi.kubevirt.io
 
         echo "=== Checking that a node can run virtual machines ==="
-        # KubeVirt sets the schedulable label on a node only when the node
-        # exposes hardware virtualization. A node without it, for example an IBM
-        # Cloud VPC virtual server instance, accepts the VirtualMachine and then
-        # never boots it. Name the cause here, before the boot wait.
-        schedulable=""
+        # The virt-handler device plugin exposes the devices.kubevirt.io/kvm
+        # resource only on a node with /dev/kvm. A node without it, for example
+        # an IBM Cloud VPC virtual server instance, accepts the VirtualMachine
+        # and then never boots it. Name the cause here, before the boot wait.
+        kvm_node=""
         for _ in $(seq 1 60); do
-          schedulable=$(kubectl get nodes -l kubevirt.io/schedulable=true -o name 2>/dev/null || true)
-          [ -n "${schedulable}" ] && break
+          while IFS='|' read -r node count; do
+            [ -n "${node}" ] || continue
+            case "${count}" in
+              "" | 0 | "<no value>") continue ;;
+            esac
+            kvm_node="${node}=${count}"
+            break
+          done <<< "$(kubectl get nodes -o go-template='{{range .items}}{{.metadata.name}}|{{index .status.allocatable "devices.kubevirt.io/kvm"}}{{"\n"}}{{end}}' 2>/dev/null || true)"
+          [ -n "${kvm_node}" ] && break
           sleep 5
         done
-        if [ -z "${schedulable}" ]; then
-          echo "ERROR: no node is kubevirt.io/schedulable=true, so the cluster cannot start a guest"
-          kubectl get nodes --show-labels || true
-          kubectl get kubevirt -A || true
+        if [ -z "${kvm_node}" ]; then
+          echo "ERROR: no node exposes the devices.kubevirt.io/kvm resource, so the cluster cannot start a guest"
+          kubectl get nodes || true
+          kubectl get pods -n openshift-cnv || true
           exit 1
         fi
-        echo "schedulable node: ${schedulable}"
+        echo "node with hardware virtualization: ${kvm_node}"
 
         echo "=== Preparing the namespace ${NAMESPACE} ==="
         kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
