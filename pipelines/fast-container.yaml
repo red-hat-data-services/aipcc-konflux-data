@@ -1,0 +1,288 @@
+# Fast single-arch container build pipeline for pull request feedback.
+#
+# This is a stripped-down alternative to full-container.yaml for MR builds:
+# it mimics what the GitLab CI runners do (one buildah build, one platform,
+# push to the registry) and drops everything that GitLab CI does not run.
+#
+# NOTE: pinned to a fork of buildah-remote-oci-ta (task version
+# 0.15.0-cache3, https://github.com/ktdreyer/container-build-catalog branch
+# rhai-19674-cache-fork, rebased onto the layer-cache branch): the upstream
+# task hardcodes --no-cache and cannot use a registry-distributed layer
+# cache. The layer-cache branch is the upstream-shaped implementation
+# (ENABLE_LAYER_CACHE / LAYER_CACHE_EXPIRES_AFTER params, --no-cache kept
+# conditional on the cache being off); the fork adds the optional
+# STABLE_LABELS param on top (see the layer cache section below). Everything
+# else matches upstream. When the fork graduates it should move to a
+# team-owned quay namespace.
+#
+# Compared to full-container.yaml, the following tasks are removed:
+#   - init (cache proxy: useless here because quay.io is in NO_PROXY and
+#     cluster-local proxies are ignored by remote build VMs anyway)
+#   - prefetch-dependencies (rhaiis builds non-hermetically; with an empty
+#     prefetch-input the task is a pass-through, so we hand the git clone's
+#     SOURCE_ARTIFACT straight to the build)
+#   - build-image-index (single arch only; the build task's IMAGE_URL and
+#     IMAGE_DIGEST results are used directly)
+#   - build-source-image, apply-tags
+#   - all image checks (snyk, clair, clamav, rpms-signature, sast, ...) and
+#     the slack finally task
+#
+# Additional speed knobs:
+#   - Builds are always non-hermetic (like the rhaiis "fast" applications).
+#   - SBOM generation is skipped by default (skip-sbom-generation): the syft
+#     scans run inside the build VM, and on the rhaiis CUDA image (12 GB
+#     rootfs) the image-filesystem scan alone measured 6m51s-11m43s across
+#     runs — a third of a warm build. Throwaway on-pr-fast-* output images
+#     never pass Enterprise Contract, so MR builds carry no attestations
+#     anyway; the full pipeline provides them for release builds. Components
+#     that want MR SBOMs can set skip-sbom-generation to "false".
+#   - Buildinfo injection is skipped by default (skip-injections):
+#     konflux-build-cli appends COPY --from=.konflux-buildinfo steps whose
+#     labels.json (commit SHA + build timestamp) changes every build, so
+#     those layers always bust the layer cache, and a miss costs a full
+#     rootfs diff walk (~5m on warm builds of the 12 GB rhaiis CUDA image).
+#     The injected files only feed Clair scanning, which this pipeline does
+#     not run, and GitLab CI injects nothing.
+#   - The final LABEL step can be made cache-stable (stable-labels): buildah
+#     renders all image labels as a synthetic final LABEL instruction whose
+#     text is part of the --layers cache key, so per-build label values
+#     (created timestamp, revision) bust the step and force a cold rootfs
+#     diff walk (~5m on the 12 GB rhaiis CUDA image). When enabled, the
+#     image omits revision/vcs-ref/build-date labels and pins created to
+#     epoch 0; throwaway on-pr-fast-* images do not need them (PaC records
+#     the commit SHA to digest mapping). Default off to keep parity with
+#     the full pipeline's labels.
+#
+# Components whose installers are hermetic-by-default must opt into
+# networked installs via a build-arg, exactly like GitLab CI does: rhaiis's
+# install-python-packages.sh fails closed without a cachi2 environment, so
+# its builds pass <VARIANT>_INSTALL_MODE=networked (for example
+# CUDA_INSTALL_MODE=networked) through the build-args parameter.
+#
+# Layer cache: the task's ENABLE_LAYER_CACHE=true enables buildah's
+# registry-distributed layer cache (--layers --cache-from/--cache-to,
+# buildah >= 1.40), the same mechanism GitLab CI uses for its warm MR
+# builds. The cache lives in the component's own output repository (the
+# tag-stripped IMAGE), because the
+# Konflux push credential is scoped to exactly that repository (the
+# ImageRepository's robot account) and buildah treats a failed cache push as
+# fatal. Cache entries are content-addressed tags (64-hex buildah cache
+# keys), which cannot collide with the on-pr-* output tags; a base-image
+# bump rotates the keys naturally, and LAYER_CACHE_EXPIRES_AFTER stamps cache
+# tags with quay.expires-after (a --layer-label, which unlike --label
+# reaches the intermediate images) so the cache garbage-collects itself.
+# Reproducibility knobs (SOURCE_DATE_EPOCH etc.) stay off: they would
+# change layer digests and defeat the cache.
+#
+# See RHAI-19674 and RHAI-10822.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: fast-container-build
+spec:
+  description: >-
+    Fast single-architecture container build for pull requests. Builds one
+    platform with buildah and pushes it to the output registry, reusing the
+    registry-distributed layer cache in the component's own repository. No
+    image index, no source image, no image checks.
+  params:
+    - description: Source Repository URL
+      name: git-url
+      type: string
+    - default: ""
+      description: Revision of the Source Repository
+      name: revision
+      type: string
+    - description: Fully Qualified Output Image
+      name: output-image
+      type: string
+    - default: .
+      description: Path to the source code of an application's component from where to build image.
+      name: path-context
+      type: string
+    - default: Dockerfile
+      description: Path to the Dockerfile inside the context specified by parameter path-context
+      name: dockerfile
+      type: string
+    - default: linux/x86_64
+      description: The single platform to build the image on, for example linux/x86_64 or linux-d160-m2xlarge/arm64. Multi-platform (matrix) builds are not supported by this pipeline; use full-container.yaml for those.
+      name: build-platform
+      type: string
+    - default: ""
+      description: Image tag expiration time, time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively.
+      name: image-expires-after
+    - default: []
+      description: Array of --build-arg values ("arg=value" strings) for buildah
+      name: build-args
+      type: array
+    - default: ""
+      description: Path to a file with build arguments for buildah, see https://www.mankier.com/1/buildah-build#--build-arg-file
+      name: build-args-file
+      type: string
+    - name: additional-build-secret
+      description: Additional secret to use while building
+      type: string
+      default: ""
+    - name: squash-build
+      description: Squash all new and previous layers added as a part of this build, as per --squash
+      default: "false"
+      type: string
+    - name: add-capabilities
+      description: Parameter for ADD_CAPABILITIES for the container build
+      default: ""
+      type: string
+    - default: "false"
+      description: Allow nested privileged container build. This is mostly useful for bootc images that embed container images.
+      name: privileged-nested
+      type: string
+    - name: buildah-format
+      description: The manifest format to use for built images
+      type: string
+      default: docker
+    - name: labels
+      description: Additional key=value labels to apply to the built image
+      type: array
+      default: []
+    - name: skip-sbom-generation
+      description: Skip SBOM generation and attach. Default "true" — the syft scans run inside the build VM and measured 6m51s-11m43s on the rhaiis CUDA image (a third of a warm build), and throwaway on-pr-fast-* images never pass Enterprise Contract. Set "false" to produce MR SBOMs anyway.
+      type: string
+      default: "true"
+    - name: skip-injections
+      description: >-
+        Skip konflux-build-cli buildinfo injection (the appended
+        COPY --from=.konflux-buildinfo steps writing labels.json and
+        content-sets.json to /usr/share/buildinfo/). Default "true" — the
+        injected labels.json contains the commit SHA and a build timestamp,
+        so those layers bust the layer cache on every commit, and a miss
+        costs a full rootfs diff walk (~5m on the 12 GB rhaiis CUDA image).
+        The files only feed Clair scanning, which this pipeline does not
+        run. Set "false" to produce them anyway.
+      type: string
+      default: "true"
+    - name: stable-labels
+      description: >-
+        Make the final image labels cache-stable so the synthetic LABEL step
+        hits the layer cache. buildah's cache key includes the rendered LABEL
+        instruction text, so per-build label values (created timestamp,
+        revision) bust the step and force a cold rootfs diff walk (~5m on the
+        12 GB rhaiis CUDA image). When true, the image omits revision/vcs-ref/
+        build-date labels and pins created to epoch 0. Throwaway on-pr-fast-*
+        images do not need them; PaC records the commit SHA to digest mapping.
+      type: string
+      default: "false"
+    - name: enable-layer-cache
+      description: Enable buildah's registry-distributed layer cache. The cache entries live in the component's own output repository (IMAGE minus tag). Set "false" to build fully cold.
+      type: string
+      default: "true"
+    - name: cache-expires-after
+      description: Quay TTL applied to cache tags via the quay.expires-after layer label (e.g. 1h, 2d, 3w). Required when the layer cache is enabled; the build fails rather than accumulating cache entries forever.
+      type: string
+      default: "30d"
+  results:
+    - description: ""
+      name: IMAGE_URL
+      value: $(tasks.build-container.results.IMAGE_URL)
+    - description: ""
+      name: IMAGE_DIGEST
+      value: $(tasks.build-container.results.IMAGE_DIGEST)
+    - description: ""
+      name: CHAINS-GIT_URL
+      value: $(tasks.clone-repository.results.url)
+    - description: ""
+      name: CHAINS-GIT_COMMIT
+      value: $(tasks.clone-repository.results.commit)
+  tasks:
+    - name: clone-repository
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.revision)
+        - name: depth
+          value: 10
+        - name: enableSymlinkCheck
+          value: false
+        - name: ociStorage
+          value: $(params.output-image).git
+        - name: ociArtifactExpiresAfter
+          value: $(params.image-expires-after)
+      taskRef:
+        params:
+          - name: name
+            value: git-clone-oci-ta
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.2.6@sha256:a3678910c2bf9187a66a96066193cb41046fbb7097160bf2be6a374ed5e49d30
+          - name: kind
+            value: task
+        resolver: bundles
+      workspaces:
+        - name: basic-auth
+          workspace: git-auth
+    - name: build-container
+      timeout: 2h
+      params:
+        - name: IMAGE
+          value: $(params.output-image)
+        - name: DOCKERFILE
+          value: $(params.dockerfile)
+        - name: CONTEXT
+          value: $(params.path-context)
+        - name: PLATFORM
+          value: $(params.build-platform)
+        - name: BUILDAH_FORMAT
+          value: $(params.buildah-format)
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.image-expires-after)
+        - name: COMMIT_SHA
+          value: $(tasks.clone-repository.results.commit)
+        - name: BUILD_ARGS
+          value:
+            - $(params.build-args[*])
+        - name: BUILD_ARGS_FILES
+          value:
+            - $(params.build-args-file)
+        - name: ADD_CAPABILITIES
+          value: $(params.add-capabilities)
+        - name: ADDITIONAL_SECRET
+          value: $(params.additional-build-secret)
+        - name: PRIVILEGED_NESTED
+          value: $(params.privileged-nested)
+        - name: SQUASH
+          value: $(params.squash-build)
+        - name: SOURCE_ARTIFACT
+          value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+        - name: PREFETCH_ARTIFACT
+          value: ""
+        - name: HERMETIC
+          value: "false"
+        - name: IMAGE_APPEND_PLATFORM
+          value: "true"
+        - name: SKIP_SBOM_GENERATION
+          value: $(params.skip-sbom-generation)
+        - name: SKIP_INJECTIONS
+          value: $(params.skip-injections)
+        - name: STABLE_LABELS
+          value: $(params.stable-labels)
+        - name: ENABLE_LAYER_CACHE
+          value: $(params.enable-layer-cache)
+        - name: LAYER_CACHE_EXPIRES_AFTER
+          value: $(params.cache-expires-after)
+        - name: LABELS
+          value:
+          - url=$(params.git-url)
+          - git.url=$(params.git-url)
+          - $(params.labels[*])
+      runAfter:
+        - clone-repository
+      taskRef:
+        params:
+          - name: name
+            value: buildah-remote-oci-ta
+          - name: bundle
+            value: quay.io/ktdreyer/tekton-catalog/task-buildah-remote-oci-ta:0.15.0-cache3@sha256:6dc470dcc8b7555e630d33a9d51538d67a1267ed9c5a5025f910385cf6c95fc1
+          - name: kind
+            value: task
+        resolver: bundles
+  workspaces:
+    - name: git-auth
+      optional: true
