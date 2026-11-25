@@ -32,11 +32,9 @@ spec:
     instance. The verify task stops when the cluster exposes no
     devices.kubevirt.io/kvm resource, so the log names the cause and the run
     does not wait for a guest that cannot start.
-  # Cluster creation and the profile installation take most of the run. Set the
-  # budget here, so the run does not depend on the cluster default timeout.
-  timeouts:
-    pipeline: 3h0m0s
-    tasks: 2h0m0s
+  # Cluster creation and the profile installation take most of the run. The
+  # Tekton version of the build cluster rejects spec.timeouts on a Pipeline
+  # ("unknown field"), so each long task carries its own budget instead.
   params:
     - name: SNAPSHOT
       description: |
@@ -151,6 +149,8 @@ spec:
           value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=saw-golden-image-its,pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
       runAfter:
         - create-configuration
+      # Create takes about 45 minutes, plus the checks that follow the install.
+      timeout: 2h0m0s
       taskRef:
         resolver: git
         params:

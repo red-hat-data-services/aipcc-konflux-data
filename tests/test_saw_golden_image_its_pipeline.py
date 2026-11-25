@@ -295,10 +295,13 @@ def test_the_task_outlives_its_own_waits():
 
 
 def test_the_run_has_a_timeout_budget():
-    # The cluster creation alone takes about 45 minutes.
-    timeouts = _pipeline()["spec"]["timeouts"]
-    assert timeouts["pipeline"] == "3h0m0s"
-    assert timeouts["tasks"] == "2h0m0s"
+    # The cluster Tekton rejects spec.timeouts on a Pipeline, so the budget
+    # must live on the tasks. The cluster creation alone takes about 45 minutes.
+    spec = _pipeline()["spec"]
+    assert "timeouts" not in spec
+    tasks = _tasks()
+    assert tasks["create-snc-cluster"]["timeout"] == "2h0m0s"
+    assert tasks["verify-saw-disk-image"]["timeout"] == "2h0m0s"
 
 
 def test_every_step_binds_the_variables_it_uses():
