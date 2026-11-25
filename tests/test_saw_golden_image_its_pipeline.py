@@ -302,6 +302,9 @@ def test_the_run_has_a_timeout_budget():
     tasks = _tasks()
     assert tasks["create-snc-cluster"]["timeout"] == "2h0m0s"
     assert tasks["verify-saw-disk-image"]["timeout"] == "2h0m0s"
+    # Destroy retries against the bucket, so it keeps the same budget.
+    finally_tasks = {t["name"]: t for t in spec["finally"]}
+    assert finally_tasks["delete-snc-cluster"]["timeout"] == "2h0m0s"
 
 
 def test_every_step_binds_the_variables_it_uses():

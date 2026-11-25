@@ -206,6 +206,9 @@ spec:
           value: "$(params.ibmcloud-credentials-secret)"
         - name: secret-ocp-snc-credentials
           value: "$(params.ocp-snc-credentials-secret)"
+      # Destroy reads the state from the bucket and can retry. Keep the budget
+      # of the old pipeline-level task timeout.
+      timeout: 2h0m0s
       taskRef:
         resolver: git
         params:
