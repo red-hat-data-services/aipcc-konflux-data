@@ -61,11 +61,15 @@ spec:
     - name: snc-cpus
       default: "16"
       description: |
-        vCPU count for the SNC instance. The virtualization profile sets no
-        minimum, so the value stands.
+        vCPU floor for the compute resource. The virtualization profile sets no
+        minimum, so the value stands. mapt selects the smallest bare metal
+        profile that holds this value and snc-memory, so a lower value can
+        lower the cost of the run.
     - name: snc-memory
       default: "64"
-      description: Memory in GiB for the SNC instance.
+      description: |
+        Memory floor in GiB for the compute resource. mapt reads it together
+        with snc-cpus when it selects the bare metal profile.
     - name: snc-disk-size
       default: "200"
       description: |

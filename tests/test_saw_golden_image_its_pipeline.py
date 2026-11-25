@@ -157,11 +157,23 @@ def test_the_create_never_asks_for_spot():
 
 def test_the_pipeline_expects_a_bare_metal_server():
     # The virtualization profile requests nested virtualization, so the
-    # compute resource is a bare metal server and not a virtual server
-    # instance. A reader of the description must know that.
+    # compute resource is a bare metal server. A reader of the description must
+    # know that, and must not read the old claim that a virtual server instance
+    # hosts the cluster.
     description = _pipeline()["spec"]["description"]
-    assert "bare metal" in description
-    assert "virtual server instance" not in description.split("A bare metal")[0]
+    assert "A bare metal server costs more than a virtual server instance" in description
+    assert "does not support nested virtualization" not in description
+
+
+def test_the_cpu_and_memory_values_steer_the_bare_metal_selection():
+    # mapt reads cpus and memory as floors of the bare metal profile, so the
+    # two params decide the cost of the run. Their text must say so.
+    params = {p["name"]: p for p in _pipeline()["spec"]["params"]}
+    assert "floor" in params["snc-cpus"]["description"]
+    assert "floor" in params["snc-memory"]["description"]
+    create = _params(_tasks()["create-snc-cluster"])
+    assert create["cpus"] == "$(params.snc-cpus)"
+    assert create["memory"] == "$(params.snc-memory)"
 
 
 def test_the_creation_sets_the_ibmcloud_zone():
