@@ -497,9 +497,9 @@ spec:
                     for component in components:
                         name = component.get("component") or "-"
                         version = component.get("version") or "-"
-                        # The same CVE affects several components and repeats across the
-                        # per-architecture report blobs.
-                        key = (cve, name, version)
+                        # Keep differing scan states until threshold filtering; the
+                        # same package can have different findings across architectures.
+                        key = (cve, name, version, severity, fixed_by)
                         if key in findings:
                             continue
                         findings[key] = {
@@ -512,7 +512,7 @@ spec:
                             "advisory": ", ".join(advisories) or "-",
                             "location": component.get("source") or "-",
                         }
-            print("Parsed %d report blob(s), %d component/CVE pairs total"
+            print("Parsed %d report blob(s), %d distinct findings total"
                   % (len(report_files), len(findings)))
             return findings
 

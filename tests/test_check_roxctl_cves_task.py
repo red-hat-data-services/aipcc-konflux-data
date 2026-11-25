@@ -312,6 +312,34 @@ def test_report_cves_enforces_unpatched_findings_when_configured(tmp_path):
     assert result["cve_summary"] == "High=1 Unknown=1 patched=0 unpatched=2 blocking=2 pending=0"
 
 
+@pytest.mark.parametrize(
+    ("first_severity", "first_fix"),
+    [("IMPORTANT_VULNERABILITY_SEVERITY", ""), ("MODERATE_VULNERABILITY_SEVERITY", "2.35")],
+)
+def test_report_cves_keeps_matching_findings_from_later_architectures(
+    tmp_path, first_severity, first_fix
+):
+    finding = {
+        "cve": "CVE-2025-0002",
+        "severity": "IMPORTANT_VULNERABILITY_SEVERITY",
+        "fixedBy": "2.35",
+        "components": [{"component": "glibc", "version": "2.34"}],
+    }
+    result = _run_report_step(
+        tmp_path,
+        {
+            "report-1-1.json": _report(dict(finding, severity=first_severity, fixedBy=first_fix)),
+            "report-2-1.json": _report(finding),
+            "report-3-1.json": _report(finding),
+        },
+        enforce="true",
+    )
+
+    assert result["test_output"]["result"] == "FAILURE"
+    assert result["test_output"]["failures"] == 1
+    assert result["cve_count"] == "1"
+
+
 def test_a_report_without_roxctl_new_is_an_error_not_a_clean_image(tmp_path):
     result = _run_report_step(
         tmp_path,
