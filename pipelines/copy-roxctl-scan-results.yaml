@@ -1,0 +1,34 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: copy-roxctl-scan-results
+spec:
+  params:
+    - name: release
+      type: string
+    - name: releasePlan
+      type: string
+    - name: snapshot
+      type: string
+    - name: target-repo
+      type: string
+      default: ""
+      description: Optional. If set, used as the target repo (backward compat with llama-stack).
+  tasks:
+    - name: copy-roxctl-scan-results-task
+      params:
+        - name: release
+          value: $(params.release)
+        - name: snapshot
+          value: $(params.snapshot)
+        - name: target-repo
+          value: $(params.target-repo)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/copy-roxctl-scan-results.yaml

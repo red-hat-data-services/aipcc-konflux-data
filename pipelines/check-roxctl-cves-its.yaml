@@ -1,0 +1,101 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: check-roxctl-cves-its
+spec:
+  description: |
+    Integration Test Scenario pipeline that reports the CVEs which would be flagged by
+    the Conforma cve.cve_blockers release gate, on the component that triggered it.
+
+    The build-time roxctl-scan task publishes per-severity counts in SCAN_OUTPUT, which is
+    all the UI shows, and attaches the full report artifacts to the scanned image
+    manifests. This pipeline reads those same report artifacts, which are what Conforma
+    evaluates, and lists the CVEs in them. It also reports ERROR when that evidence is
+    missing for any manifest roxctl-scan scanned, is attached to a manifest the REPORTS map
+    does not name it for, or is not a roxctl report, since Conforma's cve.cve_results_found
+    treats absent scan evidence as a violation and a missing report must not look clean.
+
+    Severity thresholds mirror the Conforma rule data keys restrict_cve_security_levels
+    and restrict_unpatched_cve_security_levels, and default to the stock values. If an
+    ECP overrides that rule data, set patched-severities and unpatched-severities to the
+    same lists. cve_leeway is accepted for symmetry with check-clair-cves-its but cannot
+    apply: a roxctl report carries no disclosure date, so Conforma enforces every
+    matching finding immediately.
+
+    Tekton caps the combined size of a task's results, so the results carry counts only.
+    The CVE identifiers are in the check-roxctl-cves task log.
+
+  params:
+    - name: SNAPSHOT
+      description: Snapshot spec JSON (automatically provided by the ITS)
+      type: string
+    - name: patched-severities
+      type: string
+      description: |
+        Severities to report for CVEs that have a fix, mirroring the Conforma rule data
+        key restrict_cve_security_levels. Comma-separated: Critical, High, Medium, Low,
+        Negligible, Unknown.
+      default: "Critical,High"
+    - name: unpatched-severities
+      type: string
+      description: |
+        Severities to report for CVEs with no known fix, mirroring the Conforma rule data
+        key restrict_unpatched_cve_security_levels. Empty by default, matching the stock
+        rule data, where unpatched CVEs warn but do not block.
+      default: ""
+    - name: cve-leeway
+      type: string
+      description: |
+        Grace period in days per severity, mirroring the Conforma rule data key
+        cve_leeway. Validated and then ignored: roxctl reports carry no disclosure date,
+        so Conforma cannot defer them either. Kept so the same ITS settings can be
+        applied to both scanners.
+      default: "Critical=6,High=29"
+    - name: enforce
+      type: string
+      description: |
+        If "true", matching CVEs set TEST_OUTPUT.result to FAILURE. If "false", they set
+        it to WARNING.
+      default: "false"
+    - name: pull-secret-name
+      type: string
+      description: Dockerconfig secret used to read the image manifests, the attestation, and the report artifacts.
+      default: "components-namespace-pull"
+  results:
+    - name: TEST_OUTPUT
+      description: Konflux standardized test output.
+      value: $(tasks.check-roxctl-cves.results.TEST_OUTPUT)
+    - name: CVE_COUNT
+      description: Number of unique matching CVEs.
+      value: $(tasks.check-roxctl-cves.results.CVE_COUNT)
+    - name: CVE_SUMMARY
+      description: Per-severity counts of matching CVEs.
+      value: $(tasks.check-roxctl-cves.results.CVE_SUMMARY)
+    - name: SCANNED_IMAGE
+      description: The image reference that was scanned.
+      value: $(tasks.check-roxctl-cves.results.SCANNED_IMAGE)
+  tasks:
+    - name: check-roxctl-cves
+      timeout: "15m"
+      params:
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: patched-severities
+          value: $(params.patched-severities)
+        - name: unpatched-severities
+          value: $(params.unpatched-severities)
+        - name: cve-leeway
+          value: $(params.cve-leeway)
+        - name: enforce
+          value: $(params.enforce)
+        - name: pull-secret-name
+          value: $(params.pull-secret-name)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/check-roxctl-cves.yaml
