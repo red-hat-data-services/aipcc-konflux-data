@@ -244,6 +244,16 @@ def test_verify_task_maps_the_architecture_of_the_node():
     assert '--override-arch "${arch}"' in script
 
 
+def test_a_missing_tool_does_not_look_like_a_bad_artifact():
+    # skopeo and jq come from the step image. When either is absent, the label
+    # stays unread and the failure must name the tool, not the artifact.
+    script = _step("verify")["script"]
+    assert "command -v skopeo" in script
+    assert "command -v jq" in script
+    assert "the step image has no skopeo or no jq" in script
+    assert script.index("command -v skopeo") < script.index("label=$(skopeo")
+
+
 def test_report_step_is_fail_closed():
     script = _step("report")["script"]
 

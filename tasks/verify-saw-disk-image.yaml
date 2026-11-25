@@ -313,8 +313,6 @@ spec:
           value: $(params.container-image)
         - name: NAMESPACE
           value: $(params.namespace)
-        - name: BOOT_TIMEOUT
-          value: $(params.boot-timeout)
         - name: DEBUG
           value: $(params.debug)
       workingDir: /workspace
@@ -370,16 +368,23 @@ spec:
         # node architecture, else skopeo inspects the list and finds no labels.
         arch=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}')
         echo "node architecture: ${arch}"
-        label=$(skopeo inspect --override-os linux --override-arch "${arch}" \
-          --authfile /workspace/pull-secret.json "docker://${CONTAINER_IMAGE}" \
-          | jq -r '.Labels["io.openshell.saw.bootc-version"] // empty' || true)
+        label=""
+        label_error="the container has no io.openshell.saw.bootc-version label"
+        if ! command -v skopeo >/dev/null || ! command -v jq >/dev/null; then
+          # A missing tool must not look like a bad artifact.
+          label_error="the step image has no skopeo or no jq, so the label stayed unread"
+        else
+          label=$(skopeo inspect --override-os linux --override-arch "${arch}" \
+            --authfile /workspace/pull-secret.json "docker://${CONTAINER_IMAGE}" \
+            | jq -r '.Labels["io.openshell.saw.bootc-version"] // empty' || true)
+        fi
         echo "bootc version label: ${label:-missing}"
 
         echo "=== Guest checks ==="
         if [ -n "${label}" ]; then
           log "CHECK|artifact-label|PASS|bootc version ${label}"
         else
-          log "CHECK|artifact-label|FAIL|the container has no io.openshell.saw.bootc-version label"
+          log "CHECK|artifact-label|FAIL|${label_error}"
         fi
         rcheck() {
           local name="$1"

@@ -165,8 +165,9 @@ spec:
             value: tkn/infra-ibmcloud-ocp-snc.yaml
 
     - name: verify-saw-disk-image
-      # Longer than the sum of the waits inside the task (3 x 30 min), so a slow
-      # import or a slow boot fails with the task message, not a bare timeout.
+      # Longer than the sum of the waits inside the task (3 x 30 min waits plus
+      # the 5 min virtualization check), so a slow import or a slow boot fails
+      # with the task message, not a bare timeout.
       timeout: 2h0m0s
       params:
         - name: cluster-access-secret-name
