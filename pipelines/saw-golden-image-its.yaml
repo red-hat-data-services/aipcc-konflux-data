@@ -176,7 +176,9 @@ spec:
           # The IBM Cloud SNC task and the bare metal selection that nested
           # virtualization needs live on main. mapt publishes no release tag
           # with them yet, so the pipeline reads main. Point the revision to a
-          # release tag when mapt publishes one that holds both.
+          # release tag when mapt publishes one that holds both. A change on
+          # main between the create and the destroy can give the destroy a
+          # newer task than the create used.
           - name: revision
             value: main
           - name: pathInRepo
@@ -232,6 +234,8 @@ spec:
         params:
           - name: url
             value: https://github.com/redhat-developer/mapt
+          # Same revision as the create, so the destroy reads the task that
+          # wrote the state.
           - name: revision
             value: main
           - name: pathInRepo
