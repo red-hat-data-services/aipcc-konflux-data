@@ -20,13 +20,18 @@ spec:
 
     Prerequisites on the IBM Cloud account:
       - a private catalog image built from the OpenShift Local bundle, named
-        openshift-local-<version>-x86-64 (cloud-importer openshift-local
-        ibmcloud)
+        openshift-local-<version>-x86-64, with dots of the version replaced by
+        dashes (cloud-importer openshift-local ibmcloud)
       - a secret with the IBM Cloud API key, the region, an availability zone,
         the Object Storage keys and a bucket for the mapt state
 
     Every run costs an IBM Cloud virtual server instance and takes about one
     hour. Keep the scenario optional.
+
+    IBM Cloud does not support nested virtualization on a virtual server
+    instance. The verify task stops when the cluster exposes no
+    devices.kubevirt.io/kvm resource, so the log names the cause and the run
+    does not wait for a guest that cannot start.
   # Cluster creation and the profile installation take most of the run. Set the
   # budget here, so the run does not depend on the cluster default timeout.
   timeouts:
@@ -50,8 +55,8 @@ spec:
     - name: snc-cpus
       default: "16"
       description: |
-        vCPU count for the SNC instance. mapt raises the value when the profile
-        asks for more.
+        vCPU count for the SNC instance. The virtualization profile sets no
+        minimum, so the value stands.
     - name: snc-memory
       default: "64"
       description: Memory in GiB for the SNC instance.
