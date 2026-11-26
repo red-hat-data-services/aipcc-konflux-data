@@ -209,6 +209,17 @@ def test_the_creation_sets_the_ibmcloud_zone():
     assert "zone" not in _params(_finally()["delete-snc-cluster"])
 
 
+def test_the_tags_pass_the_ibmcloud_vpc_rules():
+    # IBM Cloud VPC rejects a resource whose tag breaks ^[A-Za-z0-9:_ .-]+$.
+    # A console URL carries "//" and "/", and the create then stops with
+    # "should match regexp". The tag therefore holds the run name only.
+    tags = _params(_tasks()["create-snc-cluster"])["tags"]
+    assert "://" not in tags, tags
+    for char in ("/", "\\", "@", "#", "?"):
+        assert char not in tags, (char, tags)
+    assert "pipeline-run-url=$(context.pipelineRun.name)" in tags
+
+
 def test_create_and_destroy_share_the_mapt_id_and_secret():
     create = _params(_tasks()["create-snc-cluster"])
     destroy = _params(_finally()["delete-snc-cluster"])

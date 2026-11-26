@@ -157,8 +157,10 @@ spec:
           value: "$(context.pipelineRun.uid)"
         - name: debug
           value: "$(params.debug)"
+        # IBM Cloud VPC tags accept only ^[A-Za-z0-9:_ .-]+$, so the tag holds
+        # the run name and not the console URL. The run name identifies the run.
         - name: tags
-          value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=saw-golden-image-its,pipeline-run-url=$(tasks.create-configuration.results.pipeline-run-url-prefix)$(context.pipelineRun.name)"
+          value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=saw-golden-image-its,pipeline-run-url=$(context.pipelineRun.name)"
       runAfter:
         - create-configuration
       # Create takes about 45 minutes, plus the checks that follow the install.

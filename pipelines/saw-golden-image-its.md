@@ -95,12 +95,14 @@ kubectl get secret ibmcloud-ai-incubator ocp-snc-credentials \
 
 | Item | Value |
 | --- | --- |
+| IAM policies of the credential | The service ID needs `Viewer` on Catalog Management, because mapt reads the private catalog. It needs `Administrator` on all account management services, because mapt creates a resource group per run. It needs `Editor` on VPC Infrastructure for **all resource groups**, because the run creates its resources in the new group. A policy scoped to one group fails with `the provided token is not authorized to create vpcs in this account`. |
 | `ibmcloud-zone` pipeline param | for example `us-south-2`. The zone must belong to the region of the credentials secret. mapt stops on create without it. |
 | Catalog image | `openshift-local-<version>-x86-64` in the private catalog of the account. `ocp-version` defaults to `5.0.0`, which reads `openshift-local-5-0-0-x86-64`. An empty value selects the latest version of the private catalog. |
 | Architecture | x86_64 only. The IBM Cloud SNC task sets the architecture itself, and IBM Cloud VPC offers no arm64 profile, so the scenario covers the x86_64 variant of the image. |
 | VPC image | The account must hold a VPC image for the catalog offering version. A bare metal server takes an image ID and no catalog offering, so mapt resolves the offering to an image. Without that image the create stops with `no VPC image found for catalog offering`. |
 | mapt task | `tkn/infra-ibmcloud-ocp-snc.yaml` on the `main` branch. No release tag holds the IBM Cloud task or the bare metal selection yet, so the pipeline reads `main`. Point the revision to a tag when mapt publishes one that holds both. |
 | Compute | the `virtualization` profile requests nested virtualization, so mapt selects the smallest bare metal profile that holds `snc-cpus` and `snc-memory`. It checks the capacity of the zone before the create. |
+| Tags | IBM Cloud VPC accepts the tag characters `A-Z a-z 0-9 : _ . -` only. The `pipeline-run-url` tag therefore holds the PipelineRun name and not the console URL. A URL carries `/`, and IBM Cloud VPC rejects the whole resource with `should match regexp ^[A-Za-z0-9:_ .-]+$`. |
 
 ## Limits
 
