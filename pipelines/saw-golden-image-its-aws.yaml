@@ -43,11 +43,12 @@ spec:
         Snapshot of the application (automatically provided by Konflux ITS).
         Example: {"components":[{"containerImage":"quay.io/red-hat-data-services/saw-disk-image-container@sha256:...","name":"saw-disk-image-container"}]}
     - name: ocp-version
-      default: "4.19.0"
+      default: "4.22.14"
       description: |
         Version of the OpenShift Local SNC bundle. mapt reads the AMI named
         openshift-local-<value>-x86_64, so the value must match a published
-        AMI. It names a bundle version, not a catalog image.
+        AMI. It names a bundle version, not a catalog image. The default is
+        the newest stable bundle of the account.
     - name: snc-instance-types
       default: ""
       description: |

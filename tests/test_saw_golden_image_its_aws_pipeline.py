@@ -164,6 +164,13 @@ def test_the_ocp_version_names_a_bundle_version():
     params = {p["name"]: p for p in _pipeline()["spec"]["params"]}
     default = params["ocp-version"]["default"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", default), default
+    # The account offers the pre-release 5.0.0-rc.1 next to the stable
+    # bundles. A default must name a stable bundle, so no run carries a
+    # release candidate.
+    assert "-rc" not in default
+    # The doc names the bundles of the account. Say which version the default
+    # reads, so a reader does not have to open the account.
+    assert default in SECRET_DOC.read_text()
     description = params["ocp-version"]["description"]
     assert "bundle" in description
     assert "AMI" in description
