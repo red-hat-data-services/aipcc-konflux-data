@@ -1,3 +1,9 @@
+"""Tests of the IBM Cloud pipeline of the SAW golden image scenario.
+
+The AWS pipeline has the same contract and its own module,
+test_saw_golden_image_its_aws_pipeline.py.
+"""
+
 import re
 from pathlib import Path
 
@@ -5,8 +11,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PIPELINE = ROOT / "pipelines" / "saw-golden-image-its.yaml"
-SECRET_DOC = ROOT / "pipelines" / "saw-golden-image-its.md"
+PIPELINE = ROOT / "pipelines" / "saw-golden-image-its-ibmcloud.yaml"
+SECRET_DOC = ROOT / "pipelines" / "saw-golden-image-its-ibmcloud.md"
+AWS_PIPELINE = ROOT / "pipelines" / "saw-golden-image-its-aws.yaml"
+AWS_SECRET_DOC = ROOT / "pipelines" / "saw-golden-image-its-aws.md"
 CONFIG_TASK = ROOT / "tasks" / "config-from-snapshot.yaml"
 VERIFY_TASK = ROOT / "tasks" / "verify-saw-disk-image.yaml"
 
@@ -83,6 +91,19 @@ def _step(name):
         if step["name"] == name:
             return step
     raise AssertionError(f"no step {name}")
+
+
+def test_the_name_of_the_pipeline_names_the_cloud():
+    # Two scenarios now boot the image, one per cloud. A reader must tell the
+    # pipelines apart by their names, and each name must match its file name.
+    assert _pipeline()["metadata"]["name"] == PIPELINE.stem
+    assert AWS_PIPELINE.is_file() and AWS_SECRET_DOC.is_file()
+    aws = yaml.safe_load(AWS_PIPELINE.read_text())
+    assert aws["metadata"]["name"] == AWS_PIPELINE.stem
+    # Each description points at the other pipeline, so a reader who opens the
+    # wrong file moves to the right one.
+    assert AWS_PIPELINE.name in _pipeline()["spec"]["description"]
+    assert PIPELINE.name in aws["spec"]["description"]
 
 
 def test_local_resolver_paths_exist():

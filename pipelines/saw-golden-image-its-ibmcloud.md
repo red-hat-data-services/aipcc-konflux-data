@@ -1,6 +1,6 @@
-# SAW golden image integration test — cluster secrets
+# SAW golden image integration test on IBM Cloud — cluster secrets
 
-`pipelines/saw-golden-image-its.yaml` runs after a Release of
+`pipelines/saw-golden-image-its-ibmcloud.yaml` runs after a Release of
 `saw-disk-image-container`. PMT renders the `IntegrationTestScenario` from the
 product management configs into the Konflux GitOps repository, ArgoCD applies
 it, and the integration service starts the PipelineRun. The scenario object in
@@ -70,7 +70,8 @@ full pull secret from console.redhat.com.
 
 ## Not required for this scenario
 
-- `aws-konflux-tests` — the scenario runs on IBM Cloud only.
+- `aws-konflux-tests` — the scenario runs on IBM Cloud only. The AWS pipeline
+  `pipelines/saw-golden-image-its-aws.yaml` reads it.
 - `rhel-ai-activation-key`, `snyk-secret` — the build pipelines use them.
 
 ## Secrets the run creates

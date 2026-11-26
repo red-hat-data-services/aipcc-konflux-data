@@ -1,0 +1,222 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: saw-golden-image-its-aws
+spec:
+  description: |
+    Integration Test Suite pipeline for the SAW golden image, on AWS.
+
+    It tests the same contract as pipelines/saw-golden-image-its-ibmcloud.yaml
+    and runs on another cloud. Provision an OpenShift Single Node Cluster on
+    AWS with mapt, with the virtualization profile. That profile installs
+    OpenShift Virtualization, so the cluster can run virtual machines, and it
+    makes mapt request nested virtualization, so mapt selects a bare metal
+    instance. A Nitro-based instance exposes no /dev/kvm.
+
+    The pipeline then boots the released disk-image container as a KubeVirt
+    guest. It follows the production path of the OpenShell gateway: CDI imports
+    the OCI artifact into a DataVolume, and KubeVirt starts the image from that
+    DataVolume. Finally, the pipeline checks the image contract inside the guest.
+
+    The disk-image container is a single multi-arch manifest list, but this
+    scenario covers the x86_64 variant only, because the guest boots on an
+    x86_64 metal instance.
+
+    Prerequisites on the AWS account:
+      - an AMI named openshift-local-<ocp-version>-x86_64, published by
+        cloud-importer openshift-local aws in the account that mapt reads
+      - a secret with the access key, the secret key, the region and a bucket
+        for the mapt state
+      - a pull secret for the SNC installation
+
+    The cluster secrets are listed in pipelines/saw-golden-image-its-aws.md.
+
+    Every run costs an AWS bare metal instance and takes about one hour. A
+    metal instance costs much more than a virtual one. Keep the scenario
+    optional.
+  # Cluster creation and the profile installation take most of the run. The
+  # Tekton version of the build cluster rejects spec.timeouts on a Pipeline
+  # ("unknown field"), so each long task carries its own budget instead.
+  params:
+    - name: SNAPSHOT
+      description: |
+        Snapshot of the application (automatically provided by Konflux ITS).
+        Example: {"components":[{"containerImage":"quay.io/red-hat-data-services/saw-disk-image-container@sha256:...","name":"saw-disk-image-container"}]}
+    - name: ocp-version
+      default: "4.19.0"
+      description: |
+        Version of the OpenShift Local SNC bundle. mapt reads the AMI named
+        openshift-local-<value>-x86_64, so the value must match a published
+        AMI. It names a bundle version, not a catalog image.
+    - name: snc-instance-types
+      default: ""
+      description: |
+        Comma-separated list of instance types for the compute resource, for
+        example m5.metal. An empty value makes mapt select a bare metal type
+        that matches the architecture. Set it to hold the price of the run.
+    - name: snc-disk-size
+      default: "1000"
+      description: |
+        Root volume size in GB of the SNC instance. The volume must hold the
+        SNC installation and the guest disk, so the value is larger than the
+        image itself. mapt defaults to 1000 GB.
+    - name: aws-credentials-secret
+      default: "aws-konflux-tests"
+      description: |
+        Secret with the AWS credentials, keys access-key, secret-key, region
+        and bucket. The tenant creates it from vault with an ExternalSecret of
+        the same name.
+    - name: ocp-snc-credentials-secret
+      default: "ocp-snc-credentials"
+      description: |
+        Secret with the Red Hat pull secret for the SNC installation, key
+        pull-secret. mapt treats the secret as optional.
+    - name: enforce
+      default: "true"
+      description: |
+        "true" makes a failed check fail the scenario. "false" reports a warning.
+    - name: debug
+      default: "false"
+      description: Enable verbose logs.
+  results:
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
+    - name: TEST_OUTPUT
+      value: $(tasks.verify-saw-disk-image.results.TEST_OUTPUT)
+
+  tasks:
+    - name: create-configuration
+      params:
+        # The guest runs on an x86_64 metal instance, so the scenario covers
+        # x86_64 variants and no other.
+        - name: architecture
+          value: x86_64
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/config-from-snapshot.yaml
+
+    - name: create-snc-cluster
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        - name: arch
+          value: "x86_64"
+        # virtualization installs OpenShift Virtualization and CNV, and it
+        # makes mapt request nested virtualization.
+        - name: profile
+          value: "$(tasks.create-configuration.results.snc-profile)"
+        # mapt reads nested-virt as a request on its own, beside the profile.
+        # Set it here so a change to the profile list cannot turn the request
+        # into a virtual instance, which exposes no /dev/kvm.
+        - name: nested-virt
+          value: "true"
+        # A metal instance takes no spot capacity, so no spot request is made.
+        - name: spot
+          value: "false"
+        - name: compute-sizes
+          value: "$(params.snc-instance-types)"
+        - name: disk-size
+          value: "$(params.snc-disk-size)"
+        - name: version
+          value: "$(params.ocp-version)"
+        - name: secret-aws-credentials
+          value: "$(params.aws-credentials-secret)"
+        - name: secret-ocp-snc-credentials
+          value: "$(params.ocp-snc-credentials-secret)"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: debug
+          value: "$(params.debug)"
+        # A tag holds the run name, not the console URL. A URL carries
+        # characters that a provider can reject, and the run name identifies
+        # the run on every provider.
+        - name: tags
+          value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=saw-golden-image-its,pipeline-run-url=$(context.pipelineRun.name)"
+      runAfter:
+        - create-configuration
+      # Create takes about 45 minutes, plus the checks that follow the install.
+      timeout: 2h0m0s
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/redhat-developer/mapt
+          # The bare metal selection that nested virtualization needs lives on
+          # main. Point the revision to a release tag when mapt publishes one
+          # that holds it. A change on main between the create and the destroy
+          # can give the destroy a newer task than the create used.
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tkn/infra-aws-ocp-snc.yaml
+
+    - name: verify-saw-disk-image
+      # Longer than the sum of the waits inside the task (3 x 30 min waits plus
+      # the 5 min virtualization check), so a slow import or a slow boot fails
+      # with the task message, not a bare timeout.
+      timeout: 2h0m0s
+      params:
+        - name: cluster-access-secret-name
+          value: "$(tasks.create-snc-cluster.results.cluster-access-secret)"
+        - name: container-image
+          value: "$(tasks.create-configuration.results.container-image)"
+        - name: enforce
+          value: "$(params.enforce)"
+        - name: debug
+          value: "$(params.debug)"
+      runAfter:
+        - create-snc-cluster
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/verify-saw-disk-image.yaml
+
+  finally:
+    # Cleanup must run on success and on failure alike, else the instance stays
+    # on the account. The destroy operation reads the state from the bucket of
+    # the credentials secret.
+    - name: delete-snc-cluster
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: force-destroy
+          value: "true"
+        - name: secret-aws-credentials
+          value: "$(params.aws-credentials-secret)"
+        - name: secret-ocp-snc-credentials
+          value: "$(params.ocp-snc-credentials-secret)"
+      # Destroy reads the state from the bucket and can retry. Keep the budget
+      # of the create task.
+      timeout: 2h0m0s
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/redhat-developer/mapt
+          # Same revision as the create, so the destroy reads the task that
+          # wrote the state.
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tkn/infra-aws-ocp-snc.yaml

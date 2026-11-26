@@ -1,13 +1,14 @@
 kind: Pipeline
 apiVersion: tekton.dev/v1
 metadata:
-  name: saw-golden-image-its
+  name: saw-golden-image-its-ibmcloud
 spec:
   description: |
-    Integration Test Suite pipeline for the SAW golden image.
+    Integration Test Suite pipeline for the SAW golden image, on IBM Cloud.
 
     Provisions an OpenShift Single Node Cluster on IBM Cloud with mapt, with the
-    virtualization profile. That profile installs OpenShift Virtualization, so
+    virtualization profile. pipelines/saw-golden-image-its-aws.yaml holds the
+    same test on AWS. That profile installs OpenShift Virtualization, so
     the cluster can run virtual machines.
 
     The pipeline then boots the released disk-image container as a KubeVirt
@@ -28,7 +29,7 @@ spec:
       - a secret with the IBM Cloud API key, the region, the Object Storage keys
         and a bucket for the mapt state
 
-    The cluster secrets are listed in pipelines/saw-golden-image-its.md.
+    The cluster secrets are listed in pipelines/saw-golden-image-its-ibmcloud.md.
 
     Every run costs an IBM Cloud bare metal server and takes about one hour.
     A bare metal server costs more than a virtual server instance. Keep the
