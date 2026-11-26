@@ -100,9 +100,9 @@ kubectl get secret aws-konflux-tests ocp-snc-credentials \
 | AMI | The mapt account publishes the SNC AMI with cloud-importer `openshift-local aws`. mapt reads the AMI `openshift-local-<ocp-version>-x86_64`, so `ocp-version` names a bundle version, for example `4.19.0`. It names no catalog image. A missing AMI stops the create with `no AMI found`. |
 | Architecture | x86_64 only. The AWS SNC task takes `arch`, and the pipeline sets `x86_64`, so the scenario covers the x86_64 variant of the image. |
 | Region | The region of the `aws-konflux-tests` secret. It must offer a bare metal type that matches the architecture. |
-| Compute | The `virtualization` profile requests nested virtualization, so mapt selects a bare metal type. With that request mapt filters on the architecture and on the bare metal flag only, so the task defaults `cpus` and `memory` do not narrow the choice. Set `snc-instance-types` to pin the type and the price. |
+| Compute | The `virtualization` profile requests nested virtualization, so mapt selects a bare metal type. With that request mapt filters on the architecture and on the bare metal flag only, so the task defaults `cpus` and `memory` do not narrow the choice. Set `snc-instance-types` to pin the type and the price. mapt takes that list as it is, so name a bare metal type. A virtual type exposes no `/dev/kvm`, and the verify task then stops. |
 | Spot | The pipeline passes `spot: false`. A metal instance takes no spot capacity, and the task default is `true`, so the value must be explicit. |
-| mapt task | `tkn/infra-aws-ocp-snc.yaml` on the `main` branch. The create and the destroy read the same revision, so a change on main between them can give the destroy a newer task than the create used. |
+| mapt task | `tkn/infra-aws-ocp-snc.yaml` at the tag `v0.14.7`. That tag holds the `arch` param, the `nested-virt` flag and the profile list. The create and the destroy read the same revision, so a change on `main` cannot give the destroy a task that no longer matches the state the create wrote. |
 | Tags | The `pipeline-run-url` tag holds the PipelineRun name, as on IBM Cloud. The run name identifies the run on the provider console, and it carries no character that the provider can reject. |
 
 ## Limits

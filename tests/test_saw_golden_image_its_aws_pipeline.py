@@ -21,7 +21,9 @@ LOCAL_REPO = "https://github.com/red-hat-data-services/aipcc-konflux-data"
 MAPT_REPO = "https://github.com/redhat-developer/mapt"
 
 MAPT_SNC_PATH = "tkn/infra-aws-ocp-snc.yaml"
-MAPT_SNC_REVISION = "main"
+# A released tag holds the AWS task with the arch param, the nested
+# virtualization flag and the profile list, so no run reads the main branch.
+MAPT_SNC_REVISION = "v0.14.7"
 
 # Params of the AWS task. Tekton rejects a param the task does not declare, so
 # the pipeline must stay inside this set. An IBM Cloud param, for example zone
@@ -184,11 +186,15 @@ def test_the_create_requests_nested_virtualization():
 
 
 def test_the_instance_choice_can_be_pinned():
-    # With the nested virtualization request mapt filters on the bare metal flag
-    # and the architecture only, so cpus and memory do not narrow the choice.
-    # The instance list is the pin, and the description must say so.
+    # The nested virtualization request filters on the bare metal flag and the
+    # architecture only, so cpus and memory do not narrow the choice. The
+    # instance list is the pin, and mapt takes it as it is, so the description
+    # must ask for a bare metal type and name the price.
     params = {p["name"]: p for p in _pipeline()["spec"]["params"]}
-    assert "price" in params["snc-instance-types"]["description"]
+    description = params["snc-instance-types"]["description"]
+    assert "price" in description
+    assert "bare metal" in description
+    assert "/dev/kvm" in description
     create = _params(_tasks()["create-snc-cluster"])
     assert create["compute-sizes"] == "$(params.snc-instance-types)"
     assert "cpus" not in create and "memory" not in create

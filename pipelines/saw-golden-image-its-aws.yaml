@@ -51,9 +51,11 @@ spec:
     - name: snc-instance-types
       default: ""
       description: |
-        Comma-separated list of instance types for the compute resource, for
-        example m5.metal. An empty value makes mapt select a bare metal type
-        that matches the architecture. Set it to hold the price of the run.
+        Comma-separated list of bare metal instance types, for example
+        m5.metal. An empty value makes mapt select a bare metal type that
+        matches the architecture. Set it to a bare metal type to hold the
+        price of the run. mapt takes the list as it is, so a virtual type
+        exposes no /dev/kvm and the verify task stops.
     - name: snc-disk-size
       default: "1000"
       description: |
@@ -155,12 +157,11 @@ spec:
         params:
           - name: url
             value: https://github.com/redhat-developer/mapt
-          # The bare metal selection that nested virtualization needs lives on
-          # main. Point the revision to a release tag when mapt publishes one
-          # that holds it. A change on main between the create and the destroy
-          # can give the destroy a newer task than the create used.
+          # A released tag holds the AWS task, the arch param, the nested
+          # virtualization flag and the profile list, so the run does not move
+          # with the main branch.
           - name: revision
-            value: main
+            value: v0.14.7
           - name: pathInRepo
             value: tkn/infra-aws-ocp-snc.yaml
 
@@ -217,6 +218,6 @@ spec:
           # Same revision as the create, so the destroy reads the task that
           # wrote the state.
           - name: revision
-            value: main
+            value: v0.14.7
           - name: pathInRepo
             value: tkn/infra-aws-ocp-snc.yaml
