@@ -13,17 +13,18 @@ supplies the secrets. This repository never holds a secret value.
 
 | Secret | Read by | Keys | Required | `ai-incubator-tenant` on 2026-11-26 |
 | --- | --- | --- | --- | --- |
-| `aws-konflux-tests` | `create-snc-cluster`, `delete-snc-cluster` | `access-key`, `secret-key`, `region`, `bucket` | yes | absent, no ExternalSecret in this tenant |
+| `aws-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `access-key`, `secret-key`, `region`, `bucket` | yes | vault backed, merge request `konflux-release-data!25563` open |
 | `ocp-snc-credentials` | `create-snc-cluster` | `pull-secret` | yes | vault backed, merge request `konflux-release-data!25563` open |
 | `components-namespace-pull` | `verify-saw-disk-image` | `.dockerconfigjson` | yes | present |
 
-`ai-tenant` and `rhel-ai-tenant` map `aws-konflux-tests` from the vault record
-`apps/ai-aipcc-cicd/aws-konflux-tests`. The record holds the four keys. The
-tenant needs one ExternalSecret of the same pattern to read the record:
+The vault record of this tenant holds the four keys, and it names the secret in
+its `konflux_secret_name` field. `ai-tenant` and `rhel-ai-tenant` read the older
+record `apps/ai-aipcc-cicd/aws-konflux-tests`; this scenario reads the record of
+its own account:
 
 | Secret | Vault record |
 | --- | --- |
-| `aws-konflux-tests` | `apps/ai-aipcc-cicd/aws-konflux-tests` |
+| `aws-ai-incubator` | `apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/aws` |
 | `ocp-snc-credentials` | `apps/ai-aipcc-cicd/service/release-pipeline/ai-incubator/ocp/pullsecret` |
 
 The record maps its secret keys to vault properties. A change to a vault value
@@ -41,11 +42,11 @@ the pod starts, but the create step then exits with
 
 ## Create the secrets
 
-`aws-konflux-tests` needs no command in a tenant that maps the vault record.
+`aws-ai-incubator` needs no command in a tenant that maps the vault record.
 The manual form below applies only to a cluster with no ExternalSecret:
 
 ```bash
-kubectl create secret generic aws-konflux-tests -n ai-incubator-tenant \
+kubectl create secret generic aws-ai-incubator -n ai-incubator-tenant \
   --from-literal=access-key=<access key id> \
   --from-literal=secret-key=<secret access key> \
   --from-literal=region=<region> \
@@ -89,7 +90,7 @@ Secrets, because both tasks make a secret. It needs no secret of its own.
 ## Check the secrets
 
 ```bash
-kubectl get secret aws-konflux-tests ocp-snc-credentials \
+kubectl get secret aws-ai-incubator ocp-snc-credentials \
   components-namespace-pull -n ai-incubator-tenant
 ```
 
@@ -99,7 +100,7 @@ kubectl get secret aws-konflux-tests ocp-snc-credentials \
 | --- | --- |
 | AMI | The mapt account publishes the SNC AMI with cloud-importer `openshift-local aws`. mapt reads the AMI `openshift-local-<ocp-version>-x86_64`, so `ocp-version` names a bundle version, for example `4.19.0`. It names no catalog image. A missing AMI stops the create with `no AMI found`. |
 | Architecture | x86_64 only. The AWS SNC task takes `arch`, and the pipeline sets `x86_64`, so the scenario covers the x86_64 variant of the image. |
-| Region | The region of the `aws-konflux-tests` secret. It must offer a bare metal type that matches the architecture. |
+| Region | The region of the `aws-ai-incubator` secret. It must offer a bare metal type that matches the architecture. |
 | Compute | The `virtualization` profile requests nested virtualization, so mapt selects a bare metal type. With that request mapt filters on the architecture and on the bare metal flag only, so the task defaults `cpus` and `memory` do not narrow the choice. Set `snc-instance-types` to pin the type and the price. mapt takes that list as it is, so name a bare metal type. A virtual type exposes no `/dev/kvm`, and the verify task then stops. |
 | Spot | The pipeline passes `spot: false`. A metal instance takes no spot capacity, and the task default is `true`, so the value must be explicit. |
 | mapt task | `tkn/infra-aws-ocp-snc.yaml` at the tag `v0.14.7`. That tag holds the `arch` param, the `nested-virt` flag and the profile list. The create and the destroy read the same revision, so a change on `main` cannot give the destroy a task that no longer matches the state the create wrote. |

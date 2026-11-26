@@ -70,7 +70,7 @@ full pull secret from console.redhat.com.
 
 ## Not required for this scenario
 
-- `aws-konflux-tests` — the scenario runs on IBM Cloud only. The AWS pipeline
+- `aws-ai-incubator` — the scenario runs on IBM Cloud only. The AWS pipeline
   `pipelines/saw-golden-image-its-aws.yaml` reads it.
 - `rhel-ai-activation-key`, `snyk-secret` — the build pipelines use them.
 

@@ -63,11 +63,11 @@ spec:
         SNC installation and the guest disk, so the value is larger than the
         image itself. mapt defaults to 1000 GB.
     - name: aws-credentials-secret
-      default: "aws-konflux-tests"
+      default: "aws-ai-incubator"
       description: |
         Secret with the AWS credentials, keys access-key, secret-key, region
-        and bucket. The tenant creates it from vault with an ExternalSecret of
-        the same name.
+        and bucket. An ExternalSecret of the same name reads the vault record
+        of this tenant, which states the name in its konflux_secret_name.
     - name: ocp-snc-credentials-secret
       default: "ocp-snc-credentials"
       description: |

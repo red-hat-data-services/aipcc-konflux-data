@@ -303,6 +303,17 @@ def test_the_secret_doc_names_the_secrets_the_pipeline_reads():
         assert name in doc, f"{name} is not in {SECRET_DOC.name}"
 
 
+def test_the_secret_doc_names_the_vault_records():
+    # The record path is the delivery contract. A typo in it syncs nothing,
+    # and the create step then fails on a missing key.
+    doc = SECRET_DOC.read_text()
+    for path in (
+        "ai-aipcc-cicd/service/release-pipeline/ai-incubator/cloud-providers/aws",
+        "ai-aipcc-cicd/service/release-pipeline/ai-incubator/ocp/pullsecret",
+    ):
+        assert path in doc, path
+
+
 def test_the_secret_doc_lists_the_keys_of_each_secret():
     doc = SECRET_DOC.read_text()
     for key in ("access-key", "secret-key", "region", "bucket", "pull-secret",
