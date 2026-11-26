@@ -445,14 +445,18 @@ spec:
         rcheck podman "podman --version"
         rcheck python3 "python3 -c 'import sys; print(sys.version.split()[0])'"
         rcheck pip "python3 -m pip --version"
-        rcheck bootc-deployment "bootc status --json | jq -r .status.booted.image.image.image | grep -q ."
-        rcheck root-size "test \"\$(df -BG --output=size / | tail -1 | tr -dc 0-9)\" -ge 15"
+        # bootc refuses to report without root, and the guest user is not root.
+        rcheck bootc-deployment "sudo -n bootc status --json | jq -r .status.booted.image.image.image | grep -q ."
+        # The booted root is a composefs overlay of a few MiB, so df / reports
+        # that overlay. The filesystem that holds the deployment is /sysroot,
+        # and the image sizing covers it.
+        rcheck root-size "size=\$(df -BG --output=size /sysroot 2>/dev/null | tail -1 | tr -dc 0-9); test \"\${size:-0}\" -ge 15 && echo \"/sysroot \${size}G\""
         rcheck no-docker "! command -v docker"
 
         log "CHECK-END|all|PASS|the check list finished"
 
         echo "=== Guest facts ==="
-        ${GUEST_SSH} 'uname -r; bootc status --json | jq -r .status.booted.image.image.image; rpm -q --qf "%{NAME} %{VERSION}-%{RELEASE}\n" openshell-cli openshell-gateway openshell-sandbox openshell-supervisor; df -h / | tail -1' || true
+        ${GUEST_SSH} 'uname -r; sudo -n bootc status --json | jq -r .status.booted.image.image.image; rpm -q --qf "%{NAME} %{VERSION}-%{RELEASE}\n" openshell-cli openshell-gateway openshell-sandbox openshell-supervisor; df -h /sysroot | tail -1' || true
 
     - name: report
       image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
