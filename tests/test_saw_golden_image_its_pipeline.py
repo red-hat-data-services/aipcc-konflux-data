@@ -300,6 +300,22 @@ def test_the_guest_starts_from_the_artifact():
     assert "contentType: kubevirt" in script
 
 
+def test_the_import_reads_the_registry_credential_of_the_image():
+    # CDI reads a registry source with an opaque secret that holds the user and
+    # the password. A dockerconfigjson secret stopped the import pod on the run
+    # of 2026-11-26 with "couldn't find key accessKeyId in Secret", and the
+    # import waited for ever.
+    script = _step("deploy")["script"]
+    assert "--from-literal=accessKeyId=" in script
+    assert "--from-literal=secretKey=" in script
+    assert "kubernetes.io/dockerconfigjson" not in script
+    # The entry comes from the pull secret, for the host of the image.
+    assert "${CONTAINER_IMAGE#docker://}" in script
+    assert ".auths[$reg]" in script
+    # A public image needs no credential, so the reference is optional.
+    assert "${secret_ref}" in script
+
+
 def test_the_pull_secret_comes_from_the_pod_environment():
     # The deploy step switches KUBECONFIG to the SNC cluster. A kubectl read of
     # the tenant secret would then reach the wrong cluster.

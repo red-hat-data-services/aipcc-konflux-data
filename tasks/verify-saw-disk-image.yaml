@@ -166,10 +166,32 @@ spec:
           echo "ERROR: the pull secret holds no registry credentials"
           exit 1
         fi
-        kubectl create secret generic saw-pull-secret -n "${NAMESPACE}" \
-          --type=kubernetes.io/dockerconfigjson \
-          --from-file=.dockerconfigjson=/workspace/pull-secret.json \
-          --dry-run=client -o yaml | kubectl apply -f -
+        # CDI reads a registry source with an opaque secret that holds the user
+        # and the password: it looks for the keys accessKeyId and secretKey. A
+        # dockerconfigjson secret leaves the import pod in
+        # "couldn't find key accessKeyId in Secret", and the import waits for
+        # ever. Derive the two keys from the entry of the image registry. Keep
+        # the JSON as it is, because skopeo reads it with --authfile.
+        registry="${CONTAINER_IMAGE#docker://}"
+        registry="${registry%%/*}"
+        auth="$(jq -r --arg reg "${registry}" '
+          (.auths[$reg] // .auths["https://" + $reg] // {}) as $e
+          | if $e.auth then ($e.auth | @base64d)
+            elif $e.username then "\($e.username):\($e.password)"
+            else "" end' /workspace/pull-secret.json)"
+        if [ -n "${auth}" ]; then
+          kubectl create secret generic saw-pull-secret -n "${NAMESPACE}" \
+            --from-literal=accessKeyId="${auth%%:*}" \
+            --from-literal=secretKey="${auth#*:}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          secret_ref="secretRef: saw-pull-secret"
+          echo "the import reads the credential of ${registry}"
+        else
+          # A public image needs no credential. Name the registry that held no
+          # entry, so a private image that stalls the import shows why.
+          secret_ref=""
+          echo "the pull secret holds no entry for ${registry}, the import pulls anonymously"
+        fi
 
         echo "=== Creating the guest SSH key ==="
         rm -f /workspace/id_ed25519 /workspace/id_ed25519.pub
@@ -201,7 +223,7 @@ spec:
                 source:
                   registry:
                     url: docker://${CONTAINER_IMAGE}
-                    secretRef: saw-pull-secret
+                    ${secret_ref}
           template:
             metadata:
               labels:
