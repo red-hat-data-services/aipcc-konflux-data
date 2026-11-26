@@ -264,6 +264,15 @@ spec:
             variant="tpu-ubi9"
             ret_value=1
             ;;
+          *-disk-image*)
+            # Bootable disk artefact (the SAW golden image). The virtualization
+            # profile installs OpenShift Virtualization, so the disk boots as a
+            # KubeVirt guest. The profile also requests nested virtualization,
+            # so mapt selects an IBM Cloud bare metal server.
+            variant="disk-image"
+            snc_profile="virtualization"
+            cloud_provider="ibm"
+            ;;
           *-cpu*)
             variant="cpu-ubi9"
 
@@ -328,6 +337,11 @@ spec:
         fi
 
         accelerator="${variant%%-*}"
+        # A disk image carries no accelerator. The prefix of the variant name
+        # must not report one.
+        if [[ "${variant}" == "disk-image" ]]; then
+          accelerator=""
+        fi
 
         # Derive product name for tags
         case "${COMPONENT}" in

@@ -3,3 +3,7 @@
 # But do track repo-level skills
 !.claude/skills/
 !.claude/skills/**
+
+# Python bytecode and pytest state (never track)
+__pycache__/
+.pytest_cache/

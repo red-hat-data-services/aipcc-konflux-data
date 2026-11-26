@@ -1,0 +1,240 @@
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: saw-golden-image-its-ibmcloud
+spec:
+  description: |
+    Integration Test Suite pipeline for the SAW golden image, on IBM Cloud.
+
+    Provisions an OpenShift Single Node Cluster on IBM Cloud with mapt, with the
+    virtualization profile. pipelines/saw-golden-image-its-aws.yaml holds the
+    same test on AWS. That profile installs OpenShift Virtualization, so
+    the cluster can run virtual machines.
+
+    The pipeline then boots the released disk-image container as a KubeVirt
+    guest. It follows the production path of the OpenShell gateway: CDI imports
+    the OCI artifact into a DataVolume, and KubeVirt starts the image from that
+    DataVolume. Finally, the pipeline checks the image contract inside the guest.
+
+    The disk-image container is a single multi-arch manifest list, but the
+    mapt IBM Cloud SNC task runs x86_64 only. The scenario therefore covers the
+    x86_64 variant of the image.
+
+    Prerequisites on the IBM Cloud account:
+      - a private catalog image built from the OpenShift Local bundle, named
+        openshift-local-<version>-x86-64, with dots of the version replaced by
+        dashes (cloud-importer openshift-local ibmcloud)
+      - a VPC image for that catalog offering version, because a bare metal
+        server takes an image ID and no catalog offering
+      - a secret with the IBM Cloud API key, the region, the Object Storage keys
+        and a bucket for the mapt state
+
+    The cluster secrets are listed in pipelines/saw-golden-image-its-ibmcloud.md.
+
+    Every run costs an IBM Cloud bare metal server and takes about one hour.
+    A bare metal server costs more than a virtual server instance. Keep the
+    scenario optional.
+
+    IBM Cloud supplies the KVM device on bare metal servers only. The
+    virtualization profile makes mapt select a bare metal profile, so the
+    cluster exposes devices.kubevirt.io/kvm and KubeVirt can start the guest.
+    mapt checks the bare metal capacity of the zone before the create. The
+    verify task stops when the cluster exposes no devices.kubevirt.io/kvm
+    resource, so the log names the cause and the run does not wait for a guest
+    that cannot start.
+  # Cluster creation and the profile installation take most of the run. The
+  # Tekton version of the build cluster rejects spec.timeouts on a Pipeline
+  # ("unknown field"), so each long task carries its own budget instead.
+  params:
+    - name: SNAPSHOT
+      description: |
+        Snapshot of the application (automatically provided by Konflux ITS).
+        Example: {"components":[{"containerImage":"quay.io/red-hat-data-services/saw-disk-image-container@sha256:...","name":"saw-disk-image-container"}]}
+    - name: ocp-version
+      default: "5.0.0"
+      description: |
+        Version of the OpenShift Local catalog image on IBM Cloud, for example
+        5.0.0. The catalog name becomes openshift-local-5-0-0-x86-64. An empty
+        value makes mapt select the latest version of the private catalog.
+    - name: snc-cpus
+      default: "16"
+      description: |
+        vCPU floor for the compute resource. The virtualization profile sets no
+        minimum, so the value stands. mapt selects the smallest bare metal
+        profile that holds this value and snc-memory, so a lower value can
+        lower the cost of the run.
+    - name: snc-memory
+      default: "64"
+      description: |
+        Memory floor in GiB for the compute resource. mapt reads it together
+        with snc-cpus when it selects the bare metal profile.
+    - name: snc-disk-size
+      default: "200"
+      description: |
+        Disk size in GB for the SNC instance. mapt ignores it for a bare metal
+        server, which boots from its local disks.
+    - name: ibmcloud-zone
+      default: ""
+      description: |
+        IBM Cloud availability zone of the VPC and of the compute resource, for
+        example us-south-2. The credentials secret works in every zone of its
+        region: this value selects where the stack lands. It must belong to the
+        region of the credentials secret, because mapt builds the VPC client
+        from that region. Bare metal capacity is per zone, so another zone can
+        succeed where this one stops.
+    - name: ibmcloud-credentials-secret
+      default: "ibmcloud-ai-incubator"
+      description: |
+        Secret with the IBM Cloud credentials, keys api-key, region,
+        cos-access-key, cos-secret-key and bucket. The tenant creates it from
+        vault with an ExternalSecret of the same name.
+    - name: ocp-snc-credentials-secret
+      default: "ocp-snc-credentials"
+      description: |
+        Secret with the Red Hat pull secret for the SNC installation, key
+        pull-secret. mapt treats the secret as optional.
+    - name: enforce
+      default: "true"
+      description: |
+        "true" makes a failed check fail the scenario. "false" reports a warning.
+    - name: debug
+      default: "false"
+      description: Enable verbose logs.
+  results:
+    - name: container-image
+      value: $(tasks.create-configuration.results.container-image)
+    - name: TEST_OUTPUT
+      value: $(tasks.verify-saw-disk-image.results.TEST_OUTPUT)
+
+  tasks:
+    - name: create-configuration
+      params:
+        # The mapt IBM Cloud SNC task runs x86_64 only, so the scenario covers
+        # x86_64 variants and no other.
+        - name: architecture
+          value: x86_64
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/config-from-snapshot.yaml
+
+    - name: create-snc-cluster
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "create"
+        # virtualization installs OpenShift Virtualization and CNV.
+        - name: profile
+          value: "$(tasks.create-configuration.results.snc-profile)"
+        - name: cpus
+          value: "$(params.snc-cpus)"
+        - name: memory
+          value: "$(params.snc-memory)"
+        - name: disk-size
+          value: "$(params.snc-disk-size)"
+        - name: version
+          value: "$(params.ocp-version)"
+        - name: compute-sizes
+          value: "$(tasks.create-configuration.results.snc-compute-sizes)"
+        - name: zone
+          value: "$(params.ibmcloud-zone)"
+        - name: secret-ibmcloud-credentials
+          value: "$(params.ibmcloud-credentials-secret)"
+        - name: secret-ocp-snc-credentials
+          value: "$(params.ocp-snc-credentials-secret)"
+        - name: ownerKind
+          value: "PipelineRun"
+        - name: ownerName
+          value: "$(context.pipelineRun.name)"
+        - name: ownerUid
+          value: "$(context.pipelineRun.uid)"
+        - name: debug
+          value: "$(params.debug)"
+        # IBM Cloud VPC tags accept only ^[A-Za-z0-9:_ .-]+$, so the tag holds
+        # the run name and not the console URL. The run name identifies the run.
+        - name: tags
+          value: "$(tasks.create-configuration.results.base-tags),mapt-id=$(context.pipelineRun.name),mapt-type=ocp-snc,purpose=saw-golden-image-its,pipeline-run-url=$(context.pipelineRun.name)"
+      runAfter:
+        - create-configuration
+      # Create takes about 45 minutes, plus the checks that follow the install.
+      timeout: 2h0m0s
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/redhat-developer/mapt
+          # The IBM Cloud SNC task and the bare metal selection that nested
+          # virtualization needs live on main. mapt publishes no release tag
+          # with them yet, so the pipeline reads main. Point the revision to a
+          # release tag when mapt publishes one that holds both. A change on
+          # main between the create and the destroy can give the destroy a
+          # newer task than the create used.
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tkn/infra-ibmcloud-ocp-snc.yaml
+
+    - name: verify-saw-disk-image
+      # Longer than the sum of the waits inside the task (3 x 30 min waits plus
+      # the 5 min virtualization check), so a slow import or a slow boot fails
+      # with the task message, not a bare timeout.
+      timeout: 2h0m0s
+      params:
+        - name: cluster-access-secret-name
+          value: "$(tasks.create-snc-cluster.results.cluster-access-secret)"
+        - name: container-image
+          value: "$(tasks.create-configuration.results.container-image)"
+        - name: enforce
+          value: "$(params.enforce)"
+        - name: debug
+          value: "$(params.debug)"
+      runAfter:
+        - create-snc-cluster
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/red-hat-data-services/aipcc-konflux-data
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tasks/verify-saw-disk-image.yaml
+
+  finally:
+    # Cleanup must run on success and on failure alike, else the compute
+    # resource stays on the account. The destroy operation reads the state from
+    # the Object Storage bucket of the credentials secret, so it needs no zone.
+    - name: delete-snc-cluster
+      params:
+        - name: id
+          value: "$(context.pipelineRun.name)"
+        - name: operation
+          value: "destroy"
+        - name: force-destroy
+          value: "true"
+        - name: secret-ibmcloud-credentials
+          value: "$(params.ibmcloud-credentials-secret)"
+        - name: secret-ocp-snc-credentials
+          value: "$(params.ocp-snc-credentials-secret)"
+      # Destroy reads the state from the bucket and can retry. Keep the budget
+      # of the old pipeline-level task timeout.
+      timeout: 2h0m0s
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/redhat-developer/mapt
+          # Same revision as the create, so the destroy reads the task that
+          # wrote the state.
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: tkn/infra-ibmcloud-ocp-snc.yaml
