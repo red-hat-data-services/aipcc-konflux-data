@@ -14,7 +14,7 @@ supplies the secrets. This repository never holds a secret value.
 | Secret | Read by | Keys | Required | `ai-incubator-tenant` on 2026-11-26 |
 | --- | --- | --- | --- | --- |
 | `aws-konflux-tests` | `create-snc-cluster`, `delete-snc-cluster` | `access-key`, `secret-key`, `region`, `bucket` | yes | absent, no ExternalSecret in this tenant |
-| `ocp-snc-credentials` | `create-snc-cluster` | `pull-secret` | yes | vault backed, merge request `konflux-release-data!25563` pending |
+| `ocp-snc-credentials` | `create-snc-cluster` | `pull-secret` | yes | vault backed, merge request `konflux-release-data!25563` open |
 | `components-namespace-pull` | `verify-saw-disk-image` | `.dockerconfigjson` | yes | present |
 
 `ai-tenant` and `rhel-ai-tenant` map `aws-konflux-tests` from the vault record

@@ -13,8 +13,8 @@ supplies the secrets. This repository never holds a secret value.
 
 | Secret | Read by | Keys | Required | `ai-incubator-tenant` on 2026-11-25 |
 | --- | --- | --- | --- | --- |
-| `ibmcloud-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | vault backed, merge request `konflux-release-data!25561` pending |
-| `ocp-snc-credentials` | `create-snc-cluster` | `pull-secret` | yes | vault backed, merge request `konflux-release-data!25563` pending |
+| `ibmcloud-ai-incubator` | `create-snc-cluster`, `delete-snc-cluster` | `api-key`, `region`, `cos-access-key`, `cos-secret-key`, `bucket` | yes | vault backed, ExternalSecret merged as `konflux-release-data!25561` |
+| `ocp-snc-credentials` | `create-snc-cluster` | `pull-secret` | yes | vault backed, merge request `konflux-release-data!25563` open |
 | `components-namespace-pull` | `verify-saw-disk-image` | `.dockerconfigjson` | yes | present |
 
 `konflux-release-data` holds one ExternalSecret per secret:
