@@ -81,7 +81,7 @@ full pull secret from console.redhat.com.
 | Secret | Owner | Note |
 | --- | --- | --- |
 | `mapt-aws-ocp-snc-<random>` | `create-snc-cluster` | The name is the task result `cluster-access-secret`. Holds `host`, `username`, `id_rsa`, `kubeadmin_pass`, `kubeconfig`. |
-| `saw-pull-secret` | `verify-saw-disk-image` | Built from the `PULL_SECRET_JSON` environment variable. CDI reads an opaque secret with the keys `accessKeyId` and `secretKey`, so the task takes the user and the password of the image registry from the pull secret. A dockerconfigjson secret fails the import with `couldn't find key accessKeyId in Secret`. A public image takes no secret. |
+| `saw-pull-secret` | `verify-saw-disk-image` | Built from the `PULL_SECRET_JSON` environment variable. CDI reads an opaque secret with the keys `accessKeyId` and `secretKey`, so the task takes the user and the password of the image registry from the pull secret. A dockerconfigjson secret fails the import with `couldn't find key accessKeyId in Secret`. The lookup takes the longest `auths` key that prefixes the image reference, so a repository-scoped entry, as in a Konflux namespace pull secret, also works. A public image takes no secret. |
 
 The service account `its-pipeline-saw-disk-image-container` belongs to the
 component. The integration service creates it. It must allow `create` on

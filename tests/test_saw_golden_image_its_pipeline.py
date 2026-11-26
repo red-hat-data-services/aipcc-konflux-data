@@ -319,6 +319,18 @@ def test_the_import_reads_the_registry_credential_of_the_image():
     assert "${secret_ref}" in script
 
 
+def test_the_guest_checks_use_root_and_the_deployment_filesystem():
+    # The guest run of 2026-11-26 passed 14 checks of 16, and both failures came
+    # from the checks: bootc status refuses to report for a user that is not
+    # root, and df / reports the composefs overlay of a few MiB, not the
+    # filesystem that holds the deployment.
+    script = _step("verify")["script"]
+    assert "sudo -n bootc status --json" in script
+    assert "df -BG --output=size /sysroot" in script
+    assert "df -h /sysroot" in script
+    assert "df -BG --output=size / |" not in script
+
+
 def test_the_pull_secret_comes_from_the_pod_environment():
     # The deploy step switches KUBECONFIG to the SNC cluster. A kubectl read of
     # the tenant secret would then reach the wrong cluster.

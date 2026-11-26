@@ -14,7 +14,7 @@ spec:
         -> KubeVirt VirtualMachine
         -> SSH into the guest and check the image contract
 
-    The SNC cluster comes from the mapt infra-ibmcloud-ocp-snc task with the
+    The SNC cluster comes from a mapt `infra-<cloud>-ocp-snc` task with the
     virtualization profile, so OpenShift Virtualization and CDI are installed.
     The task stops when the cluster node reports no hardware virtualization,
     because KubeVirt cannot start a guest on such a node.
@@ -32,7 +32,9 @@ spec:
     - name: pull-secret-name
       description: |
         Secret in the PipelineRun namespace with the registry credentials for the
-        disk-image container. CDI uses the same credentials on the SNC cluster.
+        disk-image container. The task takes the user and the password of the
+        image registry from it, because CDI reads an opaque secret. It also copies
+        the file, because skopeo reads the label with --authfile.
       default: "components-namespace-pull"
     - name: guest-cpus
       description: vCPUs for the guest.
