@@ -172,12 +172,26 @@ spec:
         # "couldn't find key accessKeyId in Secret", and the import waits for
         # ever. Derive the two keys from the entry of the image registry. Keep
         # the JSON as it is, because skopeo reads it with --authfile.
-        registry="${CONTAINER_IMAGE#docker://}"
-        registry="${registry%%/*}"
-        auth="$(jq -r --arg reg "${registry}" '
-          (.auths[$reg] // .auths["https://" + $reg] // {}) as $e
-          | if $e.auth then ($e.auth | @base64d)
-            elif $e.username then "\($e.username):\($e.password)"
+        #
+        # A pull secret of a Konflux namespace names the repository, not the
+        # host: auths["quay.io/redhat-user-workloads/<tenant>"]. Resolve the
+        # entry as docker does, with the longest key that prefixes the
+        # reference. A host-only lookup missed that entry, the import went
+        # anonymous, and quay answered "unauthorized".
+        ref="${CONTAINER_IMAGE#docker://}"
+        ref="${ref%%@*}"
+        case "${ref##*/}" in
+          *:*) ref="${ref%:*}" ;;
+        esac
+        auth="$(jq -r --arg ref "${ref}" '
+          (.auths // {}) as $a
+          | [ $a | to_entries[]
+              | { n: (.key | sub("^https?://"; "") | sub("/+$"; "")), e: .value } ]
+          | map(select(. as $x | $ref == $x.n or ($ref | startswith($x.n + "/"))))
+          | sort_by(.n | length) | last
+          | if . == null then ""
+            elif .e.auth then (.e.auth | @base64d)
+            elif .e.username then "\(.e.username):\(.e.password)"
             else "" end' /workspace/pull-secret.json)"
         if [ -n "${auth}" ]; then
           kubectl create secret generic saw-pull-secret -n "${NAMESPACE}" \
@@ -185,12 +199,12 @@ spec:
             --from-literal=secretKey="${auth#*:}" \
             --dry-run=client -o yaml | kubectl apply -f -
           secret_ref="secretRef: saw-pull-secret"
-          echo "the import reads the credential of ${registry}"
+          echo "the import reads the credential that matches ${ref}"
         else
-          # A public image needs no credential. Name the registry that held no
+          # A public image needs no credential. Name the reference that held no
           # entry, so a private image that stalls the import shows why.
           secret_ref=""
-          echo "the pull secret holds no entry for ${registry}, the import pulls anonymously"
+          echo "the pull secret holds no entry for ${ref}, the import pulls anonymously"
         fi
 
         echo "=== Creating the guest SSH key ==="

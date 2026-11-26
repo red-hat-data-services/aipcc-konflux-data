@@ -309,9 +309,12 @@ def test_the_import_reads_the_registry_credential_of_the_image():
     assert "--from-literal=accessKeyId=" in script
     assert "--from-literal=secretKey=" in script
     assert "kubernetes.io/dockerconfigjson" not in script
-    # The entry comes from the pull secret, for the host of the image.
+    # The entry comes from the pull secret. A Konflux namespace pull secret
+    # names the repository, not the host, so the lookup takes the longest key
+    # that prefixes the reference. A host-only lookup found no entry, the import
+    # went anonymous, and quay answered "unauthorized".
     assert "${CONTAINER_IMAGE#docker://}" in script
-    assert ".auths[$reg]" in script
+    assert "startswith($x.n" in script
     # A public image needs no credential, so the reference is optional.
     assert "${secret_ref}" in script
 
