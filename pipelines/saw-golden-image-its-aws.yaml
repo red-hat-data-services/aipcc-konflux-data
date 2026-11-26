@@ -47,8 +47,9 @@ spec:
       description: |
         Version of the OpenShift Local SNC bundle. mapt reads the AMI named
         openshift-local-<value>-x86_64, so the value must match a published
-        AMI. It names a bundle version, not a catalog image. The default is
-        the newest stable bundle of the account.
+        AMI. It names a bundle version, not a catalog image. The default must
+        name a stable bundle; a pre-release bundle is not a default. The doc
+        lists the bundles of the account.
     - name: snc-instance-types
       default: ""
       description: |
