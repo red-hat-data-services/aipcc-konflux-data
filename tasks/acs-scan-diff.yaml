@@ -52,7 +52,7 @@ spec:
               path: token
   stepTemplate:
     # Exchange, scan and evidence share one Renovate-managed pin.
-    image: &roxctl-image registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:4.11.5@sha256:98f01d623e119acbbc211bdeb36192b619969aa149d9c66bab8034eeef84c861
+    image: &roxctl-image registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:4.11.7@sha256:2380fdb58c1b2c52544e4f1a7c6f94596895525a8448001018e1482aa98f968d
     workingDir: /tekton/home
     env:
       - name: ROX_ENDPOINT
