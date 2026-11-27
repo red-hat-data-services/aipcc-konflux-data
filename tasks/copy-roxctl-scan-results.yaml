@@ -1,0 +1,183 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: copy-roxctl-scan-results
+spec:
+  description: |
+    Copy the roxctl report OCI artifacts of the released component to its Quay repository.
+
+    roxctl-scan publishes REPORTS as a map from each scanned image manifest digest to the
+    digest of the report artifact attached to that manifest, and attaches the artifact as
+    an OCI referrer of the manifest. The report is not an image: it is a manifest whose
+    layers are the report blobs, so it is copied by digest with skopeo, the tool
+    copy-clair-scan-results already uses from the same release-service-utils image.
+    --preserve-digests makes skopeo push the artifact under its original digest.
+
+    Before an artifact is pushed, it is checked to be attached to the manifest the
+    REPORTS map names it for and to carry an application/vnd.redhat.rox-report+json
+    layer, so a report for another manifest or another scanner cannot be copied in its
+    place. A missing REPORTS entry fails the task, matching copy-clair-scan-results.
+
+    Whether the target registry then serves the copy as a referrer of that image digest
+    is registry-side behaviour that this task does not verify.
+  params:
+    - name: release
+      type: string
+    - name: snapshot
+      type: string
+    - name: target-repo
+      type: string
+      default: ""
+      description: Optional. If set, used as the target repo (backward compat with llama-stack).
+  volumes:
+    - name: pull-creds
+      secret:
+        secretName: components-namespace-pull
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: push-creds
+      secret:
+        secretName: quay-aipcc-finalpipeline-push
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+  steps:
+    - name: copy-results
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      env:
+        - name: SNAPSHOT
+          value: $(params.snapshot)
+        - name: RELEASE
+          value: $(params.release)
+        - name: TARGET_REPO
+          value: $(params.target-repo)
+      volumeMounts:
+        - name: pull-creds
+          mountPath: /creds/pull
+          readOnly: true
+        - name: push-creds
+          mountPath: /creds/push
+          readOnly: true
+      script: |
+        #!/bin/bash
+        set -eo pipefail
+
+        MEDIA_TYPE='application/vnd.redhat.rox-report+json'
+
+        echo -e "\nFetching Snapshot spec"
+        SNAPSHOT_DATA=$(get-resource "snapshot" "${SNAPSHOT}" "{.spec}")
+
+        if [ -n "$TARGET_REPO" ]; then
+          # Legacy mode: static target-repo (backward compat with llama-stack)
+          echo "Using static target-repo: $TARGET_REPO"
+          IMAGE=$(echo "$SNAPSHOT_DATA" | jq -r ".components[0].containerImage")
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+            echo "ERROR: No component image found in snapshot"
+            exit 1
+          fi
+        else
+          # Auto-derive mode: read Release CR artifacts to find the released component
+          echo -e "\nFetching Release artifacts"
+          RELEASE_ARTIFACTS=$(get-resource "release" "${RELEASE}" "{.status.artifacts}")
+
+          if [ "$RELEASE_ARTIFACTS" = "{}" ] || [ -z "$RELEASE_ARTIFACTS" ]; then
+            echo "ERROR: No artifacts found in Release CR status"
+            exit 1
+          fi
+
+          COMPONENT_NAME=$(echo "$RELEASE_ARTIFACTS" | jq -r '.images[0].name')
+          if [ -z "$COMPONENT_NAME" ] || [ "$COMPONENT_NAME" = "null" ]; then
+            echo "ERROR: No component name in release artifacts"
+            exit 1
+          fi
+          echo "Released component: $COMPONENT_NAME"
+
+          TARGET_REPO=$(echo "$RELEASE_ARTIFACTS" | jq -r '.images[0].urls[0]' | cut -d: -f1)
+          if [ -z "$TARGET_REPO" ] || [ "$TARGET_REPO" = "null" ]; then
+            echo "ERROR: Could not derive target repo from release artifacts"
+            exit 1
+          fi
+          echo "Derived target repo: $TARGET_REPO"
+
+          # Match component name against snapshot to find source image
+          IMAGE=$(echo "$SNAPSHOT_DATA" | jq -r --arg name "$COMPONENT_NAME" \
+            '.components[] | select(.name == $name) | .containerImage')
+          if [ -z "$IMAGE" ]; then
+            echo "ERROR: Component '$COMPONENT_NAME' not found in snapshot"
+            echo "Available components:"
+            echo "$SNAPSHOT_DATA" | jq -r '.components[].name'
+            exit 1
+          fi
+        fi
+
+        SOURCE_REPO="${IMAGE%%@*}"
+        case "${IMAGE}" in
+          *@sha256:*) IMAGE_DIGEST="${IMAGE##*@}" ;;
+          *) echo "ERROR: ${IMAGE} is not pinned to a sha256 digest"; exit 1 ;;
+        esac
+        echo -e "\nSource image: $IMAGE"
+        echo "Source repo: $SOURCE_REPO"
+        echo "Target repo: $TARGET_REPO"
+
+        echo -e "\nDownloading attestation to find REPORTS digests"
+        # REPORTS is a map from scanned manifest digest to report artifact digest. Both
+        # halves are kept: the key is the manifest the report has to be attached to. The
+        # subject digest is matched as bare hex, the way in-toto records it.
+        JQ_REPORTS='
+          .payload | @base64d | fromjson |
+          select(any(.subject[]?; .digest.sha256 == $subject)) |
+          .predicate.buildConfig.tasks[]? |
+          select(.name=="roxctl-scan").results[]? |
+          select(.name=="REPORTS").value |
+          fromjson? |
+          to_entries[]? |
+          select(.key | type == "string") |
+          select(.value | type == "string") |
+          .key + " " + .value
+        '
+        ROX_REPORTS=$(
+          DOCKER_CONFIG=/creds/pull cosign download attestation "${IMAGE}" \
+            | jq -r --arg subject "${IMAGE_DIGEST#sha256:}" "${JQ_REPORTS}" | sort -u
+        )
+
+        if [ -z "$ROX_REPORTS" ]; then
+          echo "ERROR: No roxctl-scan REPORTS artifact found in attestation for image $IMAGE"
+          exit 1
+        fi
+
+        echo -e "\nCopying REPORTS artifacts to target repo"
+        # A here-string keeps this loop in the main shell, so a failing check exits the
+        # step instead of only its subshell.
+        while read -r SCAN_DIGEST SHA; do
+          echo "Copying $SHA (report for $SCAN_DIGEST)"
+          # Read the artifact manifest first: the report must be attached to the manifest
+          # the map attests and be a roxctl report, and the check doubles as evidence that
+          # the artifact exists before the copy.
+          if ! skopeo inspect --raw --authfile /creds/pull/config.json \
+              "docker://${SOURCE_REPO}@${SHA}" > /tmp/report-manifest.json; then
+            echo "ERROR: Could not read report artifact ${SHA} from ${SOURCE_REPO}"
+            exit 1
+          fi
+          subject_digest=$(jq -r '.subject.digest // ""' /tmp/report-manifest.json)
+          if [ "$subject_digest" != "$SCAN_DIGEST" ]; then
+            echo "ERROR: ${SHA} is attached to ${subject_digest:-no subject}, not to ${SCAN_DIGEST} as the REPORTS map names it"
+            exit 1
+          fi
+          if ! jq -e --arg media_type "${MEDIA_TYPE}" \
+              '[.layers[]?.mediaType] | index($media_type)' \
+              /tmp/report-manifest.json > /dev/null; then
+            echo "ERROR: ${SHA} is not a ${MEDIA_TYPE} report artifact. Layer media types:"
+            jq -r '.layers[]?.mediaType' /tmp/report-manifest.json
+            exit 1
+          fi
+          # shortcut: the copier does not require a report for every architecture the
+          # build scanned, the check-roxctl-cves ITS does; upgrade when a partial copy
+          # must fail the release.
+          skopeo copy --preserve-digests \
+            --src-authfile /creds/pull/config.json --dest-authfile /creds/push/config.json \
+            "docker://${SOURCE_REPO}@${SHA}" "docker://${TARGET_REPO}@${SHA}"
+          echo "Copied ${SHA}"
+        done <<< "$ROX_REPORTS"
+
+        echo -e "\nDone. All REPORTS artifacts copied successfully."

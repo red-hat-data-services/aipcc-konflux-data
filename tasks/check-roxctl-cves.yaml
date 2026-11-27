@@ -1,0 +1,693 @@
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: check-roxctl-cves
+spec:
+  description: |
+    Reports the CVEs that would be flagged by the Conforma cve.cve_blockers release gate,
+    so they are visible on the snapshot instead of at release time.
+
+    The roxctl-scan build task publishes two outputs: SCAN_OUTPUT (per-severity counts,
+    already filtered by a conftest policy) and REPORTS (a map from each scanned image
+    manifest digest to the digest of the roxctl report artifact attached to that
+    manifest as an OCI referrer). Only SCAN_OUTPUT counts reach the UI, so the CVE
+    identifiers are invisible during the build. This task reads the same report
+    artifacts Conforma reads and lists what is in them.
+
+    It reports ERROR when that report evidence is missing for any manifest roxctl-scan
+    scanned, attached to a manifest other than the one the REPORTS map names it for, or
+    not an application/vnd.redhat.rox-report+json artifact. Conforma's
+    cve.cve_results_found treats absent scan evidence as a violation, so a missing report
+    must never look like a clean image here either, and a scan that covers only some
+    architectures is reported as ERROR rather than as a clean or positive result for the
+    image. There is no fallback: a missing report is reported as ERROR, not re-scanned.
+
+    Findings are bucketed the way ec-policies policy/release/cve does for roxctl reports
+    (_grouped_vulns, _rox_severity_map, _is_rox_vuln_patched):
+
+    - severity comes from the report's severity enum: CRITICAL -> Critical,
+      IMPORTANT -> High, MODERATE -> Medium, LOW -> Low. Anything else, including
+      UNKNOWN_VULNERABILITY_SEVERITY, counts as Unknown, exactly as the policy maps it.
+    - a vulnerability is "patched" when fixedBy is non-empty. Unlike Clair's
+      fixed_in_version this is a plain fixed version string, so it is shown as-is.
+    - each bucket has its own severity threshold. The defaults match the stock rule data:
+
+        patched-severities    Critical,High   (restrict_cve_security_levels)
+        unpatched-severities  <empty>         (restrict_unpatched_cve_security_levels)
+
+    Known limits of this mirror, stated rather than papered over:
+
+    - cve_leeway has no effect on roxctl findings. Conforma measures the grace period
+      from a vulnerability's disclosure date (the "issued" field), and the parsed roxctl
+      report has no such field, so _compute_leeway returns null, effective_on is left
+      unset and every matching finding is enforced immediately. The param is still
+      accepted and validated so the same ITS settings can be applied to both scanners.
+    - Conforma evaluates one image manifest at a time; this task unions the reports of
+      every manifest of the image under test, so a CVE found on any architecture is
+      reported once.
+    - An ECP can override the rule data, in which case set these params to the same
+      lists, or exclude cve.cve_blockers entirely, in which case nothing blocks.
+
+    This task:
+    1. Resolves the component that triggered the ITS and finds its image in the snapshot
+    2. Resolves the manifests roxctl-scan scans for that image (one per architecture, or
+       the image itself) and requires the attested REPORTS map to cover exactly them
+    3. Pulls each report artifact from the build registry and parses it
+    4. Buckets CVEs the way Conforma does and applies the severity thresholds
+    5. Prints the full table to the task log and emits Konflux-visible task results
+
+    Tekton caps the combined size of a task's results, so the results carry counts only.
+    The CVE identifiers are in the task log.
+
+    The task always exits 0. Pass/fail is communicated through TEST_OUTPUT.result, which
+    is what the integration service and the Konflux UI read.
+  params:
+    - name: SNAPSHOT
+      type: string
+      description: JSON string of the snapshot spec, provided automatically by the ITS.
+    - name: patched-severities
+      type: string
+      default: "Critical,High"
+      description: |
+        Severities to report for CVEs that have a fix, mirroring the Conforma rule data
+        key restrict_cve_security_levels. Comma-separated and case-insensitive; empty
+        reports none. Valid values: Critical, High, Medium, Low, Negligible, Unknown.
+        Conforma's own schema has no Negligible and roxctl reports no such severity, so
+        it can never match.
+    - name: unpatched-severities
+      type: string
+      default: ""
+      description: |
+        Severities to report for CVEs with no known fix, mirroring the Conforma rule data
+        key restrict_unpatched_cve_security_levels. Same format as patched-severities.
+    - name: cve-leeway
+      type: string
+      default: "Critical=6,High=29"
+      description: |
+        Grace period in days per severity, mirroring the Conforma rule data key
+        cve_leeway. Validated and then ignored: roxctl reports carry no disclosure date,
+        so Conforma cannot apply the grace period to them either and enforces every
+        matching finding immediately. Kept so one ITS configuration can drive both
+        scanners.
+    - name: enforce
+      type: string
+      default: "false"
+      description: |
+        If "true", matching CVEs set TEST_OUTPUT.result to FAILURE. If "false", they set
+        it to WARNING. Whether a failure blocks the release is controlled separately by
+        the test.appstudio.openshift.io/optional label on the IntegrationTestScenario.
+    - name: pull-secret-name
+      type: string
+      default: "components-namespace-pull"
+      description: |
+        Dockerconfig secret used to read the image manifest, its attestation, and the
+        report artifacts. Mounted read-only; the task does not need RBAC to read secrets.
+  results:
+    - name: TEST_OUTPUT
+      type: string
+      description: Konflux standardized test output (result, counts, note).
+    - name: CVE_COUNT
+      type: string
+      description: Number of unique CVEs that would be flagged by cve.cve_blockers.
+    - name: CVE_SUMMARY
+      type: string
+      description: Per-severity counts, split by patched/unpatched and by blocking now vs pending.
+    - name: SCANNED_IMAGE
+      type: string
+      description: The image reference that was scanned.
+  volumes:
+    - name: workdir
+      emptyDir: {}
+    - name: pull-secret
+      secret:
+        secretName: $(params.pull-secret-name)
+        # optional so a missing secret degrades to an ERROR result instead of leaving the
+        # pod unschedulable, which would produce no TEST_OUTPUT at all.
+        optional: true
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /workspace
+        name: workdir
+      - mountPath: /auth
+        name: pull-secret
+        readOnly: true
+  steps:
+    - name: fetch-reports
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      computeResources:
+        limits:
+          memory: 1Gi
+        requests:
+          memory: 512Mi
+          cpu: 200m
+      env:
+        - name: DOCKER_CONFIG
+          value: /auth
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: COMPONENT
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['appstudio.openshift.io/component']
+      script: |
+        #!/bin/bash
+        # Failures are recorded in /workspace/error rather than exiting non-zero, so the
+        # report step can always emit a TEST_OUTPUT result.
+        set -uo pipefail
+
+        fail() {
+          echo "$1" > /workspace/error
+          exit 0
+        }
+
+        echo "=== Resolving the component image ==="
+        if [ -z "${SNAPSHOT}" ]; then
+          fail "SNAPSHOT was not provided"
+        fi
+
+        num_components=$(jq '.components | length' <<< "${SNAPSHOT}")
+        echo "Snapshot contains ${num_components} component(s)"
+
+        # In singleComponentMode the snapshot still carries every component, so the
+        # PipelineRun's component label identifies the one that triggered this ITS.
+        if [ -z "${COMPONENT}" ]; then
+          if [ "${num_components}" -eq 1 ]; then
+            COMPONENT=$(jq -r '.components[0].name' <<< "${SNAPSHOT}")
+            echo "No component label set; snapshot has a single component: ${COMPONENT}"
+          else
+            fail "label appstudio.openshift.io/component is not set and the snapshot has ${num_components} components, so the target is ambiguous"
+          fi
+        fi
+        echo "Target component: ${COMPONENT}"
+
+        IMAGE=$(jq -r --arg name "${COMPONENT}" \
+          '.components[] | select(.name == $name) | .containerImage' <<< "${SNAPSHOT}")
+        if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "null" ]; then
+          echo "Available components:"
+          jq -r '.components[].name' <<< "${SNAPSHOT}"
+          fail "component ${COMPONENT} not found in the snapshot"
+        fi
+        echo "Image: ${IMAGE}"
+        echo -n "${IMAGE}" > /workspace/image-ref
+
+        # roxctl-scan keys REPORTS by the manifest digest it scanned, so the attested
+        # subject has to be known here to tell this image's reports from any other entry.
+        case "${IMAGE}" in
+          *@sha256:*) IMAGE_DIGEST="${IMAGE##*@}" ;;
+          *) fail "${IMAGE} is not pinned to a sha256 digest, so its scan reports cannot be matched to it" ;;
+        esac
+
+        if [ ! -s /auth/config.json ]; then
+          fail "pull secret is missing or has no .dockerconfigjson key"
+        fi
+
+        # Strip the digest, then a tag only if the colon is in the last path segment, so
+        # a registry with a port survives.
+        SOURCE_REPO="${IMAGE%%@*}"
+        case "${SOURCE_REPO##*/}" in
+          *:*) SOURCE_REPO="${SOURCE_REPO%:*}" ;;
+        esac
+
+        echo
+        echo "=== Resolving the manifests roxctl-scan scans ==="
+        # roxctl-scan scans the manifest behind each architecture of the image, or the
+        # image itself when it is a single manifest, and keys REPORTS by exactly those
+        # digests. konflux-test's get_image_manifests builds the same set: architecture
+        # lowercased -> manifest digest, the last manifest of an architecture winning.
+        # Deriving the expected set the same way is what makes a REPORTS map that misses
+        # an architecture an ERROR instead of a clean-looking partial scan.
+        if ! skopeo inspect --raw --authfile /auth/config.json "docker://${IMAGE}" \
+            > /workspace/raw-manifest.json; then
+          fail "could not read the manifest of ${IMAGE}, so its reports cannot be matched to it"
+        fi
+        JQ_EXPECTED_DIGESTS='
+          if has("manifests") then
+            .manifests
+            | map({(.platform.architecture | tostring | ascii_downcase): .digest})
+            | add // {}
+            | .[]
+          else
+            $subject
+          end
+        '
+        if ! jq -r --arg subject "${IMAGE_DIGEST}" "${JQ_EXPECTED_DIGESTS}" \
+            /workspace/raw-manifest.json | sort -u > /workspace/expected-digests ||
+            [ ! -s /workspace/expected-digests ]; then
+          fail "could not resolve which manifests of ${IMAGE} roxctl-scan would have scanned"
+        fi
+        echo "Manifests roxctl-scan scans for ${IMAGE}:"
+        sed 's/^/  /' /workspace/expected-digests
+
+        echo
+        echo "=== Downloading the attestation ==="
+        # download, not verify-attestation: this task reports on scan data, it does not
+        # make a trust decision. Conforma verifies the attestation at release time.
+        if ! cosign download attestation "${IMAGE}" > /workspace/attestation.jsonl; then
+          fail "could not download the attestation for ${IMAGE}"
+        fi
+
+        echo "=== Extracting the roxctl-scan REPORTS map ==="
+        # Subject-matched: only a statement about this image is read. The map is kept as
+        # key/report-digest pairs because the key names the manifest the report belongs
+        # to, and every scanned manifest has to be covered. The ? guards keep an
+        # unexpected payload from aborting jq part-way and leaving a truncated map that
+        # looks complete.
+        JQ_REPORTS='
+          .payload | @base64d | fromjson
+          | select(any(.subject[]?; .digest.sha256 == $subject))
+          | .predicate.buildConfig.tasks[]?
+          | select(.name == "roxctl-scan")
+          | .results[]?
+          | select(.name == "REPORTS").value
+          | fromjson?
+          | to_entries[]?
+          | select(.key | type == "string")
+          | select(.value | type == "string")
+          | .key + " " + .value
+        '
+        # In-toto holds the subject digest as bare hex, so the sha256: prefix of the image
+        # reference is stripped before matching.
+        if ! jq -r --arg subject "${IMAGE_DIGEST#sha256:}" "${JQ_REPORTS}" \
+            /workspace/attestation.jsonl | sort -u > /workspace/report-map; then
+          fail "could not parse the attestations of ${IMAGE}"
+        fi
+
+        if [ ! -s /workspace/report-map ]; then
+          fail "no roxctl-scan REPORTS entry in the attestation of ${IMAGE}; roxctl-scan may not have run for this build, or its report was not attached"
+        fi
+
+        # Two statements naming a different report for the same manifest disagree, so
+        # neither can be taken as that manifest's scan evidence.
+        conflicting=$(cut -d' ' -f1 /workspace/report-map | uniq -d | tr '\n' ' ')
+        if [ -n "${conflicting}" ]; then
+          fail "the attestation of ${IMAGE} names more than one roxctl report for ${conflicting}so it is ambiguous which one is its scan evidence"
+        fi
+
+        cut -d' ' -f1 /workspace/report-map > /workspace/attested-digests
+        missing=$(comm -23 /workspace/expected-digests /workspace/attested-digests | tr '\n' ' ')
+        if [ -n "${missing}" ]; then
+          fail "roxctl-scan reported no scan for ${missing}of ${IMAGE}, so the scan evidence is partial and cannot be reported as a result for the image"
+        fi
+        unexpected=$(comm -13 /workspace/expected-digests /workspace/attested-digests | tr '\n' ' ')
+        if [ -n "${unexpected}" ]; then
+          fail "the roxctl-scan REPORTS map of ${IMAGE} has a report for ${unexpected}which is not a manifest roxctl-scan would scan for it"
+        fi
+        echo "Found $(wc -l < /workspace/report-map) report artifact(s), one per scanned manifest"
+
+        mkdir -p /workspace/reports
+        n=0
+        while read -r scan_digest report_digest; do
+          n=$((n + 1))
+          echo "--- Fetching report ${report_digest} for ${scan_digest} ---"
+          oci_dir="/workspace/oci-${n}"
+          if ! skopeo copy --retry-times 3 \
+              --authfile /auth/config.json \
+              "docker://${SOURCE_REPO}@${report_digest}" "oci:${oci_dir}:latest" >/dev/null; then
+            fail "failed to fetch report artifact ${report_digest} from ${SOURCE_REPO}"
+          fi
+
+          # Read the layers out of the OCI layout instead of guessing which blob is the
+          # report: picking the largest file silently yields the config blob when a report
+          # is small, and a config parses as JSON with no findings in it.
+          mdigest=$(jq -r '.manifests[0].digest' "${oci_dir}/index.json")
+          manifest="${oci_dir}/blobs/${mdigest%%:*}/${mdigest#*:}"
+          if [ ! -f "${manifest}" ]; then
+            fail "report artifact ${report_digest} has no manifest in its OCI layout"
+          fi
+
+          # The artifact has to be attached to the very manifest the REPORTS map names it
+          # for. A report attached to another manifest, of this image or of any other, is
+          # not the scan evidence for this key.
+          subject_digest=$(jq -r '.subject.digest // ""' "${manifest}")
+          if [ "${subject_digest}" != "${scan_digest}" ]; then
+            fail "report artifact ${report_digest} is attached to ${subject_digest:-no subject}, but the REPORTS map names it for ${scan_digest}"
+          fi
+
+          # Select layers by media type, the same way Conforma does
+          # (ec-policies _cve_scan_reports filters on _report_oci_mime_types), rather
+          # than guessing. Picking the largest blob would silently return the config,
+          # which parses as JSON, has no findings and would look like a clean image.
+          if ! layers=$(jq -r '.layers[]
+              | select(.mediaType == "application/vnd.redhat.rox-report+json")
+              | .digest' "${manifest}"); then
+            fail "could not read report artifact ${report_digest} layers"
+          fi
+          if [ -z "${layers}" ]; then
+            fail "report artifact ${report_digest} has no application/vnd.redhat.rox-report+json layer"
+          fi
+          i=0
+          while read -r layer; do
+            i=$((i + 1))
+            out="/workspace/reports/report-${n}-${i}.json"
+            if ! cp "${oci_dir}/blobs/${layer%%:*}/${layer#*:}" "${out}"; then
+              fail "could not read layer ${layer} of report artifact ${report_digest}"
+            fi
+            # The blob may be stored compressed depending on how oras attached it.
+            if gzip -t "${out}" 2>/dev/null; then
+              if ! mv "${out}" "${out}.gz" || ! gunzip "${out}.gz"; then
+                fail "could not decompress layer ${layer} of report artifact ${report_digest}"
+              fi
+            fi
+            echo "Saved $(basename "${out}") ($(stat -c%s "${out}") bytes)"
+          done <<< "${layers}"
+        done < /workspace/report-map
+
+    - name: report-cves
+      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      computeResources:
+        limits:
+          memory: 2Gi
+        requests:
+          memory: 512Mi
+          cpu: 200m
+      env:
+        - name: PATCHED_SEVERITIES
+          value: $(params.patched-severities)
+        - name: UNPATCHED_SEVERITIES
+          value: $(params.unpatched-severities)
+        - name: CVE_LEEWAY
+          value: $(params.cve-leeway)
+        - name: ENFORCE
+          value: $(params.enforce)
+      script: |
+        #!/usr/bin/env python3
+        import glob
+        import json
+        import os
+        from datetime import datetime, timezone
+
+        VALID_SEVERITIES = ["Critical", "High", "Medium", "Low", "Negligible", "Unknown"]
+        SEVERITY_ORDER = {s: i for i, s in enumerate(VALID_SEVERITIES)}
+        NOTE_LIMIT = 1800
+        ROW = "%-10s %-9s %-26s %-18s %-24s %-20s %-40s %s"
+
+        # ec-policies _rox_severity_map, with the policy's own fallback: a severity that
+        # is not in the map, including UNKNOWN_VULNERABILITY_SEVERITY, is "unknown".
+        ROX_SEVERITY = {
+            "CRITICAL_VULNERABILITY_SEVERITY": "Critical",
+            "IMPORTANT_VULNERABILITY_SEVERITY": "High",
+            "MODERATE_VULNERABILITY_SEVERITY": "Medium",
+            "LOW_VULNERABILITY_SEVERITY": "Low",
+        }
+
+        RESULT_PATHS = {
+            "TEST_OUTPUT": "$(results.TEST_OUTPUT.path)",
+            "CVE_COUNT": "$(results.CVE_COUNT.path)",
+            "CVE_SUMMARY": "$(results.CVE_SUMMARY.path)",
+            "SCANNED_IMAGE": "$(results.SCANNED_IMAGE.path)",
+        }
+
+
+        class ReportError(Exception):
+            """Raised to emit TEST_OUTPUT.result=ERROR and stop."""
+
+
+        def read_file(path, default=""):
+            try:
+                with open(path) as fh:
+                    return fh.read().strip()
+            except FileNotFoundError:
+                return default
+
+
+        def parse_leeway():
+            # Validated only. ec-policies _compute_leeway reads the vulnerability's
+            # "issued" date, which the parsed roxctl report does not carry, so it returns
+            # null, leaves effective_on unset and enforces every finding immediately. The
+            # param is accepted so one ITS configuration drives both scanners, and a bad
+            # value is still reported instead of quietly ignored.
+            entries = []
+            by_lower = {v.lower(): v for v in VALID_SEVERITIES}
+            for item in os.environ["CVE_LEEWAY"].split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                sev, _, days = item.partition("=")
+                sev = sev.strip().lower()
+                if sev not in by_lower or not days.strip().isdigit():
+                    raise ReportError(
+                        "invalid cve-leeway entry %r; expected Severity=days, "
+                        "for example Critical=6,High=29" % item
+                    )
+                entries.append("%s=%s" % (by_lower[sev], days.strip()))
+            return ",".join(entries) or "none"
+
+
+        def parse_severities(env_name, param_name):
+            by_lower = {v.lower(): v for v in VALID_SEVERITIES}
+            tokens = [t.strip().lower() for t in os.environ[env_name].split(",") if t.strip()]
+            unknown = [t for t in tokens if t not in by_lower]
+            if unknown:
+                raise ReportError(
+                    "invalid %s value(s) %s; valid values: %s"
+                    % (param_name, ", ".join(unknown), ", ".join(VALID_SEVERITIES))
+                )
+            return {by_lower[t] for t in tokens}
+
+
+        def is_patched(entry):
+            # ec-policies _is_rox_vuln_patched: any non-empty fixedBy counts as patched.
+            return bool(str(entry.get("fixedBy") or "").strip())
+
+
+        def load_findings():
+            # Conforma iterates report.roxctl_new when it buckets roxctl findings, so the
+            # same array is the source here. Each CVE carries its own affected components;
+            # a CVE that affects several components becomes one row per component so the
+            # table shows where it sits.
+            findings = {}
+            report_files = sorted(glob.glob("/workspace/reports/report-*.json"))
+            if not report_files:
+                raise ReportError("no roxctl report files were fetched")
+
+            for path in report_files:
+                with open(path) as fh:
+                    report = json.load(fh)
+                # The shape check ec-policies applies before trusting a report
+                # (_has_rox_vulnerabilities and _grouped_vulns require a roxctl_new
+                # array). Without it an unexpected payload would look like an image with
+                # no findings.
+                if not isinstance(report, dict) or not isinstance(report.get("roxctl_new"), list):
+                    raise ReportError(
+                        "%s has no roxctl_new array, so it is not a roxctl report"
+                        % os.path.basename(path)
+                    )
+
+                for entry in report["roxctl_new"]:
+                    if not isinstance(entry, dict):
+                        raise ReportError(
+                            "%s has a roxctl_new entry that is not an object"
+                            % os.path.basename(path)
+                        )
+                    cve = entry.get("cve") or "UNKNOWN"
+                    severity = ROX_SEVERITY.get(str(entry.get("severity") or ""), "Unknown")
+                    fixed_by = str(entry.get("fixedBy") or "").strip()
+                    advisories = [
+                        advisory["name"] for advisory in (entry.get("advisory") or [])
+                        if isinstance(advisory, dict) and advisory.get("name")
+                    ]
+                    components = [
+                        component for component in (entry.get("components") or [])
+                        if isinstance(component, dict)
+                    ] or [{}]
+
+                    for component in components:
+                        name = component.get("component") or "-"
+                        version = component.get("version") or "-"
+                        # Keep differing scan states until threshold filtering; the
+                        # same package can have different findings across architectures.
+                        key = (cve, name, version, severity, fixed_by)
+                        if key in findings:
+                            continue
+                        findings[key] = {
+                            "cve": cve,
+                            "package": name,
+                            "version": version,
+                            "severity": severity,
+                            "fixed_in": fixed_by or "-",
+                            "patched": is_patched(entry),
+                            "advisory": ", ".join(advisories) or "-",
+                            "location": component.get("source") or "-",
+                        }
+            print("Parsed %d report blob(s), %d distinct findings total"
+                  % (len(report_files), len(findings)))
+            return findings
+
+
+        def now():
+            # The integration service validates TEST_OUTPUT.timestamp against a regex that
+            # accepts a 10-digit epoch or RFC 3339 with a Z / +HH:MM offset. strftime("%z")
+            # emits +HHMM without the colon and would be rejected.
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+        def write_results(test_output, cve_count, cve_summary, image):
+            values = {
+                "TEST_OUTPUT": json.dumps(test_output, separators=(",", ":")),
+                "CVE_COUNT": str(cve_count),
+                "CVE_SUMMARY": cve_summary,
+                "SCANNED_IMAGE": image,
+            }
+            for name, path in RESULT_PATHS.items():
+                with open(path, "w") as fh:
+                    fh.write(values[name])
+            print()
+            print("TEST_OUTPUT: " + values["TEST_OUTPUT"])
+
+
+        def report_error(note, image=""):
+            print("ERROR: " + note)
+            write_results(
+                {
+                    "result": "ERROR",
+                    "timestamp": now(),
+                    "successes": 0,
+                    "failures": 0,
+                    "warnings": 0,
+                    "note": note[:NOTE_LIMIT],
+                },
+                0, "", image,
+            )
+
+
+        def run():
+            image = read_file("/workspace/image-ref")
+
+            # An earlier step recorded a failure; surface it as TEST_OUTPUT rather than
+            # letting the task die without any result.
+            earlier_error = read_file("/workspace/error")
+            if earlier_error:
+                raise ReportError(earlier_error)
+
+            patched_sevs = parse_severities("PATCHED_SEVERITIES", "patched-severities")
+            unpatched_sevs = parse_severities("UNPATCHED_SEVERITIES", "unpatched-severities")
+            if not patched_sevs and not unpatched_sevs:
+                raise ReportError(
+                    "patched-severities and unpatched-severities are both empty, "
+                    "so nothing would ever be reported"
+                )
+            leeway = parse_leeway()
+            enforce = os.environ["ENFORCE"].strip().lower() == "true"
+
+            def fmt(sevs):
+                return ",".join(s for s in VALID_SEVERITIES if s in sevs) or "none"
+
+            print("Image:                " + image)
+            print("Patched severities:   " + fmt(patched_sevs))
+            print("Unpatched severities: " + fmt(unpatched_sevs))
+            print("Leeway (days):        " + leeway + " (validated, not applicable: "
+                  "roxctl reports carry no disclosure date)")
+            print("Enforce:              " + str(enforce))
+            print()
+
+            findings = load_findings()
+
+            matched = sorted(
+                (
+                    f for f in findings.values()
+                    if f["severity"] in (patched_sevs if f["patched"] else unpatched_sevs)
+                ),
+                key=lambda f: (SEVERITY_ORDER.get(f["severity"], 99), f["package"], f["cve"]),
+            )
+            unique_cves = list(dict.fromkeys(f["cve"] for f in matched))
+
+            # --- Log the full table ---
+            print()
+            if matched:
+                header = ROW % ("SEVERITY", "STATE", "COMPONENT", "VERSION", "CVE",
+                                "FIXED BY", "ADVISORY", "LOCATION")
+                print(header)
+                print("-" * len(header))
+                for f in matched:
+                    print(ROW % (f["severity"], "patched" if f["patched"] else "unpatched",
+                                 f["package"][:26], f["version"][:18], f["cve"][:24],
+                                 f["fixed_in"][:20], f["advisory"][:40], f["location"]))
+            else:
+                print("No CVEs matched the configured severity thresholds.")
+
+            # --- Summarise ---
+            # Counts are per unique CVE, not per component/CVE pair: one CVE routinely
+            # affects several components (openssl and openssl-libs, for example). A CVE
+            # reported at several severities is counted at its highest, so the
+            # per-severity numbers always add up to CVE_COUNT.
+            worst = {}
+            for f in matched:
+                rank = SEVERITY_ORDER.get(f["severity"], 99)
+                if f["cve"] not in worst or rank < worst[f["cve"]][0]:
+                    worst[f["cve"]] = (rank, f["severity"])
+            per_severity = {}
+            for _, severity in worst.values():
+                per_severity[severity] = per_severity.get(severity, 0) + 1
+
+            unpatched_cves = {f["cve"] for f in matched if not f["patched"]}
+            patched_cves = {f["cve"] for f in matched if f["patched"]}
+
+            summary_parts = [
+                "%s=%d" % (sev, per_severity[sev])
+                for sev in VALID_SEVERITIES if sev in per_severity
+            ] or ["none"]
+            # A CVE can hit several components and be fixed in only some of them.
+            # Reporting it as simply "patched" would imply a fix is available for the
+            # whole image, so those are counted separately and the buckets are kept
+            # exclusive, letting patched + unpatched + mixed equal the unique total.
+            mixed_cves = patched_cves & unpatched_cves
+            summary_parts.append("patched=%d" % len(patched_cves - mixed_cves))
+            summary_parts.append("unpatched=%d" % len(unpatched_cves - mixed_cves))
+            if mixed_cves:
+                summary_parts.append("mixed=%d" % len(mixed_cves))
+            # No disclosure date in a roxctl report means no grace period, so every match
+            # blocks now and the pending count stays for consumers of the result shape.
+            summary_parts.append("blocking=%d" % len(unique_cves))
+            summary_parts.append("pending=0")
+            cve_summary = " ".join(summary_parts)
+
+            print()
+            print("Matching unique CVEs: %d (across %d component/CVE pairs)"
+                  % (len(unique_cves), len(matched)))
+            if mixed_cves:
+                print("Fixed in some components but not others: %d (%s)"
+                      % (len(mixed_cves), ", ".join(sorted(mixed_cves))))
+            print("Summary: " + cve_summary)
+
+            # --- Emit results ---
+            thresholds = "patched %s, unpatched %s" % (fmt(patched_sevs), fmt(unpatched_sevs))
+            if not unique_cves:
+                test_output = {
+                    "result": "SUCCESS",
+                    "timestamp": now(),
+                    "successes": 1,
+                    "failures": 0,
+                    "warnings": 0,
+                    "note": "No CVEs at the cve.cve_blockers thresholds (%s)." % thresholds,
+                }
+            else:
+                note = (
+                    "%d CVE(s) at the cve.cve_blockers thresholds (%s) [%s]. All of them "
+                    "block now: a roxctl report carries no disclosure date, so "
+                    "cve_leeway cannot defer them. Conforma will flag these at release "
+                    "unless an ECP exception covers them. See the check-roxctl-cves task "
+                    "log for the CVE identifiers."
+                    % (len(unique_cves), thresholds, cve_summary)
+                )
+                test_output = {
+                    "result": "FAILURE" if enforce else "WARNING",
+                    "timestamp": now(),
+                    "successes": 0,
+                    "failures": len(unique_cves) if enforce else 0,
+                    "warnings": 0 if enforce else len(unique_cves),
+                    "note": note[:NOTE_LIMIT],
+                }
+
+            write_results(test_output, len(unique_cves), cve_summary, image)
+
+
+        # The task must always emit a TEST_OUTPUT, so no exception may escape.
+        try:
+            run()
+        except ReportError as exc:
+            report_error(str(exc), read_file("/workspace/image-ref"))
+        except BaseException as exc:  # noqa: BLE001 - deliberately broad
+            report_error("unexpected error: %r" % (exc,), read_file("/workspace/image-ref"))
