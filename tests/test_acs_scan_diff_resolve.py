@@ -468,3 +468,27 @@ def test_pipeline_and_task_wire_baseline_snapshot_param():
     assert task_params["baseline-snapshot"]["default"] == ""
     env = {item["name"]: item for item in task["spec"]["steps"][0]["env"]}
     assert env["BASELINE_SNAPSHOT"]["value"] == "$(params.baseline-snapshot)"
+
+
+@pytest.mark.parametrize("revision", ["main", CODE_REVISION])
+def test_resolver_accepts_main_or_a_full_lower_case_sha_task_revision(tmp_path, revision):
+    registry = {}
+    snapshots, baseline_ref, candidate_ref = _snapshot_pair(registry)
+
+    completed, results = _run_resolver(
+        tmp_path, _snapshot_mode_env() | {"CODE_REVISION": revision},
+        snapshots=snapshots, registry=registry)
+
+    assert completed.returncode == 0, completed.stderr
+    assert results["candidate-image"] == candidate_ref
+
+
+@pytest.mark.parametrize("revision", ["", "MAIN", "Main", "16ce543", "main\n",
+                                     CODE_REVISION.upper(), "release-3.5", "main@HEAD"])
+def test_resolver_rejects_task_revisions_other_than_main_or_a_full_lower_case_sha(
+        tmp_path, revision):
+    completed, _ = _run_resolver(tmp_path, _snapshot_mode_env() | {"CODE_REVISION": revision})
+
+    assert completed.returncode != 0
+    assert ("task-revision must be main or a full lower-case 40-character Git commit SHA"
+            in completed.stderr)

@@ -345,25 +345,28 @@ def test_compare_treats_listed_packages_without_findings_as_zero_cves(tmp_path, 
     assert result["new_in_candidate"] == []
 
 
-@pytest.mark.parametrize("provenance, message", [
-    ({"scan_mode": "build", "force_rescan": False, "include_snoozed": False,
-      "evidence": "build-parity scans"},
+@pytest.mark.parametrize("revision, provenance, message", [
+    (CODE_REVISION, {"scan_mode": "build", "force_rescan": False, "include_snoozed": False,
+                     "evidence": "build-parity scans"},
      "Expected forced scans including snoozed findings"),
     # The mode label must agree with the forced-scan flags, not just with them.
-    ({"scan_mode": "build", "force_rescan": True, "include_snoozed": True,
-      "evidence": "forged flags"},
+    (CODE_REVISION, {"scan_mode": "build", "force_rescan": True, "include_snoozed": True,
+                     "evidence": "forged flags"},
      "Expected fresh scan provenance"),
-    ({"force_rescan": True, "include_snoozed": True, "evidence": "unlabeled"},
+    (CODE_REVISION, {"force_rescan": True, "include_snoozed": True, "evidence": "unlabeled"},
      "Expected fresh scan provenance"),
+    # A valid moving ref reaches the remaining checks; an abbreviated SHA does not.
+    ("main", {}, "Expected forced scans including snoozed findings"),
+    ("16ce543", {}, "Expected main or an immutable full code revision"),
 ])
-def test_annotation_task_rejects_non_fresh_provenance_before_patching(
-        tmp_path, provenance, message):
+def test_annotation_task_checks_revision_and_fresh_provenance_before_patching(
+        tmp_path, revision, provenance, message):
     task = _load(ANNOTATE_TASK)
     workdir = tmp_path / "acs-result"
     workdir.mkdir()
     (workdir / "fresh-scan-result.json").write_text(json.dumps({
         "engine": "acs", "component": COMPONENT, "pipeline_run": PIPELINE_RUN,
-        "code_revision": CODE_REVISION, "scanned_at": "2026-10-27T10:06:00+00:00",
+        "code_revision": revision, "scanned_at": "2026-10-27T10:06:00+00:00",
         **provenance,
     }))
     bin_dir = tmp_path / "bin"
@@ -380,7 +383,7 @@ raise SystemExit(1)
     script_file.write_text(_step(task, "annotate")["script"]
                            .replace("/var/workdir/acs-result", str(workdir)))
     environment = os.environ | {
-        "SNAPSHOT": "candidate-snap", "CODE_REVISION": CODE_REVISION,
+        "SNAPSHOT": "candidate-snap", "CODE_REVISION": revision,
         "PIPELINE_RUN": PIPELINE_RUN, "COMPONENT": COMPONENT,
         "BASELINE_REF": BASELINE_REF, "CANDIDATE_REF": CANDIDATE_REF,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -392,3 +395,12 @@ raise SystemExit(1)
     assert completed.returncode != 0
     assert message in completed.stderr
     assert not marker.exists()
+
+
+def test_pipeline_defaults_task_revision_to_main_without_pinning_a_sha():
+    pipeline = _load(PIPELINE)
+    params = {param["name"]: param for param in pipeline["spec"]["params"]}
+    assert params["task-revision"]["default"] == "main"
+    for task in pipeline["spec"]["tasks"]:
+        resolver = {param["name"]: param["value"] for param in task["taskRef"]["params"]}
+        assert resolver["revision"] == "$(params.task-revision)"

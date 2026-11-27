@@ -95,8 +95,8 @@ spec:
         for key, env in (("component", "COMPONENT"), ("pipeline_run", "PIPELINE_RUN"), ("code_revision", "CODE_REVISION")):
             if result.get(key) != os.environ[env]:
                 raise ValueError("Comparison provenance mismatch: " + key)
-        if not re.fullmatch(r"[0-9a-f]{40}", result["code_revision"]):
-            raise ValueError("Expected immutable code revision")
+        if not re.fullmatch(r"main|[0-9a-f]{40}", result["code_revision"]):
+            raise ValueError("Expected main or an immutable full code revision")
         if result.get("force_rescan") is not True or result.get("include_snoozed") is not True:
             raise ValueError("Expected forced scans including snoozed findings")
         # Defense in depth for build-parity scans: the mode label must agree
