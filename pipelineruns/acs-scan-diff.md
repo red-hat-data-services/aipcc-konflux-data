@@ -1,14 +1,21 @@
 # ACS CVE scan diff
 
 Compare two digest-pinned images for one component. ACS deltas are evidence,
-not verified remediation, ECP, or release approval. This pipeline is not a
-release gate; no ReleasePlan is wired here and there is no Clair fallback.
+not verified remediation, ECP, or release approval. Findings do not gate a
+release, but a failed run configured as a stage `finalPipeline` fails the stage
+Release. There is no Clair fallback.
 
 ## Run it
 
 1. Copy [`acs-scan-diff.yaml`](acs-scan-diff.yaml) and replace the placeholders.
    Set `pipelineRef.params.revision` and `task-revision` to the **same published
    full Git SHA**. This pins the pipeline and tasks, not Central's database.
+   A stage `finalPipeline` instead resolves both the pipeline and its tasks
+   from `main` and needs no `task-revision` param; `task-revision` accepts
+   exactly `main` or a full lower-case SHA and defaults to `main`. Like any
+   Git-resolved pipeline, a `main` run can resolve its pipeline and tasks
+   across a `main` update. Use the same full SHA to reproduce the code used
+   by a run.
 2. Keep `aipcc-releaser-bot-sa` as the default for resolve and annotate. Override
    only `scan` with the ACS-authorized component account (e.g.
    `build-pipeline-base-image-cpu-3-5` in `ai-tenant`). Resolve uses
@@ -63,6 +70,8 @@ fi
 - `fixed_in_candidate` means baseline CVEs absent from the candidate across all
   compared platforms. `new_in_candidate` means candidate-only CVEs. Central's
   live database is not frozen; scanner-version changes are flagged per platform.
+- `code_revision` keeps its field name but records the requested Git ref: `main`
+  for a default stage run (not the SHA it resolved to), or the pinned full SHA.
 - Native `REPORT` log sections retain package, advisory, and `fixedBy` details.
   An available `fixedBy` version is not proof it is installed. Validate installed
   versions and applicability separately before using the diff in an advisory.

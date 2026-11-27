@@ -5,14 +5,21 @@ metadata:
 spec:
   description: |
     Compare exact image digests with matching Linux platforms. Run manually
-    or as a stage finalPipeline; never use as a tenantPipeline or release gate.
-    Pin task-revision to the pipeline's commit. Use the release account by
-    default and override only scan with the ACS-authorized component account.
-    Only successful fresh-mode runs can annotate a supplied Snapshot.
+    or as a stage finalPipeline, not as a tenantPipeline or CVE policy gate.
+    The nested tasks resolve from main by default, like the stage ReleasePlans
+    that resolve this pipeline; a manual run can pin task-revision to the same
+    full commit SHA as its pipelineRef. Use the release account by default and
+    override only scan with the ACS-authorized component account. Only
+    successful fresh-mode runs can annotate a supplied Snapshot.
     See pipelineruns/acs-scan-diff.md for usage and evidence limits.
   params:
     - name: task-revision
-      description: Same immutable Git commit SHA used to resolve this pipeline.
+      description: >-
+        Git ref for the nested tasks: main (default) or a full lower-case
+        commit SHA. Pin the same SHA as pipelineRef.revision for a reproducible
+        manual run; the default can straddle a main update like other
+        Git-resolved pipelines.
+      default: main
     - name: release
       default: ""
     - name: releasePlan

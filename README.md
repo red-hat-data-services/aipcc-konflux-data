@@ -11,8 +11,8 @@ Products include:
 ## Manual release evidence
 
 [ACS CVE scan diff](pipelineruns/acs-scan-diff.md) compares exact baseline and
-candidate image digests without ReleasePlan wiring. Pin the pipeline and nested
-tasks to the same published commit; findings are evidence, not release approval.
+candidate image digests, as a manual run pinned to one commit or as a stage
+`finalPipeline` that tracks `main`; findings are evidence, not release approval.
 
 # This repository is on GitHub
 

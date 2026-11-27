@@ -221,6 +221,8 @@ spec:
             "evidence": ("ACS-observed CVE delta; not verified remediation, ECP or release approval; live Central DB is not frozen"
                          if fresh else
                          "ACS-observed CVE delta from build-compatible scans with a 30m client timeout; ACS may serve cached scans and snoozed findings are excluded, so this is not fresh-scan evidence, verified remediation, ECP or release approval; live Central DB is not frozen"),
+            # code_revision keeps its original field name but records the
+            # requested ref: main (resolved at run time) or a pinned SHA.
             "pipeline_run": os.environ["PIPELINE_RUN"], "code_revision": os.environ["CODE_REVISION"],
             "scanned_at": datetime.now(timezone.utc).isoformat(),
             "central_endpoint": os.environ["ROX_ENDPOINT"],

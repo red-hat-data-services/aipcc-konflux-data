@@ -158,8 +158,8 @@ spec:
                 raise ValueError("Image has no Linux manifests")
             return [{"platform": p, "ref": found[p]} for p in sorted(found)]
 
-        if not re.fullmatch(r"[0-9a-f]{40}", os.environ["CODE_REVISION"]):
-            raise ValueError("task-revision must be an immutable 40-character Git commit SHA")
+        if not re.fullmatch(r"main|[0-9a-f]{40}", os.environ["CODE_REVISION"]):
+            raise ValueError("task-revision must be main or a full lower-case 40-character Git commit SHA")
         for key in ("RELEASE", "RELEASE_PLAN", "SNAPSHOT", "BASELINE_SNAPSHOT", "PROD_RELEASE_PLAN", "COMPONENT"):
             value = os.environ[key]
             if value and (len(value) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", value)):
