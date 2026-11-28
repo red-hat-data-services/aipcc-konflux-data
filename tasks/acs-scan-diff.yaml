@@ -302,7 +302,7 @@ spec:
             Path("/tekton/results", name).write_text(str(count))
         print(json.dumps(summary, indent=2))
     - name: create-trusted-artifact
-      image: quay.io/konflux-ci/build-trusted-artifacts@sha256:9bd32f6bafb517b309e11a2d89365052b4ab3f1c9c23c4ffd45aff6f03960476
+      image: quay.io/konflux-ci/build-trusted-artifacts@sha256:97b7ae2335d5d6de63b622fc3b00d543d7606506294bd0f76a0cbf37ec37380d
       computeResources:
         requests:
           cpu: 250m
