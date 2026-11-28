@@ -60,7 +60,7 @@ spec:
       description: Comma-separated mapt SNC profiles derived from the component variant
   steps:
     - name: parse-snapshot-components
-      image: quay.io/konflux-ci/release-service-utils@sha256:6ce9a089345bcb8d650d3acb1fbd449e065bd43341e9eaeaec4540a981a5c5a2
+      image: quay.io/konflux-ci/release-service-utils@sha256:16a1f636699f003bf85f423712652b22e13290acb0f3c6d86850fb92deb0d208
       workingDir: /workspace
       env:
         - name: PIPELINE_COMPONENT

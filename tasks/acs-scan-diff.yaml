@@ -63,7 +63,7 @@ spec:
         value: Tekton
   steps:
     - name: prepare
-      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      image: quay.io/konflux-ci/release-service-utils@sha256:16a1f636699f003bf85f423712652b22e13290acb0f3c6d86850fb92deb0d208
       env:
         - name: BASELINE_REF
           value: $(params.baseline-ref)
@@ -167,7 +167,7 @@ spec:
           date -u +%Y-%m-%dT%H:%M:%SZ > "${file}.finished"
         done < acs-scan-plan.tsv
     - name: compare
-      image: quay.io/konflux-ci/release-service-utils@sha256:067f6f54dfa13e1c01b4a5b44aa82dbe027a003b8e0ffa21d77004bcac6b8370
+      image: quay.io/konflux-ci/release-service-utils@sha256:16a1f636699f003bf85f423712652b22e13290acb0f3c6d86850fb92deb0d208
       env:
         - name: CODE_REVISION
           value: $(params.task-revision)
